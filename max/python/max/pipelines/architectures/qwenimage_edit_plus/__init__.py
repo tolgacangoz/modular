@@ -11,7 +11,7 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from .arch import qwen3vl_moe_arch
-from .model_config import Qwen3VLConfig
+from .arch import qwenimage_edit_plus_arch
+from .model_config import QwenImageEditPlusConfig
 
-__all__ = ["Qwen3VLConfig", "qwen3vl_moe_arch"]
+__all__ = ["QwenImageEditPlusConfig", "qwenimage_edit_plus_arch"]

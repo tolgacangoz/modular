@@ -10,40 +10,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Implements the Qwen2.5VL multimodal model architecture."""
-
-from __future__ import annotations
+"""Implements the QwenImageEditPlus image editing model architecture."""
 
 from max.nn import (
     Module,
 )
 
-from .model_config import Qwen3VLConfig
-from .nn.visual_transformer import VisionTransformer
+from .model_config import QwenImageEditPlusConfig
+from .nn.autoencoderkl_qwenimage import AutoencoderKLQwenImage
 
 
-class Qwen3VL(Module):
-    """The overall interface to the Qwen3VL model."""
+class QwenImageEditPlus(Module):
+    """The overall interface to the QwenImageEditPlus model."""
 
-    def __init__(self, config: Qwen3VLConfig) -> None:
+    def __init__(self, config: QwenImageEditPlusConfig) -> None:
         self.config = config
-        self.vision_encoder = self.build_vision_encoder()
-        self.language_model = None
-        # self.language_model = self.build_language_model()
+        self.vae = self.build_VAE()
+        self.transformer = self.build_transformer()
+        self.text_encoder = self.build_text_encoder()
 
-    def build_vision_encoder(self) -> VisionTransformer:
-        return VisionTransformer(
-            config=self.config.vision_config,
+    def build_VAE(self) -> AutoencoderKLQwenImage:
+        return AutoencoderKLQwenImage(
+            config=self.config.vae_config,
         )
 
-    def build_language_model(self) -> Module:
+    def build_transformer(self) -> Module:
         """Return the language model component."""
         raise NotImplementedError(
-            "Qwen3VL language model is not yet implemented."
+            "QwenImageEditPlus transformer is not yet implemented."
         )
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""
         raise NotImplementedError(
-            "Qwen3VL is a container class. Use vision_encoder() or language_model() instead"
+            "QwenImageEditPlus is a container class. Use vision_encoder() or language_model() instead"
         )

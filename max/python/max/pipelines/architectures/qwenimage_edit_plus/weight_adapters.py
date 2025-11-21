@@ -11,8 +11,6 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from __future__ import annotations
-
 from max.driver import Tensor
 from max.dtype import DType
 from max.graph.weights import WeightData, Weights

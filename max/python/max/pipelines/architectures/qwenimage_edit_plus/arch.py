@@ -13,31 +13,30 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
-from max.nn.kv_cache import KVCacheStrategy
 from max.pipelines.lib import SupportedArchitecture, SupportedEncoding
 
-from .model import Qwen3VLModel
-from .tokenizer import Qwen3VLTokenizer
-from .weight_adapters import convert_qwen3vl_model_state_dict
+from .model import QwenImageEditPlusModel
+from .tokenizer import Qwen2_5_VLTokenizer
+from .weight_adapters import convert_qwenimage_edit_plus_model_state_dict
 
-qwen3vl_moe_arch = SupportedArchitecture(
-    name="Qwen3VLMoeForConditionalGeneration",
-    task=PipelineTask.TEXT_GENERATION,
+qwenimage_edit_plus_arch = SupportedArchitecture(
+    name="QwenImageEditPlusPipeline",
+    task=PipelineTask.IMAGE_GENERATION,
     example_repo_ids=[
-        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "Qwen/Qwen-Image-Edit-2509",
     ],
     default_weights_format=WeightsFormat.safetensors,
     multi_gpu_supported=True,
     default_encoding=SupportedEncoding.bfloat16,
     supported_encodings={
-        SupportedEncoding.float32: [KVCacheStrategy.PAGED],
-        SupportedEncoding.bfloat16: [KVCacheStrategy.PAGED],
+        SupportedEncoding.float32: None,
+        SupportedEncoding.bfloat16: None,
     },
     weight_adapters={
-        WeightsFormat.safetensors: convert_qwen3vl_model_state_dict,
+        WeightsFormat.safetensors: convert_qwenimage_edit_plus_model_state_dict,
     },
-    pipeline_model=Qwen3VLModel,
-    tokenizer=Qwen3VLTokenizer,
+    pipeline_model=QwenImageEditPlusModel,
+    tokenizer=Qwen2_5_VLTokenizer,
     required_arguments={
         "enable_chunked_prefill": False,
     },

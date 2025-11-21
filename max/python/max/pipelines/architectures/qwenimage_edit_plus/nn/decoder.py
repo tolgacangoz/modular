@@ -10,9 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Build a Qwen3VL decoder model that uses paged kv-caching."""
-
-from __future__ import annotations
+"""Build a QwenImageEditPlus decoder model that uses paged kv-caching."""
 
 from functools import cached_property
 

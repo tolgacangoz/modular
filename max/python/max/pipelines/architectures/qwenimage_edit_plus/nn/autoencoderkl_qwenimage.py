@@ -11,8 +11,6 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 

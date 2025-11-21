@@ -10,9 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Config for Qwen3VL models."""
-
-from __future__ import annotations
+"""Config for QwenImageEditPlus model."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -29,16 +27,16 @@ from transformers.models.auto.configuration_auto import AutoConfig
 
 @dataclass
 class VisionConfig:
-    """Base configuration for Qwen3VL models with required fields."""
+    """Base configuration for QwenImageEditPlus model with required fields."""
 
     dtype: DType
-    """DType of the Qwen3VL vision model weights."""
+    """DType of the QwenImageEditPlus vision model weights."""
 
     llm_dtype: DType
-    """DType of the Qwen3VL language model weights."""
+    """DType of the QwenImageEditPlus language model weights."""
 
     devices: list[DeviceRef]
-    """Devices that the Qwen3VL vision encoder model is parallelized over."""
+    """Devices that the QwenImageEditPlus vision encoder model is parallelized over."""
 
     patch_size: int
     """Vision transformer patch size."""
@@ -114,11 +112,11 @@ class VisionConfig:
 
 
 @dataclass
-class Qwen3VLConfigBase:
-    """Base configuration for Qwen3VL models with required fields."""
+class QwenImageEditPlusConfigBase:
+    """Base configuration for QwenImageEditPlus models with required fields."""
 
     devices: list[DeviceRef]
-    """Devices that the Qwen3VL model is parallelized over."""
+    """Devices that the QwenImageEditPlus model is parallelized over."""
 
     # Multimodal parameters
     image_token_id: int
@@ -146,8 +144,8 @@ class Qwen3VLConfigBase:
 
 
 @dataclass
-class Qwen3VLConfig(MAXModelConfig, Qwen3VLConfigBase):
-    """Implementation of MAXModelConfig for Qwen3VL models."""
+class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
+    """Implementation of MAXModelConfig for QwenImageEditPlus models."""
 
     @staticmethod
     def help() -> dict[str, str]:
@@ -185,7 +183,7 @@ class Qwen3VLConfig(MAXModelConfig, Qwen3VLConfigBase):
     def calculate_max_seq_len(
         pipeline_config: PipelineConfig, huggingface_config: AutoConfig
     ) -> int:
-        """Calculate maximum sequence length for Qwen3VL."""
+        """Calculate maximum sequence length for QwenImageEditPlus."""
         # Delegate to Llama3Config for language model parameters.
         llm_config = getattr(
             huggingface_config, "text_config", huggingface_config
@@ -207,8 +205,8 @@ class Qwen3VLConfig(MAXModelConfig, Qwen3VLConfigBase):
         kv_cache_config: KVCacheConfig,
         return_logits: ReturnLogits,
         norm_method: Literal["rms_norm"] | Literal["layer_norm"] = "layer_norm",
-    ) -> Qwen3VLConfig:
-        """Generate Qwen3VLConfig from pipeline and HuggingFace configs.
+    ) -> QwenImageEditPlusConfig:
+        """Generate QwenImageEditPlusConfig from pipeline and HuggingFace configs.
 
         Args:
             pipeline_config: Pipeline configuration.
@@ -223,7 +221,7 @@ class Qwen3VLConfig(MAXModelConfig, Qwen3VLConfigBase):
             norm_method: Normalization method.
 
         Returns:
-            Configured Qwen3VLConfig instance.
+            Configured QwenImageEditPlusConfig instance.
         """
         # Create VisionConfig from the vision config
         hf_vision_config = getattr(huggingface_config, "vision_config", None)
@@ -247,10 +245,10 @@ class Qwen3VLConfig(MAXModelConfig, Qwen3VLConfigBase):
             kv_cache_config=kv_cache_config,
             return_logits=return_logits,
             norm_method=norm_method,
-            attention_bias=True,  # Qwen3VL uses Qwen2 which has attention_bias=True
+            attention_bias=True,  # QwenImageEditPlus uses Qwen2 which has attention_bias=True
         )
 
-        return Qwen3VLConfig(
+        return QwenImageEditPlusConfig(
             devices=[
                 DeviceRef(spec.device_type, spec.id)
                 for spec in pipeline_config.model_config.device_specs

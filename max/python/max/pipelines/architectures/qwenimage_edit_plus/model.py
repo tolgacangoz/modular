@@ -11,8 +11,6 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Sequence
@@ -52,19 +50,19 @@ from max.pipelines.lib import (
 from max.profiler import Tracer
 from transformers import AutoConfig
 
-from .context import Qwen3VLTextAndVisionContext, VisionEncodingData
-from .model_config import Qwen3VLConfig
-from .qwen3vl import Qwen3VL
-from .weight_adapters import convert_qwen3vl_model_state_dict
+from .context import QwenImageEditPlusTextAndVisionContext, VisionEncodingData
+from .model_config import QwenImageEditPlusConfig
+from .qwenimage_edit_plus import QwenImageEditPlus
+from .weight_adapters import convert_qwenimage_edit_plus_model_state_dict
 
 logger = logging.getLogger("max.pipelines")
 
 
 @dataclass(eq=False)
-class Qwen3VLInputs(ModelInputs):
-    """A class representing inputs for the Qwen3VL model.
+class QwenImageEditPlusInputs(ModelInputs):
+    """A class representing inputs for the QwenImageEditPlus model.
 
-    This class encapsulates the input tensors required for the Qwen3VL model execution,
+    This class encapsulates the input tensors required for the QwenImageEditPlus model execution,
     including both text and vision inputs. Vision inputs are optional and can be None
     for text-only processing.
     """
@@ -121,12 +119,12 @@ class Qwen3VLInputs(ModelInputs):
         return self.pixel_values is not None
 
 
-class Qwen3VLModel(
+class QwenImageEditPlusModel(
     AlwaysSignalBuffersMixin,
-    PipelineModel[Qwen3VLTextAndVisionContext],
+    PipelineModel[QwenImageEditPlusTextAndVisionContext],
     KVCacheMixin,
 ):
-    """A Qwen3VL pipeline model for multimodal text generation."""
+    """A QwenImageEditPlus pipeline model for multimodal text generation."""
 
     vision_model: Model
     """The compiled vision model for processing images."""
@@ -134,8 +132,8 @@ class Qwen3VLModel(
     language_model: Model
     """The compiled language model for text generation."""
 
-    model_config: Qwen3VLConfig | None
-    """The Qwen3VL model configuration."""
+    model_config: QwenImageEditPlusConfig | None
+    """The QwenImageEditPlus model configuration."""
 
     _input_row_offsets_prealloc: list[Tensor]
     """Pre-allocated per-device tensors for input row offsets in multi-step execution."""
@@ -178,8 +176,8 @@ class Qwen3VLModel(
     def calculate_max_seq_len(
         pipeline_config: PipelineConfig, huggingface_config: AutoConfig
     ) -> int:
-        """Calculates the maximum sequence length for the Qwen3VL model."""
-        return Qwen3VLConfig.calculate_max_seq_len(
+        """Calculates the maximum sequence length for the QwenImageEditPlus model."""
+        return QwenImageEditPlusConfig.calculate_max_seq_len(
             pipeline_config, huggingface_config
         )
 
@@ -192,8 +190,8 @@ class Qwen3VLModel(
         kv_cache_config: KVCacheConfig,
         cache_dtype: DType,
     ) -> KVCacheParams:
-        """Gets the parameters required to configure the KV cache for Qwen3VL."""
-        return Qwen3VLConfig.get_kv_params(
+        """Gets the parameters required to configure the KV cache for QwenImageEditPlus."""
+        return QwenImageEditPlusConfig.get_kv_params(
             huggingface_config, n_devices, kv_cache_config, cache_dtype
         )
 
@@ -201,7 +199,7 @@ class Qwen3VLModel(
     @classmethod
     def get_num_layers(cls, huggingface_config: AutoConfig) -> int:
         """Gets the number of hidden layers from the HuggingFace configuration."""
-        return Qwen3VLConfig.get_num_layers(huggingface_config)
+        return QwenImageEditPlusConfig.get_num_layers(huggingface_config)
 
     # TODO: Seems like a common pattern. Implement in a base class?
     @classmethod
@@ -214,9 +212,9 @@ class Qwen3VLModel(
         kv_cache_config: KVCacheConfig,
         cache_dtype: DType,
     ) -> int:
-        """Estimates the size of the KV cache required for the Qwen3VL model in bytes."""
+        """Estimates the size of the KV cache required for the QwenImageEditPlus model in bytes."""
         return estimate_kv_cache_size(
-            params=Qwen3VLConfig.get_kv_params(
+            params=QwenImageEditPlusConfig.get_kv_params(
                 huggingface_config=huggingface_config,
                 n_devices=len(devices),
                 kv_cache_config=kv_cache_config,
@@ -254,7 +252,7 @@ class Qwen3VLModel(
     def load_model(
         self, session: InferenceSession
     ) -> tuple[Model, Model | None]:
-        """Loads the compiled Qwen3VL models into the MAX Engine session.
+        """Loads the compiled QwenImageEditPlus models into the MAX Engine session.
 
         Returns:
             A tuple of (vision_model, language_model).
@@ -274,7 +272,7 @@ class Qwen3VLModel(
         # Validate SafetensorWeights requirement
         if not isinstance(self.weights, SafetensorWeights):
             raise ValueError(
-                "Qwen3VL currently only supports safetensors weights"
+                "QwenImageEditPlus currently only supports safetensors weights"
             )
 
         # Get processed state dict
@@ -283,8 +281,8 @@ class Qwen3VLModel(
                 dict(self.weights.items()),
             )
         else:
-            # Use the weight adapter to convert Qwen3VL checkpoint format
-            model_state_dict = convert_qwen3vl_model_state_dict(
+            # Use the weight adapter to convert QwenImageEditPlus checkpoint format
+            model_state_dict = convert_qwenimage_edit_plus_model_state_dict(
                 dict(self.weights.items())
             )
 
@@ -302,8 +300,8 @@ class Qwen3VLModel(
                     f"Key: {key} is not part of the vision or language model"
                 )
 
-        # Generate Qwen3VL config from HuggingFace config
-        qwen3vl_config = Qwen3VLConfig.generate(
+        # Generate QwenImageEditPlus config from HuggingFace config
+        qwenimage_edit_plus_config = QwenImageEditPlusConfig.generate(
             pipeline_config=self.pipeline_config,
             huggingface_config=self.huggingface_config,
             llm_state_dict=llm_state_dict,
@@ -314,10 +312,10 @@ class Qwen3VLModel(
             kv_cache_config=self.kv_cache_config,
             return_logits=self.return_logits,
         )
-        self.model_config = qwen3vl_config
+        self.model_config = qwenimage_edit_plus_config
 
         # TODO: load weights into the model
-        self.model: Module = Qwen3VL(self.model_config)
+        self.model: Module = QwenImageEditPlus(self.model_config)
         # self.model.load_state_dict(model_state_dict, strict=True)
         # For now, load weights into the vision model only.
         self.model.vision_encoder.load_state_dict(
@@ -329,7 +327,7 @@ class Qwen3VLModel(
         logger.info("Building and compiling vision model...")
         before = time.perf_counter()
         vision_graph = self._build_vision_graph(
-            qwen3vl_config, vision_state_dict
+            qwenimage_edit_plus_config, vision_state_dict
         )
         after_build = time.perf_counter()
 
@@ -356,7 +354,7 @@ class Qwen3VLModel(
         # logger.info("Building and compiling language model...")
         # before = time.perf_counter()
         # language_graph, language_model_state_dict = self._build_language_graph(
-        #     qwen3vl_config, llm_state_dict
+        #     qwenimage_edit_plus_config, llm_state_dict
         # )
         # after_build = time.perf_counter()
 
@@ -381,10 +379,10 @@ class Qwen3VLModel(
         return vision_model, language_model
 
     def _build_vision_graph(
-        self, config: Qwen3VLConfig, state_dict: dict[str, WeightData]
+        self, config: QwenImageEditPlusConfig, state_dict: dict[str, WeightData]
     ) -> Graph:
         """Build the vision model graph for processing images."""
-        assert isinstance(self.model, Qwen3VL)
+        assert isinstance(self.model, QwenImageEditPlus)
         vision_encoder = self.model.vision_encoder
 
         # Define vision graph input types - one per device
@@ -467,7 +465,7 @@ class Qwen3VLModel(
 
         # Build the vision graph
         with Graph(
-            "qwen3vl_vision",
+            "qwenimage_edit_plus_vision",
             input_types=tuple(
                 [
                     *pixel_values_types,
@@ -616,25 +614,25 @@ class Qwen3VLModel(
         )
 
     def _build_language_graph(
-        self, config: Qwen3VLConfig, state_dict: dict[str, WeightData]
+        self, config: QwenImageEditPlusConfig, state_dict: dict[str, WeightData]
     ) -> tuple[Graph, dict[str, Any]]:
         """Build the language model graph for text generation with image embeddings."""
-        # TODO: Implement Qwen3VLLanguageModel that handles image embeddings merging
+        # TODO: Implement QwenImageEditPlusLanguageModel that handles image embeddings merging
         # For now, this is a placeholder that will need to be completed
         # The language model should merge image embeddings with text embeddings
         # at image token positions, similar to how InternVL or Qwen2.5VL does it
 
         raise NotImplementedError(
-            "Language model graph building for Qwen3VL is not yet implemented. "
-            "A Qwen3VLLanguageModel class that handles image embeddings merging "
+            "Language model graph building for QwenImageEditPlus is not yet implemented. "
+            "A QwenImageEditPlusLanguageModel class that handles image embeddings merging "
             "needs to be created first."
         )
 
     def execute(self, model_inputs: ModelInputs) -> ModelOutputs:
-        """Executes the Qwen3VL model with the prepared inputs."""
-        assert isinstance(model_inputs, Qwen3VLInputs)
+        """Executes the QwenImageEditPlus model with the prepared inputs."""
+        assert isinstance(model_inputs, QwenImageEditPlusInputs)
         assert model_inputs.kv_cache_inputs is not None, (
-            "Qwen3VL requires KV cache inputs"
+            "QwenImageEditPlus requires KV cache inputs"
         )
 
         # Process vision inputs if present
@@ -715,11 +713,11 @@ class Qwen3VLModel(
 
     def prepare_initial_token_inputs(
         self,
-        context_batch: Sequence[Qwen3VLTextAndVisionContext],
+        context_batch: Sequence[QwenImageEditPlusTextAndVisionContext],
         kv_cache_inputs: KVCacheInputs | None = None,
         return_n_logits: int = 1,
-    ) -> Qwen3VLInputs:
-        """Prepares the initial inputs for the first execution pass of the Qwen3VL model."""
+    ) -> QwenImageEditPlusInputs:
+        """Prepares the initial inputs for the first execution pass of the QwenImageEditPlus model."""
         if kv_cache_inputs is None:
             raise ValueError("KV Cache Inputs must be provided")
 
@@ -727,8 +725,8 @@ class Qwen3VLModel(
         vision_datas: list[VisionEncodingData] = []
         for ctx in context_batch:
             # Validate all contexts are the correct type
-            assert isinstance(ctx, Qwen3VLTextAndVisionContext), (
-                f"Expected Qwen3VLTextAndVisionContext, got {type(ctx).__name__}"
+            assert isinstance(ctx, QwenImageEditPlusTextAndVisionContext), (
+                f"Expected QwenImageEditPlusTextAndVisionContext, got {type(ctx).__name__}"
             )
             if ctx.needs_vision_encoding:
                 assert ctx.vision_data is not None, (
@@ -769,9 +767,9 @@ class Qwen3VLModel(
                     )
                 else:
                     # Recompute or use simple position IDs
-                    # TODO: Implement proper position ID computation for Qwen3VL
+                    # TODO: Implement proper position ID computation for QwenImageEditPlus
                     context_seq_length = ctx.active_length
-                    # Qwen3VL uses 3D position IDs (mrope)
+                    # QwenImageEditPlus uses 3D position IDs (mrope)
                     temp_pos_ids = np.tile(
                         np.arange(context_seq_length).reshape(1, 1, -1),
                         (
@@ -814,7 +812,7 @@ class Qwen3VLModel(
                 image_token_indices = None
 
         if not any_needs_vision_encoding:
-            return Qwen3VLInputs(
+            return QwenImageEditPlusInputs(
                 input_ids=input_ids,
                 input_row_offsets=input_row_offsets,
                 signal_buffers=self.signal_buffers,
@@ -915,7 +913,7 @@ class Qwen3VLModel(
         )
         max_seqlen = [max_seqlen_tensor for _ in self.devices]
 
-        return Qwen3VLInputs(
+        return QwenImageEditPlusInputs(
             input_ids=input_ids,
             input_row_offsets=input_row_offsets,
             signal_buffers=self.signal_buffers,
@@ -937,9 +935,9 @@ class Qwen3VLModel(
 
     def prepare_next_token_inputs(
         self, next_tokens: Tensor, prev_model_inputs: ModelInputs
-    ) -> Qwen3VLInputs:
+    ) -> QwenImageEditPlusInputs:
         """Prepares the inputs for subsequent execution steps in a multi-step generation."""
-        assert isinstance(prev_model_inputs, Qwen3VLInputs)
+        assert isinstance(prev_model_inputs, QwenImageEditPlusInputs)
         prev_inputs = prev_model_inputs
 
         # Use pre-allocated row offsets for next token
@@ -959,7 +957,7 @@ class Qwen3VLModel(
             self.devices[0]
         )
 
-        return Qwen3VLInputs(
+        return QwenImageEditPlusInputs(
             signal_buffers=self.signal_buffers,
             input_ids=next_tokens,
             input_row_offsets=next_row_offsets,
@@ -981,9 +979,9 @@ class Qwen3VLModel(
     def load_kv_manager(
         self, session: InferenceSession, available_cache_memory: int | None
     ) -> PagedKVCacheManager | NullKVCacheManager:
-        """Loads and initializes the PagedKVCacheManager for the Qwen3VL model."""
+        """Loads and initializes the PagedKVCacheManager for the QwenImageEditPlus model."""
         return load_kv_manager(
-            params=Qwen3VLConfig.get_kv_params(
+            params=QwenImageEditPlusConfig.get_kv_params(
                 huggingface_config=self.huggingface_config,
                 n_devices=len(self.devices),
                 kv_cache_config=self.kv_cache_config,
