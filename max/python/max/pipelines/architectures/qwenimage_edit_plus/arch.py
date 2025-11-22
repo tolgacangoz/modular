@@ -13,10 +13,14 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
-from max.pipelines.lib import SupportedArchitecture, SupportedEncoding
+from max.pipelines.lib import RopeType, SupportedArchitecture, SupportedEncoding
 
 from .model import QwenImageEditPlusModel
-from .tokenizer import Qwen2_5_VLTokenizer
+from ..qwen2_5vl import qwen2_5_vl_arch
+from ..qwen2_5vl.tokenizer import Qwen2_5VLTokenizer
+from .nn.transformer_qwenimage import QwenImageTransformer2DModel
+from .nn.autoencoderkl_qwenimage import AutoencoderKLQwenImage
+from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from .weight_adapters import convert_qwenimage_edit_plus_model_state_dict
 
 qwenimage_edit_plus_arch = SupportedArchitecture(
@@ -36,7 +40,12 @@ qwenimage_edit_plus_arch = SupportedArchitecture(
         WeightsFormat.safetensors: convert_qwenimage_edit_plus_model_state_dict,
     },
     pipeline_model=QwenImageEditPlusModel,
-    tokenizer=Qwen2_5_VLTokenizer,
+    scheduler=FlowMatchEulerDiscreteScheduler,
+    vae=AutoencoderKLQwenImage,
+    text_encoder=qwen2_5_vl_arch,
+    tokenizer=Qwen2_5VLTokenizer,
+    transformer=QwenImageTransformer2DModel,
+    rope_type=RopeType.normal,
     required_arguments={
         "enable_chunked_prefill": False,
     },
