@@ -10,14 +10,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Implements the QwenImageEditPlus image editing model architecture."""
+"""Implements the QwenImageEditPlus multimodal model architecture."""
 
 from max.nn import (
     Module,
 )
 
 from .model_config import QwenImageEditPlusConfig
+from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from .nn.autoencoderkl_qwenimage import AutoencoderKLQwenImage
+from .nn.transformer_qwenimage import QwenImageTransformer2DModel
+from max.pipelines.architectures.qwen2_5vl.model import Qwen2_5VLModel
 
 
 class QwenImageEditPlus(Module):
@@ -25,23 +28,29 @@ class QwenImageEditPlus(Module):
 
     def __init__(self, config: QwenImageEditPlusConfig) -> None:
         self.config = config
-        self.vae = self.build_VAE()
-        self.transformer = self.build_transformer()
+        self.scheduler = self.build_scheduler()
+        self.vae = self.build_vae()
         self.text_encoder = self.build_text_encoder()
+        self.transformer = self.build_transformer()
 
-    def build_VAE(self) -> AutoencoderKLQwenImage:
-        return AutoencoderKLQwenImage(
-            config=self.config.vae_config,
-        )
+    def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
+        """Build the scheduler component."""
+        return FlowMatchEulerDiscreteScheduler(self.config.scheduler_config)
 
-    def build_transformer(self) -> Module:
-        """Return the language model component."""
-        raise NotImplementedError(
-            "QwenImageEditPlus transformer is not yet implemented."
-        )
+    def build_vae(self) -> AutoencoderKLQwenImage:
+        """Build the VAE component."""
+        return AutoencoderKLQwenImage(self.config.vae_config)
+
+    def build_text_encoder(self) -> Qwen2_5VLModel:
+        """Build the text encoder component."""
+        return Qwen2_5VLModel(**self.config.text_encoder_config)
+
+    def build_transformer(self) -> QwenImageTransformer2DModel:
+        """Build the transformer component."""
+        return QwenImageTransformer2DModel(self.config.transformer_config)
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""
         raise NotImplementedError(
-            "QwenImageEditPlus is a container class. Use vision_encoder() or language_model() instead"
+            "QwenImageEditPlus is a container class. Use scheduler(), vae(), text_encoder(), or transformer() instead"
         )
