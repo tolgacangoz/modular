@@ -11,908 +11,1031 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from typing import List, Optional, Tuple, Union
 
-from max.dtype import DType
-from max.graph import (
-    BufferValue,
-    DeviceRef,
-    Dim,
-    ShardingStrategy,
-    TensorValue,
-    ops,
-)
-from max.nn import (
-    Allreduce,
-    Embedding,
-    LayerList,
-    LayerNorm,
-    Linear,
-    Shardable,
-)
-from max.nn.kernels import spatial_merge
-from max.nn.layer import Module
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-from ...qwen2_5vl.nn.vision_attention import DistributedVisionWindowAttention
-from ..model_config import VisionConfig
+from ...configuration_utils import ConfigMixin, register_to_config
+from ...loaders import FromOriginalModelMixin
+from ...utils import logging
+from ...utils.accelerate_utils import apply_forward_hook
+from ..activations import get_activation
+from ..modeling_outputs import AutoencoderKLOutput
+from ..modeling_utils import ModelMixin
+from .vae import AutoencoderMixin, DecoderOutput, DiagonalGaussianDistribution
 
 
-class VisionPatchEmbed(Module, Shardable):
-    """Generates patch embeddings from a tensor of pixel_values of patches using a Linear layer.
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-    This implementation uses a Linear layer instead of Conv3D, which is mathematically
-    equivalent when stride equals kernel size (non-overlapping patches).
+CACHE_T = 2
 
-    Compared to Qwen2.5VL:
-    - Conv3D projection has bias.
-    - No re-ordering of patch embeddings after projection by window_index.
+
+class QwenImageCausalConv3d(nn.Conv3d):
+    r"""
+    A custom 3D causal convolution layer with feature caching support.
+
+    This layer extends the standard Conv3D layer by ensuring causality in the time dimension and handling feature
+    caching for efficient inference.
+
+    Args:
+        in_channels (int): Number of channels in the input image
+        out_channels (int): Number of channels produced by the convolution
+        kernel_size (int or tuple): Size of the convolving kernel
+        stride (int or tuple, optional): Stride of the convolution. Default: 1
+        padding (int or tuple, optional): Zero-padding added to all three sides of the input. Default: 0
     """
 
     def __init__(
         self,
-        dtype: DType,
-        devices: Sequence[DeviceRef],
-        patch_size: int,
-        temporal_patch_size: int,
         in_channels: int,
-        embed_dim: int,
-    ):
+        out_channels: int,
+        kernel_size: Union[int, Tuple[int, int, int]],
+        stride: Union[int, Tuple[int, int, int]] = 1,
+        padding: Union[int, Tuple[int, int, int]] = 0,
+    ) -> None:
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+        )
+
+        # Set up causal padding
+        self._padding = (self.padding[2], self.padding[2], self.padding[1], self.padding[1], 2 * self.padding[0], 0)
+        self.padding = (0, 0, 0)
+
+    def forward(self, x, cache_x=None):
+        padding = list(self._padding)
+        if cache_x is not None and self._padding[4] > 0:
+            cache_x = cache_x.to(x.device)
+            x = torch.cat([cache_x, x], dim=2)
+            padding[4] -= cache_x.shape[2]
+        x = F.pad(x, padding)
+        return super().forward(x)
+
+
+class QwenImageRMS_norm(nn.Module):
+    r"""
+    A custom RMS normalization layer.
+
+    Args:
+        dim (int): The number of dimensions to normalize over.
+        channel_first (bool, optional): Whether the input tensor has channels as the first dimension.
+            Default is True.
+        images (bool, optional): Whether the input represents image data. Default is True.
+        bias (bool, optional): Whether to include a learnable bias term. Default is False.
+    """
+
+    def __init__(self, dim: int, channel_first: bool = True, images: bool = True, bias: bool = False) -> None:
         super().__init__()
-        self.devices = devices or [DeviceRef.CPU()]
-        self._sharding_strategy: ShardingStrategy | None = None
+        broadcastable_dims = (1, 1, 1) if not images else (1, 1)
+        shape = (dim, *broadcastable_dims) if channel_first else (dim,)
 
-        self.patch_size = patch_size
-        self.temporal_patch_size = temporal_patch_size
-        self.in_channels = in_channels
-        self.embed_dim = embed_dim
+        self.channel_first = channel_first
+        self.scale = dim**0.5
+        self.gamma = nn.Parameter(torch.ones(shape))
+        self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
 
-        # Calculate input dimension for linear layer, equivalent to the flattened patch size
-        self.patch_dim = (
-            self.in_channels
-            * self.temporal_patch_size
-            * self.patch_size
-            * self.patch_size
-        )
+    def forward(self, x):
+        return F.normalize(x, dim=(1 if self.channel_first else -1)) * self.scale * self.gamma + self.bias
 
-        # Create Linear layer instead of Conv3D, mathematically equivalent to Conv3D when stride = kernel size
-        self.proj = Linear(
-            in_dim=self.patch_dim,
-            out_dim=embed_dim,
-            dtype=dtype,
-            device=devices[0],
-            quantization_encoding=None,
-            has_bias=True,
-        )
 
-    def __call__(
-        self,
-        x: TensorValue,
-    ) -> TensorValue:
-        """Generates patch embeddings from pixel_values of patches (`x`).
+class QwenImageUpsample(nn.Upsample):
+    r"""
+    Perform upsampling while ensuring the output tensor has the same data type as the input.
 
-        Uses Linear layer instead of Conv3D for patch embedding, which is mathematically
-        equivalent when stride equals kernel size (non-overlapping patches).
+    Args:
+        x (torch.Tensor): Input tensor to be upsampled.
 
-        Args:
-            x: tensor representing pixel values of shape [n_patches, patch_dim].
+    Returns:
+        torch.Tensor: Upsampled tensor with the same data type as the input.
+    """
 
-        Returns:
-            a tensor of size (seq_len, hidden_size = embed_dim)
-        """
-        x = x.cast(self.proj.weight.dtype)
+    def forward(self, x):
+        return super().forward(x.float()).type_as(x)
 
-        # Shape: (n_patches_in_batch, patch_dim)
-        assert x.shape[1] == self.patch_dim, (
-            f"x.shape should be (n_patches, patch_dim) = {x.shape}, self.patch_dim = {self.patch_dim}"
-        )
 
-        # Apply linear transformation
-        h = self.proj(x)
+class QwenImageResample(nn.Module):
+    r"""
+    A custom resampling module for 2D and 3D data.
 
-        seq_len = h.shape[0]
+    Args:
+        dim (int): The number of input/output channels.
+        mode (str): The resampling mode. Must be one of:
+            - 'none': No resampling (identity operation).
+            - 'upsample2d': 2D upsampling with nearest-exact interpolation and convolution.
+            - 'upsample3d': 3D upsampling with nearest-exact interpolation, convolution, and causal 3D convolution.
+            - 'downsample2d': 2D downsampling with zero-padding and convolution.
+            - 'downsample3d': 3D downsampling with zero-padding, convolution, and causal 3D convolution.
+    """
 
-        h = h.reshape([-1, self.embed_dim]).rebind([seq_len, self.embed_dim])
-        return h
+    def __init__(self, dim: int, mode: str) -> None:
+        super().__init__()
+        self.dim = dim
+        self.mode = mode
 
-    @property
-    def sharding_strategy(self) -> ShardingStrategy | None:
-        return self._sharding_strategy
-
-    @sharding_strategy.setter
-    def sharding_strategy(self, strategy: ShardingStrategy) -> None:
-        assert strategy.is_replicate, (
-            "VisionPatchEmbed only supports replicate sharding strategy"
-        )
-        self.proj.sharding_strategy = ShardingStrategy.replicate(
-            strategy.num_devices
-        )
-        self._sharding_strategy = strategy
-
-    def shard(self, devices: Iterable[DeviceRef]) -> list[VisionPatchEmbed]:
-        if not self.sharding_strategy:
-            raise ValueError(
-                "VisionPatchEmbed layer cannot be sharded because no sharding strategy was provided."
+        # layers
+        if mode == "upsample2d":
+            self.resample = nn.Sequential(
+                QwenImageUpsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim // 2, 3, padding=1),
             )
-        proj_shards = self.proj.shard(devices)
-        shards = []
-        for shard_idx, device in enumerate(devices):
-            sharded = VisionPatchEmbed(
-                dtype=self.proj.weight.dtype,
-                devices=[device],
-                patch_size=self.patch_size,
-                temporal_patch_size=self.temporal_patch_size,
-                in_channels=self.in_channels,
-                embed_dim=self.embed_dim,
+        elif mode == "upsample3d":
+            self.resample = nn.Sequential(
+                QwenImageUpsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim // 2, 3, padding=1),
             )
-            sharded.proj = proj_shards[shard_idx]
-            shards.append(sharded)
-        return shards
+            self.time_conv = QwenImageCausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
 
+        elif mode == "downsample2d":
+            self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
+        elif mode == "downsample3d":
+            self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
+            self.time_conv = QwenImageCausalConv3d(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
 
-class BilinearInterpolationPositionEmbedding(Module):
-    """Bilinear interpolation position embedding layer for the qwen3VL vision model.
+        else:
+            self.resample = nn.Identity()
 
-    This module performs bilinear interpolation of position embeddings to the desired spatial resolution.
-    It supports sharding across multiple devices for distributed execution.
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        b, c, t, h, w = x.size()
+        if self.mode == "upsample3d":
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                if feat_cache[idx] is None:
+                    feat_cache[idx] = "Rep"
+                    feat_idx[0] += 1
+                else:
+                    cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                    if cache_x.shape[2] < 2 and feat_cache[idx] is not None and feat_cache[idx] != "Rep":
+                        # cache last frame of last two chunk
+                        cache_x = torch.cat(
+                            [feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2
+                        )
+                    if cache_x.shape[2] < 2 and feat_cache[idx] is not None and feat_cache[idx] == "Rep":
+                        cache_x = torch.cat([torch.zeros_like(cache_x).to(cache_x.device), cache_x], dim=2)
+                    if feat_cache[idx] == "Rep":
+                        x = self.time_conv(x)
+                    else:
+                        x = self.time_conv(x, feat_cache[idx])
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
 
-    It uses a Standard embedding layer
-    * Embedding table of size (num_position_embeddings, hidden_size).
-    * Assumes a square grid (e.g., 16x16 = 256 embeddings).
-    * Computes num_grid_per_side = sqrt(num_position_embeddings).
-    * Bilinear interpolation is applied for each patch:
-        1. Retrieve embeddings of the 4 neighboring positions using nn.Embedding.
-        2. Multiply each neighbor embedding by its interpolation weight.
-        3. Sum the 4 weighted embeddings to get the final interpolated embedding.
-    """
+                    x = x.reshape(b, 2, c, t, h, w)
+                    x = torch.stack((x[:, 0, :, :, :, :], x[:, 1, :, :, :, :]), 3)
+                    x = x.reshape(b, c, t * 2, h, w)
+        t = x.shape[2]
+        x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+        x = self.resample(x)
+        x = x.view(b, t, x.size(1), x.size(2), x.size(3)).permute(0, 2, 1, 3, 4)
 
-    def __init__(
-        self,
-        dtype: DType,
-        device: DeviceRef,
-        num_position_embeddings: int,
-        hidden_size: int,
-        spatial_merge_size: int,
-    ):
-        super().__init__()
-        self.device = device
-        self.dim = hidden_size
-        self.spatial_merge_size = spatial_merge_size
-        self.num_position_embeddings = num_position_embeddings
-        self.num_grid_per_side = int(num_position_embeddings**0.5)
-        self.embedding = Embedding(
-            vocab_size=num_position_embeddings,
-            hidden_dim=hidden_size,
-            dtype=dtype,
-            device=device,
-            quantization_encoding=None,
-        )
-
-    def __call__(
-        self,
-        idxs: TensorValue,
-        weights: TensorValue,
-        grid_thw: TensorValue,
-    ) -> TensorValue:
-        """
-        Args:
-            idxs: tensor of shape (4, total_n_patches)
-            weights: tensor of shape (4, total_n_patches)
-            grid_thw: tensor of shape (n_images, 3)
-            signal_buffers: sequence of buffers for peer-to-peer communication in allreduce
-
-        Returns:
-            tensor of shape (total_n_patches, hidden_size)
-        """
-        weights = weights.cast(self.embedding.weight.dtype)
-        # pos_embeds_[i].shape: (total_n_patches, hidden_size)
-        pos_embeds_0 = self.embedding(idxs[0, :])
-        pos_embeds_1 = self.embedding(idxs[1, :])
-        pos_embeds_2 = self.embedding(idxs[2, :])
-        pos_embeds_3 = self.embedding(idxs[3, :])
-
-        weighted_embeds_0 = pos_embeds_0 * weights[0, :]
-        weighted_embeds_1 = pos_embeds_1 * weights[1, :]
-        weighted_embeds_2 = pos_embeds_2 * weights[2, :]
-        weighted_embeds_3 = pos_embeds_3 * weights[3, :]
-
-        # shape: (total_n_patches, hidden_size)
-        weighted_embeds = (
-            weighted_embeds_0
-            + weighted_embeds_1
-            + weighted_embeds_2
-            + weighted_embeds_3
-        )
-        # TODO: This will be done in the kernel for bilinear interpolation embedding. Kernel is WIP.
-        # split weighted_embeds to have embeds of each video in a tensor.
-        # for each video, repeat patches t times, then apply spatial merging which is described as follows:
-        # Reshapes from (t, h, w, hidden_size) to (t, h//merge_size, merge_size, w//merge_size, merge_size, hidden_size)
-        # Reorders dimensions to: (t, h//merge_size, w//merge_size, merge_size, merge_size, hidden_size)
-        # Flattens the first 5 dimensions, combining temporal and spatial dimensions
-        # Final shape becomes (t * h//merge_size * w//merge_size * merge_size * merge_size, hidden_size) = (t*h*w, hidden_size)
-
-        # Example, for a 3D grid with t = 1:
-        # weighted_embeds = weighted_embeds.reshape(1, h // self.spatial_merge_size, self.spatial_merge_size, w // self.spatial_merge_size, self.spatial_merge_size, -1)
-        # weighted_embeds = weighted_embeds.permute(0, 1, 3, 2, 4, 5)
-        # weighted_embeds = weighted_embeds.flatten(0, 4)
-        # weighted_embeds = weighted_embeds.reshape(-1, weighted_embeds.shape[-1])
-
-        weighted_embeds = spatial_merge(
-            input=weighted_embeds,
-            grid_thw=grid_thw,
-            hidden_size=self.dim,
-            merge_size=self.spatial_merge_size,
-        )
-        return weighted_embeds
-
-
-@dataclass
-class VisionRotaryEmbedding(Module):
-    """Rotary embedding layer for the Qwen3VLMOE vision model.
-
-    Differences compared to `max.nn.RotaryEmbedding`:
-
-    - In _compute_inv_freqs, the head dimension (n) is divided by 2.
-    - inv_freqs is cached instead of freqs.
-
-    Compared to Qwen2.5VL:
-    - No spatial merging while generating the rotary position embeddings.
-    """
-
-    dim: int
-    n_heads: int
-    theta: float
-    _inv_freqs: TensorValue | None = None
-
-    def __post_init__(self):
-        super().__init__()
-
-    def _compute_inv_freqs(self, device: DeviceRef) -> TensorValue:
-        """Compute inverse frequencies for the given device."""
-        n = (self.dim // self.n_heads) // 2
-        # Note: using float64 to avoid an overflow on the exponential, then convert to float32.
-        iota = ops.range(
-            0,
-            n - 1,
-            2,
-            out_dim=n // 2,
-            device=device,
-            dtype=DType.float64,
-        )
-        inv_freq = ops.cast(1.0 / (self.theta ** (iota / n)), DType.float32)
-        return TensorValue(inv_freq)
-
-    def inv_freqs(self, device: DeviceRef) -> TensorValue:
-        """Compute and cache inverse frequencies for the given device."""
-        if self._inv_freqs is None:
-            self._inv_freqs = self._compute_inv_freqs(device)
-        return self._inv_freqs
-
-    def generate_rot_pos_embeddings(
-        self,
-        rot_pos_ids: TensorValue,
-        max_grid_size: TensorValue,
-        seq_len: Dim,
-    ) -> tuple[TensorValue, TensorValue]:
-        """Generates rotary position embeddings for a maximum sequence length of max_grid_size.
-
-        Args:
-            rot_pos_ids: tensor of shape (seq_len, 2) generated by data_processing.mrope_pos_ids_3d(grid_thw, spatial_merge_size).
-            max_grid_size: max value in spatial dimensions in the grid of image and video patches.
-                It represents the max no. of patches in an image or a frame. Used as the max positional embedding needed.
-            seq_len: total number of patches in the sequence of images and videos. Its also pixel_values.shape[0].
-        """
-        # Generate rot_embs assuming max number of patches.
-        t = ops.range(
-            0,
-            max_grid_size,
-            1,
-            out_dim="max_grid_size",
-            device=rot_pos_ids.device,
-            dtype=DType.float32,
-        )
-        rotary_pos_emb_full = ops.outer(t, self.inv_freqs(rot_pos_ids.device))
-        # Retrieve position embeddings for each patch in input images or videos.
-        rotary_pos_emb = ops.gather(rotary_pos_emb_full, rot_pos_ids, axis=0)
-        rotary_pos_emb = rotary_pos_emb.flatten(1)
-
-        rotary_pos_emb = rotary_pos_emb.reshape([seq_len, -1])
-
-        # Generates a cos and a sin of rotary position embeddings which will be applied later. Shape = (seq_len, 2 * hidden_size).
-        rotary_pos_emb = ops.concat((rotary_pos_emb, rotary_pos_emb), -1)
-
-        freqs_cis = (ops.cos(rotary_pos_emb), ops.sin(rotary_pos_emb))
-        return freqs_cis
-
-    def __call__(
-        self,
-        x: TensorValue,
-    ) -> TensorValue:
-        raise NotImplementedError
-
-
-class VisionMLP(Module, Shardable):
-    """MLP layer for the Qwen3VL vision model.
-
-    Compared to Qwen2.5VL:
-    - MLP layer is 2 linear layers instead of 3 linear layers.
-    - MLP layer uses gelu_pytorch_tanh activation instead of Gelu activation.
-    """
-
-    def __init__(
-        self,
-        dtype: DType,
-        devices: Sequence[DeviceRef],
-        hidden_size: int,
-        intermediate_size: int,
-    ):
-        super().__init__()
-        self.dtype = dtype
-        self.devices = devices
-        self.hidden_size = hidden_size
-        self.intermediate_size = intermediate_size
-
-        self.linear_fc1 = Linear(
-            in_dim=hidden_size,
-            out_dim=intermediate_size,
-            dtype=dtype,
-            device=devices[0],
-            has_bias=True,
-        )
-        self.linear_fc2 = Linear(
-            in_dim=intermediate_size,
-            out_dim=hidden_size,
-            dtype=dtype,
-            device=devices[0],
-            has_bias=True,
-        )
-
-    def __call__(self, x: TensorValue) -> TensorValue:
-        x = self.linear_fc1(x)
-        # This matches the "gelu_pytorch_tanh" activation in the torch.
-        x = ops.gelu(x, approximate="tanh")
-        x = self.linear_fc2(x)
+        if self.mode == "downsample3d":
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                if feat_cache[idx] is None:
+                    feat_cache[idx] = x.clone()
+                    feat_idx[0] += 1
+                else:
+                    cache_x = x[:, :, -1:, :, :].clone()
+                    x = self.time_conv(torch.cat([feat_cache[idx][:, :, -1:, :, :], x], 2))
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
         return x
 
-    @property
-    def sharding_strategy(self) -> ShardingStrategy | None:
-        return self.linear_fc1.sharding_strategy
 
-    @sharding_strategy.setter
-    def sharding_strategy(self, strategy: ShardingStrategy) -> None:
-        if strategy.is_replicate:
-            # Replicate all weights across devices
-            self.linear_fc1.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-            self.linear_fc2.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-        else:
-            # Tensor parallel: first linear rowwise, second linear columnwise
-            self.linear_fc1.sharding_strategy = ShardingStrategy.rowwise(
-                strategy.num_devices
-            )
-            self.linear_fc2.sharding_strategy = ShardingStrategy.columnwise(
-                strategy.num_devices
-            )
+class QwenImageResidualBlock(nn.Module):
+    r"""
+    A custom residual block module.
 
-    def shard(self, devices: Iterable[DeviceRef]) -> list[VisionMLP]:
-        # Shard underlying weights
-        linear1_shards = self.linear_fc1.shard(devices)
-        linear2_shards = self.linear_fc2.shard(devices)
-
-        shards: list[VisionMLP] = []
-        for idx, device in enumerate(devices):
-            sharded = VisionMLP(
-                dtype=self.dtype,
-                devices=[device],
-                hidden_size=self.hidden_size,
-                intermediate_size=self.intermediate_size,
-            )
-            # Assign shards
-            sharded.linear_fc1 = linear1_shards[idx]
-            sharded.linear_fc2 = linear2_shards[idx]
-            shards.append(sharded)
-        return shards
-
-
-class VisionBlock(Module):
-    """Vision transformer block with distributed attention and MLP.
-
-    Compared to Qwen2.5VL:
-    - LayerNorm rather than RMSNorm for normalization.
-    - MLP layer is 2 linear layers instead of 3 linear layers.
-    - MLP layer uses gelu_pytorch_tanh activation instead of Gelu activation.
+    Args:
+        in_dim (int): Number of input channels.
+        out_dim (int): Number of output channels.
+        dropout (float, optional): Dropout rate for the dropout layer. Default is 0.0.
+        non_linearity (str, optional): Type of non-linearity to use. Default is "silu".
     """
 
     def __init__(
         self,
-        dtype: DType,
-        devices: Sequence[DeviceRef],
-        hidden_size: int,
-        num_heads: int,
-        intermediate_size: int,
-        rms_norm_eps: float = 1e-6,
-    ):
+        in_dim: int,
+        out_dim: int,
+        dropout: float = 0.0,
+        non_linearity: str = "silu",
+    ) -> None:
         super().__init__()
-        self.dtype = dtype
-        self.devices = devices
-        self.hidden_size = hidden_size
-        self.num_heads = num_heads
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.nonlinearity = get_activation(non_linearity)
 
-        # Norms replicated across devices
-        self.norm1 = LayerNorm(
-            dims=hidden_size,
-            devices=self.devices,
-            dtype=self.dtype,
-            eps=1e-6,
-        )
-        self.norm1.sharding_strategy = ShardingStrategy.replicate(
-            len(self.devices)
-        )
-        self.norm1_shards = self.norm1.shard(self.devices)
+        # layers
+        self.norm1 = QwenImageRMS_norm(in_dim, images=False)
+        self.conv1 = QwenImageCausalConv3d(in_dim, out_dim, 3, padding=1)
+        self.norm2 = QwenImageRMS_norm(out_dim, images=False)
+        self.dropout = nn.Dropout(dropout)
+        self.conv2 = QwenImageCausalConv3d(out_dim, out_dim, 3, padding=1)
+        self.conv_shortcut = QwenImageCausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
 
-        self.norm2 = LayerNorm(
-            dims=hidden_size,
-            devices=self.devices,
-            dtype=self.dtype,
-            eps=1e-6,
-        )
-        self.norm2.sharding_strategy = ShardingStrategy.replicate(
-            len(self.devices)
-        )
-        self.norm2_shards = self.norm2.shard(self.devices)
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        # Apply shortcut connection
+        h = self.conv_shortcut(x)
 
-        # Distributed attention (tensor-parallel)
-        head_dim = hidden_size // num_heads
-        self.attn = DistributedVisionWindowAttention(
-            dtype=dtype,
-            hidden_size=hidden_size,
-            n_heads=num_heads,
-            head_dim=head_dim,
-            devices=self.devices,
-            flash_attention=True,
-        )
-        self.attn.sharding_strategy = ShardingStrategy.stacked_qkv(
-            len(self.devices), num_heads, head_dim
-        )
-        self.attn_shards = self.attn.shard(self.devices)
+        # First normalization and activation
+        x = self.norm1(x)
+        x = self.nonlinearity(x)
 
-        # MLP tensor-parallel with allreduce
-        self.mlp = VisionMLP(
-            dtype=dtype,
-            devices=self.devices,
-            hidden_size=hidden_size,
-            intermediate_size=intermediate_size,
-        )
-        self.mlp.sharding_strategy = ShardingStrategy.tensor_parallel(
-            len(self.devices)
-        )
-        self.mlp_shards = self.mlp.shard(self.devices)
-        self.allreduce = Allreduce(num_accelerators=len(self.devices))
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
 
-    def __call__(
-        self,
-        xs: Sequence[TensorValue],
-        position_embeddings: list[tuple[TensorValue, TensorValue]],
-        input_row_offsets: Sequence[TensorValue],
-        max_seqlen: Sequence[TensorValue],
-        signal_buffers: list[BufferValue],
-    ) -> list[TensorValue]:
-        # Norm 1
-        norm1_outs = [
-            norm(x) for norm, x in zip(self.norm1_shards, xs, strict=True)
-        ]
+            x = self.conv1(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
 
-        # Attention per device (ragged)
-        attn_outs = [
-            attn(
-                norm_out,
-                position_embeddings=pos_embs,
-                input_row_offsets=row_offsets,
-                max_seqlen=mx,
-            )
-            for attn, norm_out, pos_embs, row_offsets, mx in zip(
-                self.attn_shards,
-                norm1_outs,
-                position_embeddings,
-                input_row_offsets,
-                max_seqlen,
-                strict=True,
-            )
-        ]
-        # Allreduce attention outputs
-        attn_outs = self.allreduce(attn_outs, signal_buffers)
+        # Second normalization and activation
+        x = self.norm2(x)
+        x = self.nonlinearity(x)
 
-        # Residual add
-        hs = [x + a for x, a in zip(xs, attn_outs, strict=True)]
+        # Dropout
+        x = self.dropout(x)
 
-        # Norm 2
-        norm2_outs = [
-            norm(h) for norm, h in zip(self.norm2_shards, hs, strict=True)
-        ]
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
 
-        # MLP per device
-        mlp_outs = [
-            mlp(norm_out)
-            for mlp, norm_out in zip(self.mlp_shards, norm2_outs, strict=True)
-        ]
-        mlp_outs = self.allreduce(mlp_outs, signal_buffers)
+            x = self.conv2(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv2(x)
 
-        # Residual add
-        outs = [h + m for h, m in zip(hs, mlp_outs, strict=True)]
-        return outs
+        # Add residual connection
+        return x + h
 
 
-class VisionPatchMerger(Module, Shardable):
-    """Group spatially adjacent sets of four patch features then concatenate and
-    pass through a two-layer multi-layer perceptron (MLP) to project them into a
-    dimension that aligns with the text embeddings used in the LLM.
+class QwenImageAttentionBlock(nn.Module):
+    r"""
+    Causal self-attention with a single head.
 
-    Compared to Qwen2.vVL, this layer uses LayerNorm rather than RMSNorm and
-    uses a post-shuffle normalization layer.
+    Args:
+        dim (int): The number of channels in the input tensor.
     """
 
-    def __init__(
-        self,
-        dtype: DType,
-        devices: Sequence[DeviceRef],
-        hidden_size: int,
-        spatial_merge_size: int,
-        out_hidden_size: int,
-        use_postshuffle_norm: bool = False,
-    ):
+    def __init__(self, dim):
         super().__init__()
-        self.dtype = dtype
-        self.devices = devices
+        self.dim = dim
 
-        self.hidden_size = hidden_size
-        self.out_hidden_size = out_hidden_size
-        self.spatial_merge_size = spatial_merge_size
-        self.input_dim = hidden_size * (spatial_merge_size**2)
-        self.use_postshuffle_norm = use_postshuffle_norm
+        # layers
+        self.norm = QwenImageRMS_norm(dim)
+        self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
+        self.proj = nn.Conv2d(dim, dim, 1)
 
-        # Create RMSNorm layer
-        self.norm = LayerNorm(
-            dims=self.input_dim
-            if self.use_postshuffle_norm
-            else self.hidden_size,
-            devices=[devices[0]],
-            dtype=self.dtype,
-            eps=1e-6,
-        )
+    def forward(self, x):
+        identity = x
+        batch_size, channels, time, height, width = x.size()
 
-        # Create individual MLP layers
-        self.linear_fc1 = Linear(
-            in_dim=self.input_dim,
-            out_dim=self.input_dim,
-            dtype=dtype,
-            device=devices[0],
-            has_bias=True,
-        )
-
-        self.linear_fc2 = Linear(
-            in_dim=self.input_dim,
-            out_dim=self.out_hidden_size,
-            dtype=dtype,
-            device=devices[0],
-            has_bias=True,
-        )
-
-    @property
-    def sharding_strategy(self) -> ShardingStrategy | None:
-        return self.linear_fc1.sharding_strategy
-
-    @sharding_strategy.setter
-    def sharding_strategy(self, strategy: ShardingStrategy) -> None:
-        if strategy.is_replicate:
-            # Replicate all weights across devices
-            self.norm.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-            self.linear_fc1.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-            self.linear_fc2.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-        else:
-            self.norm.sharding_strategy = ShardingStrategy.replicate(
-                strategy.num_devices
-            )
-            # Tensor parallel: first linear rowwise, second linear columnwise
-            self.linear_fc1.sharding_strategy = ShardingStrategy.rowwise(
-                strategy.num_devices
-            )
-            self.linear_fc2.sharding_strategy = ShardingStrategy.columnwise(
-                strategy.num_devices
-            )
-
-    def shard(self, devices: Iterable[DeviceRef]) -> list[VisionPatchMerger]:
-        # Shard underlying weights
-        norm_shards = self.norm.shard(devices)
-        linear_fc1_shards = self.linear_fc1.shard(devices)
-        linear_fc2_shards = self.linear_fc2.shard(devices)
-
-        shards: list[VisionPatchMerger] = []
-        for idx, device in enumerate(devices):
-            sharded = VisionPatchMerger(
-                dtype=self.dtype,
-                devices=[device],
-                hidden_size=self.hidden_size,
-                out_hidden_size=self.out_hidden_size,
-                spatial_merge_size=self.spatial_merge_size,
-                use_postshuffle_norm=self.use_postshuffle_norm,
-            )
-            # Assign shards
-            sharded.norm = norm_shards[idx]
-            sharded.linear_fc1 = linear_fc1_shards[idx]
-            sharded.linear_fc2 = linear_fc2_shards[idx]
-            shards.append(sharded)
-        return shards
-
-    def __call__(
-        self, x: TensorValue, signal_buffers: Sequence[BufferValue]
-    ) -> TensorValue:
-        """Applies a vision patch merger to the input tensor.
-        Args:
-            x: TensorValue of shape (n_patches, hidden_size)
-            signal_buffers: Communication buffers for distributed execution.
-            signal_buffers: Sequence[BufferValue]
-        """
-        n_patches, hidden_size = x.shape
-        factor = self.input_dim // self.hidden_size
-        x = x.rebind(((n_patches // factor) * factor, hidden_size))
-        if self.use_postshuffle_norm:
-            x = x.reshape(((n_patches // factor), self.input_dim))
-
-        # Apply LayerNorm
+        x = x.permute(0, 2, 1, 3, 4).reshape(batch_size * time, channels, height, width)
         x = self.norm(x)
 
-        # Reshape for MLP input
-        x = x.reshape(((n_patches // factor), self.input_dim))
+        # compute query, key, value
+        qkv = self.to_qkv(x)
+        qkv = qkv.reshape(batch_size * time, 1, channels * 3, -1)
+        qkv = qkv.permute(0, 1, 3, 2).contiguous()
+        q, k, v = qkv.chunk(3, dim=-1)
 
-        # Apply first linear layer, then GELU, then second linear layer
-        x = self.linear_fc1(x)
-        x = ops.gelu(x)
-        x = self.linear_fc2(x)
+        # apply attention
+        x = F.scaled_dot_product_attention(q, k, v)
+
+        x = x.squeeze(1).permute(0, 2, 1).reshape(batch_size * time, channels, height, width)
+
+        # output projection
+        x = self.proj(x)
+
+        # Reshape back: [(b*t), c, h, w] -> [b, c, t, h, w]
+        x = x.view(batch_size, time, channels, height, width)
+        x = x.permute(0, 2, 1, 3, 4)
+
+        return x + identity
+
+
+class QwenImageMidBlock(nn.Module):
+    """
+    Middle block for QwenImageVAE encoder and decoder.
+
+    Args:
+        dim (int): Number of input/output channels.
+        dropout (float): Dropout rate.
+        non_linearity (str): Type of non-linearity to use.
+    """
+
+    def __init__(self, dim: int, dropout: float = 0.0, non_linearity: str = "silu", num_layers: int = 1):
+        super().__init__()
+        self.dim = dim
+
+        # Create the components
+        resnets = [QwenImageResidualBlock(dim, dim, dropout, non_linearity)]
+        attentions = []
+        for _ in range(num_layers):
+            attentions.append(QwenImageAttentionBlock(dim))
+            resnets.append(QwenImageResidualBlock(dim, dim, dropout, non_linearity))
+        self.attentions = nn.ModuleList(attentions)
+        self.resnets = nn.ModuleList(resnets)
+
+        self.gradient_checkpointing = False
+
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        # First residual block
+        x = self.resnets[0](x, feat_cache, feat_idx)
+
+        # Process through attention and residual blocks
+        for attn, resnet in zip(self.attentions, self.resnets[1:]):
+            if attn is not None:
+                x = attn(x)
+
+            x = resnet(x, feat_cache, feat_idx)
 
         return x
 
 
-class VisionTransformer(Module):
-    """The bare Qwen3VL Vision Transformer (a redesigned Vision Transformer (ViT))
-    outputting raw hidden-states without any specific head on top.
+class QwenImageEncoder3d(nn.Module):
+    r"""
+    A 3D encoder module.
 
-    This is difference between this module and the Qwen2.5VL Vision Transformer:
-    - Deep stack features
-    - pytorch GELU tanh activation
-    - LayerNorm for normalization
-    - VisionPatchMerger layer which also uses post-shuffle normalization
-    - BilinearInterpolationPositionEmbedding for position encoding
-    - No window attention
+    Args:
+        dim (int): The base number of channels in the first layer.
+        z_dim (int): The dimensionality of the latent space.
+        dim_mult (list of int): Multipliers for the number of channels in each block.
+        num_res_blocks (int): Number of residual blocks in each block.
+        attn_scales (list of float): Scales at which to apply attention mechanisms.
+        temperal_downsample (list of bool): Whether to downsample temporally in each block.
+        dropout (float): Dropout rate for the dropout layers.
+        non_linearity (str): Type of non-linearity to use.
     """
 
     def __init__(
         self,
-        config: VisionConfig,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[True, True, False],
+        dropout=0.0,
+        non_linearity: str = "silu",
     ):
         super().__init__()
+        self.dim = dim
+        self.z_dim = z_dim
+        self.dim_mult = dim_mult
+        self.num_res_blocks = num_res_blocks
+        self.attn_scales = attn_scales
+        self.temperal_downsample = temperal_downsample
+        self.nonlinearity = get_activation(non_linearity)
 
-        self.devices = config.devices
-        self.llm_dtype = config.llm_dtype
-        self.spatial_merge_unit = (
-            config.spatial_merge_size * config.spatial_merge_size
-        )
-        self.num_grid_per_side = int(config.num_position_embeddings**0.5)
-        self.deepstack_visual_indexes = config.deepstack_visual_indexes
+        # dimensions
+        dims = [dim * u for u in [1] + dim_mult]
+        scale = 1.0
 
-        # Create patch embedding layer
-        self.patch_embed = VisionPatchEmbed(
-            dtype=config.dtype,
-            devices=self.devices,
-            patch_size=config.patch_size,
-            temporal_patch_size=config.temporal_patch_size,
-            in_channels=config.in_channels,
-            embed_dim=config.hidden_size,
-        )
-        self.patch_embed.sharding_strategy = ShardingStrategy.replicate(
-            len(self.devices)
-        )
-        self.patch_embed_shards = self.patch_embed.shard(self.devices)
+        # init block
+        self.conv_in = QwenImageCausalConv3d(3, dims[0], 3, padding=1)
 
-        # Create bilinear interpolation position embedding
-        self.pos_embed = BilinearInterpolationPositionEmbedding(
-            dtype=config.dtype,
-            device=self.devices[0],
-            num_position_embeddings=config.num_position_embeddings,
-            hidden_size=config.hidden_size,
-            spatial_merge_size=config.spatial_merge_size,
-        )
+        # downsample blocks
+        self.down_blocks = nn.ModuleList([])
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            # residual (+attention) blocks
+            for _ in range(num_res_blocks):
+                self.down_blocks.append(QwenImageResidualBlock(in_dim, out_dim, dropout))
+                if scale in attn_scales:
+                    self.down_blocks.append(QwenImageAttentionBlock(out_dim))
+                in_dim = out_dim
 
-        # Create rotary position embedding
-        self.rotary_pos_emb = VisionRotaryEmbedding(
-            dim=config.hidden_size,
-            n_heads=config.num_attention_heads,
-            theta=10000.0,
-        )
+            # downsample block
+            if i != len(dim_mult) - 1:
+                mode = "downsample3d" if temperal_downsample[i] else "downsample2d"
+                self.down_blocks.append(QwenImageResample(out_dim, mode=mode))
+                scale /= 2.0
 
-        # Create transformer blocks
-        self.blocks = LayerList(
-            [
-                VisionBlock(
-                    dtype=config.dtype,
-                    devices=self.devices,
-                    hidden_size=config.hidden_size,
-                    num_heads=config.num_attention_heads,
-                    intermediate_size=config.intermediate_size,
-                    rms_norm_eps=config.rms_norm_eps,
-                )
-                for _ in range(config.depth)
-            ]
-        )
-        deepstack_merger_list: Sequence[VisionPatchMerger] = [
-            VisionPatchMerger(
-                dtype=config.dtype,
-                devices=self.devices,
-                hidden_size=config.hidden_size,
-                out_hidden_size=config.out_hidden_size,
-                spatial_merge_size=config.spatial_merge_size,
-                use_postshuffle_norm=True,
-            )
-            for _ in range(len(config.deepstack_visual_indexes))
-        ]
-        # Use tensor parallel for merger: rowwise -> gelu -> columnwise, then allreduce
-        for i in range(len(config.deepstack_visual_indexes)):
-            deepstack_merger_list[
-                i
-            ].sharding_strategy = ShardingStrategy.tensor_parallel(
-                len(self.devices)
-            )
+        # middle blocks
+        self.mid_block = QwenImageMidBlock(out_dim, dropout, non_linearity, num_layers=1)
 
-        self.deepstack_merger_shards_list = [
-            deepstack_merger_list[i].shard(self.devices)
-            for i in range(len(config.deepstack_visual_indexes))
-        ]
-        self.deepstack_merger_allreduce_list = [
-            Allreduce(num_accelerators=len(self.devices))
-            for _ in range(len(config.deepstack_visual_indexes))
-        ]
+        # output blocks
+        self.norm_out = QwenImageRMS_norm(out_dim, images=False)
+        self.conv_out = QwenImageCausalConv3d(out_dim, z_dim, 3, padding=1)
 
-        self.deepstack_merger_list = LayerList(deepstack_merger_list)
+        self.gradient_checkpointing = False
 
-        # Create patch merger
-        self.merger = VisionPatchMerger(
-            dtype=config.dtype,
-            devices=self.devices,
-            hidden_size=config.hidden_size,
-            out_hidden_size=config.out_hidden_size,
-            spatial_merge_size=config.spatial_merge_size,
-            use_postshuffle_norm=False,
-        )
-        # Use tensor parallel for merger: rowwise -> gelu -> columnwise, then allreduce
-        self.merger.sharding_strategy = ShardingStrategy.tensor_parallel(
-            len(self.devices)
-        )
-        self.merger_shards = self.merger.shard(self.devices)
-        self.merger_allreduce = Allreduce(num_accelerators=len(self.devices))
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                # cache last frame of last two chunk
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
+            x = self.conv_in(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv_in(x)
 
-    def __call__(
+        ## downsamples
+        for layer in self.down_blocks:
+            if feat_cache is not None:
+                x = layer(x, feat_cache, feat_idx)
+            else:
+                x = layer(x)
+
+        ## middle
+        x = self.mid_block(x, feat_cache, feat_idx)
+
+        ## head
+        x = self.norm_out(x)
+        x = self.nonlinearity(x)
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                # cache last frame of last two chunk
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
+            x = self.conv_out(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv_out(x)
+        return x
+
+
+class QwenImageUpBlock(nn.Module):
+    """
+    A block that handles upsampling for the QwenImageVAE decoder.
+
+    Args:
+        in_dim (int): Input dimension
+        out_dim (int): Output dimension
+        num_res_blocks (int): Number of residual blocks
+        dropout (float): Dropout rate
+        upsample_mode (str, optional): Mode for upsampling ('upsample2d' or 'upsample3d')
+        non_linearity (str): Type of non-linearity to use
+    """
+
+    def __init__(
         self,
-        pixel_values: Sequence[TensorValue],
-        idxs: Sequence[TensorValue],
-        weights: Sequence[TensorValue],
-        grid_thw: Sequence[TensorValue],
-        rot_pos_ids: Sequence[TensorValue],
-        max_grid_size: Sequence[TensorValue],
-        cu_seqlens: Sequence[TensorValue],
-        max_seqlen: Sequence[TensorValue],
-        signal_buffers: Sequence[BufferValue],
-    ) -> tuple[list[TensorValue], list[list[TensorValue]]]:
-        """Outputs raw hidden states of the transformer model on input `x`.
+        in_dim: int,
+        out_dim: int,
+        num_res_blocks: int,
+        dropout: float = 0.0,
+        upsample_mode: Optional[str] = None,
+        non_linearity: str = "silu",
+    ):
+        super().__init__()
+        self.in_dim = in_dim
+        self.out_dim = out_dim
 
-        1. Patch Embedding: Converts raw input into patches and embeds them.
-        2. Rotary Positional Embeddings: Computes rotary positional encodings to the patches.
-        3. Windowing: Divides the sequence into windows to perform attention within those windows using the window_index.
-        4. Transformer Processing: Processes the sequence through multiple transformer blocks, with attention to cumulative window sequence lengths and positional encodings.
-        5. Merging and Sorting: transformer results are merged and sorted to restore the original sequence order before windowing.
-        6. The processed hidden_states are returned as the model's output.
+        # Create layers list
+        resnets = []
+        # Add residual blocks and attention if needed
+        current_dim = in_dim
+        for _ in range(num_res_blocks + 1):
+            resnets.append(QwenImageResidualBlock(current_dim, out_dim, dropout, non_linearity))
+            current_dim = out_dim
+
+        self.resnets = nn.ModuleList(resnets)
+
+        # Add upsampling layer if needed
+        self.upsamplers = None
+        if upsample_mode is not None:
+            self.upsamplers = nn.ModuleList([QwenImageResample(out_dim, mode=upsample_mode)])
+
+        self.gradient_checkpointing = False
+
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        """
+        Forward pass through the upsampling block.
 
         Args:
-            pixel_values: Tensor of images of shape (seq_len=n_patches, in_channels * temporal_patch_size * patch_size * patch_size)
-                seq_len depends on the spatial dims of the image or video and second dim of x for Qwen2.5VL is 1176.
-                Qwen2.5VL processor that handles multiple images of different shapes by flattening all dims and returning
-                a 2D tensor of all patches in all images + a grid_thw representing the temporal and spatial coords of patches.
-            grid_thw: Tensor of shape (n_images, 3) representing the temporal and spatial dimensions of each image/video.
-            rotary_pos_ids: Tensor of shape (seq_len, 2) generated by data_processing.mrope_pos_ids_3d(grid_thw, spatial_merge_size).
-            max_grid_size: max value in spatial dimensions in the grid of image and video patches.
-                It represents the max no. of patches in an image or a frame. Used as the max positional embedding needed.
-            cu_seqlens: Cumulative sequence lengths for full attention blocks.
-            max_seqlen: Maximum sequence length for full attention blocks.
-            signal_buffers: Communication buffers for distributed execution.
+            x (torch.Tensor): Input tensor
+            feat_cache (list, optional): Feature cache for causal convolutions
+            feat_idx (list, optional): Feature index for cache management
 
         Returns:
-            Sequence[TensorValue] : Image embeddings tensor, one per device, flattened for language model.
-            deepstack_feature_lists: List of deepstack feature lists, one per device.
-
-        Shapes:
-            Input: pixel_values shape = (seq_len, in_channels * temporal_patch_size * patch_size * patch_size)
-                where seq_len = no. of patches in all images and videos.
-            Output: Sequence[TensorValue] each of shape (seq_len, hidden_size)
+            torch.Tensor: Output tensor
         """
-        # Pass input images or videos through a conv to obtain patch embeddings ordered by window_index.
-        hs = [
-            embed(pixels)
-            for embed, pixels in zip(
-                self.patch_embed_shards,
-                pixel_values,
-                strict=True,
-            )
-        ]
-        seq_len = hs[0].shape[0]
+        for resnet in self.resnets:
+            if feat_cache is not None:
+                x = resnet(x, feat_cache, feat_idx)
+            else:
+                x = resnet(x)
 
-        # compute position embeddings for the grid of image and video patches.
-        pos_embeds = self.pos_embed(
-            idxs=idxs[0], weights=weights[0], grid_thw=grid_thw[0]
+        if self.upsamplers is not None:
+            if feat_cache is not None:
+                x = self.upsamplers[0](x, feat_cache, feat_idx)
+            else:
+                x = self.upsamplers[0](x)
+        return x
+
+
+class QwenImageDecoder3d(nn.Module):
+    r"""
+    A 3D decoder module.
+
+    Args:
+        dim (int): The base number of channels in the first layer.
+        z_dim (int): The dimensionality of the latent space.
+        dim_mult (list of int): Multipliers for the number of channels in each block.
+        num_res_blocks (int): Number of residual blocks in each block.
+        attn_scales (list of float): Scales at which to apply attention mechanisms.
+        temperal_upsample (list of bool): Whether to upsample temporally in each block.
+        dropout (float): Dropout rate for the dropout layers.
+        non_linearity (str): Type of non-linearity to use.
+    """
+
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_upsample=[False, True, True],
+        dropout=0.0,
+        non_linearity: str = "silu",
+    ):
+        super().__init__()
+        self.dim = dim
+        self.z_dim = z_dim
+        self.dim_mult = dim_mult
+        self.num_res_blocks = num_res_blocks
+        self.attn_scales = attn_scales
+        self.temperal_upsample = temperal_upsample
+
+        self.nonlinearity = get_activation(non_linearity)
+
+        # dimensions
+        dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
+        scale = 1.0 / 2 ** (len(dim_mult) - 2)
+
+        # init block
+        self.conv_in = QwenImageCausalConv3d(z_dim, dims[0], 3, padding=1)
+
+        # middle blocks
+        self.mid_block = QwenImageMidBlock(dims[0], dropout, non_linearity, num_layers=1)
+
+        # upsample blocks
+        self.up_blocks = nn.ModuleList([])
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            # residual (+attention) blocks
+            if i > 0:
+                in_dim = in_dim // 2
+
+            # Determine if we need upsampling
+            upsample_mode = None
+            if i != len(dim_mult) - 1:
+                upsample_mode = "upsample3d" if temperal_upsample[i] else "upsample2d"
+
+            # Create and add the upsampling block
+            up_block = QwenImageUpBlock(
+                in_dim=in_dim,
+                out_dim=out_dim,
+                num_res_blocks=num_res_blocks,
+                dropout=dropout,
+                upsample_mode=upsample_mode,
+                non_linearity=non_linearity,
+            )
+            self.up_blocks.append(up_block)
+
+            # Update scale for next iteration
+            if upsample_mode is not None:
+                scale *= 2.0
+
+        # output blocks
+        self.norm_out = QwenImageRMS_norm(out_dim, images=False)
+        self.conv_out = QwenImageCausalConv3d(out_dim, 3, 3, padding=1)
+
+        self.gradient_checkpointing = False
+
+    def forward(self, x, feat_cache=None, feat_idx=[0]):
+        ## conv1
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                # cache last frame of last two chunk
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
+            x = self.conv_in(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv_in(x)
+
+        ## middle
+        x = self.mid_block(x, feat_cache, feat_idx)
+
+        ## upsamples
+        for up_block in self.up_blocks:
+            x = up_block(x, feat_cache, feat_idx)
+
+        ## head
+        x = self.norm_out(x)
+        x = self.nonlinearity(x)
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :].clone()
+            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                # cache last frame of last two chunk
+                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
+            x = self.conv_out(x, feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv_out(x)
+        return x
+
+
+class AutoencoderKLQwenImage(ModelMixin, AutoencoderMixin, ConfigMixin, FromOriginalModelMixin):
+    r"""
+    A VAE model with KL loss for encoding videos into latents and decoding latent representations into videos.
+
+    This model inherits from [`ModelMixin`]. Check the superclass documentation for it's generic methods implemented
+    for all models (such as downloading or saving).
+    """
+
+    _supports_gradient_checkpointing = False
+
+    # fmt: off
+    @register_to_config
+    def __init__(
+        self,
+        base_dim: int = 96,
+        z_dim: int = 16,
+        dim_mult: Tuple[int, ...] = (1, 2, 4, 4),
+        num_res_blocks: int = 2,
+        attn_scales: List[float] = [],
+        temperal_downsample: List[bool] = [False, True, True],
+        dropout: float = 0.0,
+        latents_mean: List[float] = [-0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508, 0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921],
+        latents_std: List[float] = [2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743, 3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160],
+    ) -> None:
+    # fmt: on
+        super().__init__()
+
+        self.z_dim = z_dim
+        self.temperal_downsample = temperal_downsample
+        self.temperal_upsample = temperal_downsample[::-1]
+
+        self.encoder = QwenImageEncoder3d(
+            base_dim, z_dim * 2, dim_mult, num_res_blocks, attn_scales, self.temperal_downsample, dropout
         )
-        hs = [h + pos_embeds.to(h.device) for h in hs]
+        self.quant_conv = QwenImageCausalConv3d(z_dim * 2, z_dim * 2, 1)
+        self.post_quant_conv = QwenImageCausalConv3d(z_dim, z_dim, 1)
 
-        # Compute rotary positional encodings to input patches.
-        position_embeddings_host = (
-            self.rotary_pos_emb.generate_rot_pos_embeddings(
-                rot_pos_ids=rot_pos_ids[0],
-                max_grid_size=max_grid_size[0],
-                seq_len=seq_len,
-            )
+        self.decoder = QwenImageDecoder3d(
+            base_dim, z_dim, dim_mult, num_res_blocks, attn_scales, self.temperal_upsample, dropout
         )
-        position_embeddings = [
-            (
-                position_embeddings_host[0].to(device),
-                position_embeddings_host[1].to(device),
-            )
-            for device in self.devices
-        ]
 
-        deepstack_feature_lists = []
-        # Pass patch and positional embeddings though Window Attention Blocks to get hidden states for each patch.
-        for layer_num, blk in enumerate(self.blocks):
-            hs = blk(
-                hs,
-                position_embeddings=position_embeddings,
-                input_row_offsets=cu_seqlens,
-                max_seqlen=max_seqlen,
-                signal_buffers=signal_buffers,
-            )
-            if layer_num in self.deepstack_visual_indexes:
-                merger_shards = self.deepstack_merger_shards_list[
-                    self.deepstack_visual_indexes.index(layer_num)
-                ]
-                merger_allreduce = self.deepstack_merger_allreduce_list[
-                    self.deepstack_visual_indexes.index(layer_num)
-                ]
-                deepstack_feature = merger_allreduce(
-                    [
-                        merger(h, signal_buffers=signal_buffers)
-                        for h, merger in zip(hs, merger_shards, strict=True)
-                    ],
-                    signal_buffers,
+        self.spatial_compression_ratio = 2 ** len(self.temperal_downsample)
+
+        # When decoding a batch of video latents at a time, one can save memory by slicing across the batch dimension
+        # to perform decoding of a single video latent at a time.
+        self.use_slicing = False
+
+        # When decoding spatially large video latents, the memory requirement is very high. By breaking the video latent
+        # frames spatially into smaller tiles and performing multiple forward passes for decoding, and then blending the
+        # intermediate tiles together, the memory requirement can be lowered.
+        self.use_tiling = False
+
+        # The minimal tile height and width for spatial tiling to be used
+        self.tile_sample_min_height = 256
+        self.tile_sample_min_width = 256
+
+        # The minimal distance between two spatial tiles
+        self.tile_sample_stride_height = 192
+        self.tile_sample_stride_width = 192
+
+        # Precompute and cache conv counts for encoder and decoder for clear_cache speedup
+        self._cached_conv_counts = {
+            "decoder": sum(isinstance(m, QwenImageCausalConv3d) for m in self.decoder.modules())
+            if self.decoder is not None
+            else 0,
+            "encoder": sum(isinstance(m, QwenImageCausalConv3d) for m in self.encoder.modules())
+            if self.encoder is not None
+            else 0,
+        }
+
+    def enable_tiling(
+        self,
+        tile_sample_min_height: Optional[int] = None,
+        tile_sample_min_width: Optional[int] = None,
+        tile_sample_stride_height: Optional[float] = None,
+        tile_sample_stride_width: Optional[float] = None,
+    ) -> None:
+        r"""
+        Enable tiled VAE decoding. When this option is enabled, the VAE will split the input tensor into tiles to
+        compute decoding and encoding in several steps. This is useful for saving a large amount of memory and to allow
+        processing larger images.
+
+        Args:
+            tile_sample_min_height (`int`, *optional*):
+                The minimum height required for a sample to be separated into tiles across the height dimension.
+            tile_sample_min_width (`int`, *optional*):
+                The minimum width required for a sample to be separated into tiles across the width dimension.
+            tile_sample_stride_height (`int`, *optional*):
+                The minimum amount of overlap between two consecutive vertical tiles. This is to ensure that there are
+                no tiling artifacts produced across the height dimension.
+            tile_sample_stride_width (`int`, *optional*):
+                The stride between two consecutive horizontal tiles. This is to ensure that there are no tiling
+                artifacts produced across the width dimension.
+        """
+        self.use_tiling = True
+        self.tile_sample_min_height = tile_sample_min_height or self.tile_sample_min_height
+        self.tile_sample_min_width = tile_sample_min_width or self.tile_sample_min_width
+        self.tile_sample_stride_height = tile_sample_stride_height or self.tile_sample_stride_height
+        self.tile_sample_stride_width = tile_sample_stride_width or self.tile_sample_stride_width
+
+    def clear_cache(self):
+        def _count_conv3d(model):
+            count = 0
+            for m in model.modules():
+                if isinstance(m, QwenImageCausalConv3d):
+                    count += 1
+            return count
+
+        self._conv_num = _count_conv3d(self.decoder)
+        self._conv_idx = [0]
+        self._feat_map = [None] * self._conv_num
+        # cache encode
+        self._enc_conv_num = _count_conv3d(self.encoder)
+        self._enc_conv_idx = [0]
+        self._enc_feat_map = [None] * self._enc_conv_num
+
+    def _encode(self, x: torch.Tensor):
+        _, _, num_frame, height, width = x.shape
+
+        if self.use_tiling and (width > self.tile_sample_min_width or height > self.tile_sample_min_height):
+            return self.tiled_encode(x)
+
+        self.clear_cache()
+        iter_ = 1 + (num_frame - 1) // 4
+        for i in range(iter_):
+            self._enc_conv_idx = [0]
+            if i == 0:
+                out = self.encoder(x[:, :, :1, :, :], feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+            else:
+                out_ = self.encoder(
+                    x[:, :, 1 + 4 * (i - 1) : 1 + 4 * i, :, :],
+                    feat_cache=self._enc_feat_map,
+                    feat_idx=self._enc_conv_idx,
                 )
+                out = torch.cat([out, out_], 2)
 
-                deepstack_feature_lists.append(deepstack_feature)
+        enc = self.quant_conv(out)
+        self.clear_cache()
+        return enc
 
-        # The merged features are projected via a linear layer to align with the language model's embedding space.
-        # Apply per-device merger, then concatenate back in original order
-        merged = [
-            merger(h, signal_buffers=signal_buffers)
-            for merger, h in zip(self.merger_shards, hs, strict=True)
-        ]
-        merged = self.merger_allreduce(merged, signal_buffers)
+    @apply_forward_hook
+    def encode(
+        self, x: torch.Tensor, return_dict: bool = True
+    ) -> Union[AutoencoderKLOutput, Tuple[DiagonalGaussianDistribution]]:
+        r"""
+        Encode a batch of images into latents.
 
-        # cast output to llm_dtype
-        merged = [h.cast(self.llm_dtype) for h in merged]
+        Args:
+            x (`torch.Tensor`): Input batch of images.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether to return a [`~models.autoencoder_kl.AutoencoderKLOutput`] instead of a plain tuple.
 
-        outputs: list[TensorValue] = []
-        for i in range(len(self.devices)):
-            outputs.append(merged[i].to(self.devices[i]))
-        return outputs, deepstack_feature_lists
+        Returns:
+                The latent representations of the encoded videos. If `return_dict` is True, a
+                [`~models.autoencoder_kl.AutoencoderKLOutput`] is returned, otherwise a plain `tuple` is returned.
+        """
+        if self.use_slicing and x.shape[0] > 1:
+            encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
+            h = torch.cat(encoded_slices)
+        else:
+            h = self._encode(x)
+        posterior = DiagonalGaussianDistribution(h)
+
+        if not return_dict:
+            return (posterior,)
+        return AutoencoderKLOutput(latent_dist=posterior)
+
+    def _decode(self, z: torch.Tensor, return_dict: bool = True):
+        _, _, num_frame, height, width = z.shape
+        tile_latent_min_height = self.tile_sample_min_height // self.spatial_compression_ratio
+        tile_latent_min_width = self.tile_sample_min_width // self.spatial_compression_ratio
+
+        if self.use_tiling and (width > tile_latent_min_width or height > tile_latent_min_height):
+            return self.tiled_decode(z, return_dict=return_dict)
+
+        self.clear_cache()
+        x = self.post_quant_conv(z)
+        for i in range(num_frame):
+            self._conv_idx = [0]
+            if i == 0:
+                out = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
+            else:
+                out_ = self.decoder(x[:, :, i : i + 1, :, :], feat_cache=self._feat_map, feat_idx=self._conv_idx)
+                out = torch.cat([out, out_], 2)
+
+        out = torch.clamp(out, min=-1.0, max=1.0)
+        self.clear_cache()
+        if not return_dict:
+            return (out,)
+
+        return DecoderOutput(sample=out)
+
+    @apply_forward_hook
+    def decode(self, z: torch.Tensor, return_dict: bool = True) -> Union[DecoderOutput, torch.Tensor]:
+        r"""
+        Decode a batch of images.
+
+        Args:
+            z (`torch.Tensor`): Input batch of latent vectors.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether to return a [`~models.vae.DecoderOutput`] instead of a plain tuple.
+
+        Returns:
+            [`~models.vae.DecoderOutput`] or `tuple`:
+                If return_dict is True, a [`~models.vae.DecoderOutput`] is returned, otherwise a plain `tuple` is
+                returned.
+        """
+        if self.use_slicing and z.shape[0] > 1:
+            decoded_slices = [self._decode(z_slice).sample for z_slice in z.split(1)]
+            decoded = torch.cat(decoded_slices)
+        else:
+            decoded = self._decode(z).sample
+
+        if not return_dict:
+            return (decoded,)
+        return DecoderOutput(sample=decoded)
+
+    def blend_v(self, a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
+        blend_extent = min(a.shape[-2], b.shape[-2], blend_extent)
+        for y in range(blend_extent):
+            b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
+                y / blend_extent
+            )
+        return b
+
+    def blend_h(self, a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
+        blend_extent = min(a.shape[-1], b.shape[-1], blend_extent)
+        for x in range(blend_extent):
+            b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
+                x / blend_extent
+            )
+        return b
+
+    def tiled_encode(self, x: torch.Tensor) -> AutoencoderKLOutput:
+        r"""Encode a batch of images using a tiled encoder.
+
+        Args:
+            x (`torch.Tensor`): Input batch of videos.
+
+        Returns:
+            `torch.Tensor`:
+                The latent representation of the encoded videos.
+        """
+        _, _, num_frames, height, width = x.shape
+        latent_height = height // self.spatial_compression_ratio
+        latent_width = width // self.spatial_compression_ratio
+
+        tile_latent_min_height = self.tile_sample_min_height // self.spatial_compression_ratio
+        tile_latent_min_width = self.tile_sample_min_width // self.spatial_compression_ratio
+        tile_latent_stride_height = self.tile_sample_stride_height // self.spatial_compression_ratio
+        tile_latent_stride_width = self.tile_sample_stride_width // self.spatial_compression_ratio
+
+        blend_height = tile_latent_min_height - tile_latent_stride_height
+        blend_width = tile_latent_min_width - tile_latent_stride_width
+
+        # Split x into overlapping tiles and encode them separately.
+        # The tiles have an overlap to avoid seams between tiles.
+        rows = []
+        for i in range(0, height, self.tile_sample_stride_height):
+            row = []
+            for j in range(0, width, self.tile_sample_stride_width):
+                self.clear_cache()
+                time = []
+                frame_range = 1 + (num_frames - 1) // 4
+                for k in range(frame_range):
+                    self._enc_conv_idx = [0]
+                    if k == 0:
+                        tile = x[:, :, :1, i : i + self.tile_sample_min_height, j : j + self.tile_sample_min_width]
+                    else:
+                        tile = x[
+                            :,
+                            :,
+                            1 + 4 * (k - 1) : 1 + 4 * k,
+                            i : i + self.tile_sample_min_height,
+                            j : j + self.tile_sample_min_width,
+                        ]
+                    tile = self.encoder(tile, feat_cache=self._enc_feat_map, feat_idx=self._enc_conv_idx)
+                    tile = self.quant_conv(tile)
+                    time.append(tile)
+                row.append(torch.cat(time, dim=2))
+            rows.append(row)
+        self.clear_cache()
+
+        result_rows = []
+        for i, row in enumerate(rows):
+            result_row = []
+            for j, tile in enumerate(row):
+                # blend the above tile and the left tile
+                # to the current tile and add the current tile to the result row
+                if i > 0:
+                    tile = self.blend_v(rows[i - 1][j], tile, blend_height)
+                if j > 0:
+                    tile = self.blend_h(row[j - 1], tile, blend_width)
+                result_row.append(tile[:, :, :, :tile_latent_stride_height, :tile_latent_stride_width])
+            result_rows.append(torch.cat(result_row, dim=-1))
+
+        enc = torch.cat(result_rows, dim=3)[:, :, :, :latent_height, :latent_width]
+        return enc
+
+    def tiled_decode(self, z: torch.Tensor, return_dict: bool = True) -> Union[DecoderOutput, torch.Tensor]:
+        r"""
+        Decode a batch of images using a tiled decoder.
+
+        Args:
+            z (`torch.Tensor`): Input batch of latent vectors.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~models.vae.DecoderOutput`] instead of a plain tuple.
+
+        Returns:
+            [`~models.vae.DecoderOutput`] or `tuple`:
+                If return_dict is True, a [`~models.vae.DecoderOutput`] is returned, otherwise a plain `tuple` is
+                returned.
+        """
+        _, _, num_frames, height, width = z.shape
+        sample_height = height * self.spatial_compression_ratio
+        sample_width = width * self.spatial_compression_ratio
+
+        tile_latent_min_height = self.tile_sample_min_height // self.spatial_compression_ratio
+        tile_latent_min_width = self.tile_sample_min_width // self.spatial_compression_ratio
+        tile_latent_stride_height = self.tile_sample_stride_height // self.spatial_compression_ratio
+        tile_latent_stride_width = self.tile_sample_stride_width // self.spatial_compression_ratio
+
+        blend_height = self.tile_sample_min_height - self.tile_sample_stride_height
+        blend_width = self.tile_sample_min_width - self.tile_sample_stride_width
+
+        # Split z into overlapping tiles and decode them separately.
+        # The tiles have an overlap to avoid seams between tiles.
+        rows = []
+        for i in range(0, height, tile_latent_stride_height):
+            row = []
+            for j in range(0, width, tile_latent_stride_width):
+                self.clear_cache()
+                time = []
+                for k in range(num_frames):
+                    self._conv_idx = [0]
+                    tile = z[:, :, k : k + 1, i : i + tile_latent_min_height, j : j + tile_latent_min_width]
+                    tile = self.post_quant_conv(tile)
+                    decoded = self.decoder(tile, feat_cache=self._feat_map, feat_idx=self._conv_idx)
+                    time.append(decoded)
+                row.append(torch.cat(time, dim=2))
+            rows.append(row)
+        self.clear_cache()
+
+        result_rows = []
+        for i, row in enumerate(rows):
+            result_row = []
+            for j, tile in enumerate(row):
+                # blend the above tile and the left tile
+                # to the current tile and add the current tile to the result row
+                if i > 0:
+                    tile = self.blend_v(rows[i - 1][j], tile, blend_height)
+                if j > 0:
+                    tile = self.blend_h(row[j - 1], tile, blend_width)
+                result_row.append(tile[:, :, :, : self.tile_sample_stride_height, : self.tile_sample_stride_width])
+            result_rows.append(torch.cat(result_row, dim=-1))
+
+        dec = torch.cat(result_rows, dim=3)[:, :, :, :sample_height, :sample_width]
+
+        if not return_dict:
+            return (dec,)
+        return DecoderOutput(sample=dec)
+
+    def forward(
+        self,
+        sample: torch.Tensor,
+        sample_posterior: bool = False,
+        return_dict: bool = True,
+        generator: Optional[torch.Generator] = None,
+    ) -> Union[DecoderOutput, torch.Tensor]:
+        """
+        Args:
+            sample (`torch.Tensor`): Input sample.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`DecoderOutput`] instead of a plain tuple.
+        """
+        x = sample
+        posterior = self.encode(x).latent_dist
+        if sample_posterior:
+            z = posterior.sample(generator=generator)
+        else:
+            z = posterior.mode()
+        dec = self.decode(z, return_dict=return_dict)
+        return dec
