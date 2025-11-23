@@ -23,10 +23,102 @@ from max.pipelines.architectures.llama3.model_config import Llama3Config
 from max.pipelines.lib import MAXModelConfig, PipelineConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
+from max.pipelines.architectures.qwen2_5vl.model_config import Qwen2_5VLConfig
+
+
+@dataclass
+class SchedulerConfig:
+    """Base configuration for scheduler model with required fields."""
+
+    _class_name: str
+    """Scheduler class name."""
+
+    _diffusers_version: str
+    """Diffusers version."""
+
+    base_image_seq_len: int
+    """Base image sequence length."""
+
+    base_shift: float
+    """Base shift value."""
+
+    invert_sigmas: bool
+    """Invert sigmas flag."""
+
+    max_image_seq_len: int
+    """Max image sequence length."""
+
+    max_shift: float
+    """Max shift value."""
+    
+    num_train_timesteps: int
+    """Number of training timesteps."""
+
+    shift: float
+    """Shift value."""
+
+    shift_terminal: float
+    """Shift terminal value."""
+
+    stochastic_sampling: bool
+    """Stochastic sampling flag."""
+
+    time_shift_type: str
+    """Time shift type."""
+
+    use_beta_sigmas: bool
+    """Use beta sigmas flag."""
+
+    use_dynamic_shifting: bool
+    """Use dynamic shifting flag."""
+
+    use_exponential_sigmas: bool
+    """Use exponential sigmas flag."""
+
+    use_karras_sigmas: bool
+    """Use karras sigmas flag."""
+
+    @staticmethod
+    def generate(
+        scheduler_config: AutoConfig,
+    ) -> SchedulerConfig:
+        """Generate SchedulerConfig from HuggingFace scheduler config.
+
+        Args:
+            scheduler_config: HuggingFace scheduler configuration object.
+
+        Returns:
+            Configured SchedulerConfig instance.
+        """
+        return SchedulerConfig(
+            _class_name=scheduler_config._class_name,
+            _diffusers_version=scheduler_config._diffusers_version,
+            base_image_seq_len=scheduler_config.base_image_seq_len,
+            base_shift=scheduler_config.base_shift,
+            invert_sigmas=scheduler_config.invert_sigmas,
+            max_image_seq_len=scheduler_config.max_image_seq_len,
+            max_shift=scheduler_config.max_shift,
+            num_train_timesteps=scheduler_config.num_train_timesteps,
+            shift=scheduler_config.shift,
+            shift_terminal=scheduler_config.shift_terminal,
+            stochastic_sampling=scheduler_config.stochastic_sampling,
+            time_shift_type=scheduler_config.time_shift_type,
+            use_beta_sigmas=scheduler_config.use_beta_sigmas,
+            use_dynamic_shifting=scheduler_config.use_dynamic_shifting,
+            use_exponential_sigmas=scheduler_config.use_exponential_sigmas,
+            use_karras_sigmas=scheduler_config.use_karras_sigmas,
+        )
+
 
 @dataclass
 class VAEConfig:
     """Base configuration for VAE model with required fields."""
+
+    _class_name: str
+    """VAE class name."""
+
+    _diffusers_version: str
+    """Diffusers version."""
 
     dtype: DType
     """DType of the VAE model weights."""
@@ -34,44 +126,35 @@ class VAEConfig:
     devices: list[DeviceRef]
     """Devices that the VAE model is parallelized over."""
 
-    patch_size: int
-    """Vision transformer patch size."""
+    attn_scales: list[float]
+    """Attention scales."""
 
-    temporal_patch_size: int
-    """Vision transformer temporal patch size."""
+    base_dim: int
+    """Base dimension."""
 
-    in_channels: int
-    """Vision transformer number of input channels."""
+    dim_mult: list[int]
+    """Dimension multiplier."""
 
-    hidden_size: int
-    """Hidden size of the vision encoder."""
+    dropout: float
+    """Dropout rate."""
 
-    num_attention_heads: int
-    """Number of attention heads in the vision encoder."""
+    latents_mean: list[float]
+    """Latents mean."""
 
-    depth: int
-    """Number of vision transformer layers."""
+    latents_std: list[float]
+    """Latents standard deviation."""
 
-    intermediate_size: int
-    """Intermediate size in the vision encoder's feed-forward layers."""
+    num_res_blocks: int
+    """Number of residual blocks."""
 
-    out_hidden_size: int
-    """Output hidden size of the vision encoder. Also the hidden size of the language model."""
+    temperal_downsample: list[bool]
+    """Temperal downsample."""
 
-    deepstack_visual_indexes: list[int]
-    """Indexes of the full attention blocks in the vision encoder."""
-
-    rms_norm_eps: float
-    """Epsilon for layer normalization."""
-
-    spatial_merge_size: int
-    """Spatial merge size for the vision encoder."""
-
-    num_position_embeddings: int
-    """Number of position embeddings for the vision encoder."""
+    z_dim: int
+    """Latent dimension."""
 
     float8_config: Float8Config | None = None
-    """Float8 quantization configuration for the vision encoder."""
+    """Float8 quantization configuration for the VAE model."""
 
     @staticmethod
     def generate(
@@ -98,24 +181,105 @@ class VAEConfig:
             ignored_modules_prefix="vision_encoder.",
         )
         return VAEConfig(
+            _class_name=vae_config._class_name,
+            _diffusers_version=vae_config._diffusers_version,
             dtype=dtype,
             devices=[
                 DeviceRef(spec.device_type, spec.id)
                 for spec in pipeline_config.model_config.device_specs
             ],
-            patch_size=vae_config.patch_size,
-            temporal_patch_size=vae_config.temporal_patch_size,
-            in_channels=vae_config.in_channels,
-            hidden_size=vae_config.hidden_size,
-            num_attention_heads=vae_config.num_heads,
-            depth=vae_config.depth,
-            intermediate_size=vae_config.intermediate_size,
-            out_hidden_size=vae_config.out_hidden_size,
-            deepstack_visual_indexes=vae_config.deepstack_visual_indexes,
-            rms_norm_eps=1e-06,
-            spatial_merge_size=vae_config.spatial_merge_size,
-            num_position_embeddings=vae_config.num_position_embeddings,
+            attn_scales=vae_config.attn_scales,
+            base_dim=vae_config.base_dim,
+            dim_mult=vae_config.dim_mult,
+            dropout=vae_config.dropout,
+            latents_mean=vae_config.latents_mean,
+            latents_std=vae_config.latents_std,
+            num_res_blocks=vae_config.num_res_blocks,
+            temperal_downsample=vae_config.temperal_downsample,
+            z_dim=vae_config.z_dim,
             float8_config=v_float8,
+        )
+
+
+@dataclass
+class DonoiserConfig:
+    """Base configuration for transformer model with required fields."""
+
+    _class_name: str
+    """Transformer class name."""
+
+    _diffusers_version: str
+    """Diffusers version."""
+
+    dtype: DType
+    """DType of the transformer model weights."""
+
+    devices: list[DeviceRef]
+    """Devices that the transformer model is parallelized over."""
+
+    attention_head_dim: int
+    """Attention head dimension."""
+
+    axes_dims_rope: list[int]
+    """Axes dimensions for rope."""
+
+    guidance_embeds: bool
+    """Whether to use guidance embeds."""
+
+    in_channels: int
+    """Number of input channels."""
+
+    joint_attention_dim: int
+    """Joint attention dimension."""
+
+    num_attention_heads: int
+    """Number of attention heads."""
+
+    num_layers: int
+    """Number of layers."""
+
+    out_channels: int
+    """Number of output channels."""
+
+    patch_size: int
+    """Patch size."""
+
+    float8_config: Float8Config | None = None
+    """Float8 quantization configuration for the transformer model."""
+
+    @staticmethod
+    def generate(
+        transformer_config: AutoConfig,
+        dtype: DType,
+        pipeline_config: PipelineConfig,
+        huggingface_config: AutoConfig,
+        state_dict: dict[str, WeightData],
+    ) -> DonoiserConfig:
+        """Generate DonoiserConfig from HuggingFace transformer config.
+
+        Args:
+            transformer_config: HuggingFace transformer configuration object.
+
+        Returns:
+            Configured DonoiserConfig instance.
+        """
+        # Parse (if present) a float8 configuration for the transformer path.
+        t_float8 = parse_float8_config(
+            huggingface_config,
+            state_dict,
+            dtype,
+            state_dict_name_prefix="transformer.",
+            ignored_modules_prefix="transformer.",
+        )
+        return DonoiserConfig(
+            _class_name=transformer_config._class_name,
+            _diffusers_version=transformer_config._diffusers_version,
+            dtype=dtype,
+            devices=[
+                DeviceRef(spec.device_type, spec.id)
+                for spec in pipeline_config.model_config.device_specs
+            ],
+            float8_config=t_float8,
         )
 
 
@@ -151,11 +315,11 @@ class QwenImageEditPlusConfigBase:
     """VAE configuration."""
     
     # Text encoder configuration.
-    text_encoder_config: Llama3Config
+    text_encoder_config: Qwen2_5VLConfig
     """Text encoder configuration."""
     
     # Denoising transformer configuration.
-    transformer_config: TransformerConfig
+    denoiser_config: DenoiserConfig
     """Denoising transformer configuration."""
 
 
@@ -213,8 +377,9 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
     def generate(
         pipeline_config: PipelineConfig,
         huggingface_config: AutoConfig,
-        llm_state_dict: dict[str, WeightData],
-        vision_state_dict: dict[str, WeightData],
+        vae_state_dict: dict[str, WeightData],
+        text_encoder_state_dict: dict[str, dict[str, WeightData]],
+        denoiser_state_dict: dict[str, WeightData],
         dtype: DType,
         n_devices: int,
         cache_dtype: DType,
@@ -227,8 +392,9 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
         Args:
             pipeline_config: Pipeline configuration.
             huggingface_config: HuggingFace model configuration.
-            llm_state_dict: Model weights dictionary.
-            vision_state_dict: Vision model weights dictionary.
+            vae_state_dict: VAE weights dictionary.
+            text_encoder_state_dict: Text encoder weights dictionary.
+            denoiser_state_dict: Denoiser weights dictionary.
             dtype: Data type for model parameters.
             n_devices: Number of devices.
             cache_dtype: KV cache data type.
@@ -245,48 +411,43 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
             raise ValueError("scheduler_config not found in huggingface_config")
         scheduler_config = SchedulerConfig.generate(
             hf_scheduler_config,
-            vision_state_dict["patch_embed.proj.weight"].dtype,
-            llm_state_dict["language_model.embed_tokens.weight"].dtype,
+            vae_state_dict["patch_embed.proj.weight"].dtype,
+            text_encoder_state_dict["language_model.embed_tokens.weight"].dtype,
             pipeline_config,
         )
         
-        # Create VAEConfig from the vae config
+        # Create VAEConfig from the VAE config
         hf_vae_config = getattr(huggingface_config, "vae_config", None)
         if hf_vae_config is None:
             raise ValueError("vae_config not found in huggingface_config")
         vae_config = VAEConfig.generate(
             hf_vae_config,
-            vision_state_dict["patch_embed.proj.weight"].dtype,
-            llm_state_dict["language_model.embed_tokens.weight"].dtype,
+            vae_state_dict["patch_embed.proj.weight"].dtype,
+            text_encoder_state_dict["language_model.embed_tokens.weight"].dtype,
             pipeline_config,
         )
 
-        # Create Llama3Config for the text encoder
-        text_encoder_config = Llama3Config.generate(
-            pipeline_config=pipeline_config,
-            huggingface_config=huggingface_config.text_encoder_config,
-            state_dict=llm_state_dict,
-            dtype=dtype,
-            n_devices=n_devices,
-            cache_dtype=cache_dtype,
-            kv_cache_config=kv_cache_config,
-            return_logits=return_logits,
-            norm_method=norm_method,
-            attention_bias=True,  # QwenImageEditPlus uses Qwen2 which has attention_bias=True
+        # Create Qwen2_5VLConfig for the text encoder
+        text_encoder_config = Qwen2_5VLConfig.generate(
+            pipeline_config,
+            huggingface_config,
+            text_encoder_state_dict["llm_state_dict"],
+            text_encoder_state_dict["vision_state_dict"],
+            dtype,
+            n_devices,
+            cache_dtype,
+            kv_cache_config,
+            return_logits,
+            norm_method,
         )
         
-        # Create TransformerConfig for the denoiser model
-        transformer_config = TransformerConfig.generate(
-            pipeline_config=pipeline_config,
-            huggingface_config=huggingface_config.transformer_config,
-            state_dict=llm_state_dict,
-            dtype=dtype,
-            n_devices=n_devices,
-            cache_dtype=cache_dtype,
-            kv_cache_config=kv_cache_config,
-            return_logits=return_logits,
-            norm_method=norm_method,
-            attention_bias=True,  # QwenImageEditPlus uses Qwen2 which has attention_bias=True
+        # Create DonoiserConfig for the denoiser model
+        denoiser_config = DenoiserConfig.generate(
+            huggingface_config.transformer_config,
+            dtype,
+            pipeline_config,
+            huggingface_config,
+            denoiser_state_dict,
         )
 
         return QwenImageEditPlusConfig(
@@ -309,7 +470,5 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
             # Text encoder configuration
             text_encoder_config=text_encoder_config,
             # Denoising transformer configuration
-            transformer_config=transformer_config,
-            # Composed language model configuration
-            llm_config=llm_config,
+            denoiser_config=denoiser_config,
         )
