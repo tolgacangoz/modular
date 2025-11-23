@@ -19,11 +19,13 @@ from max.dtype import DType
 from max.graph import DeviceRef
 from max.graph.weights import WeightData
 from max.nn import ReturnLogits
-from max.pipelines.architectures.llama3.model_config import Llama3Config
 from max.pipelines.lib import MAXModelConfig, PipelineConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
 from max.pipelines.architectures.qwen2_5vl.model_config import Qwen2_5VLConfig
+from max.nn.float8_config import Float8Config, parse_float8_config
+from max.nn.kv_cache import KVCacheParams
+from max.pipelines.lib import KVCacheConfig 
 
 
 @dataclass
@@ -202,7 +204,7 @@ class VAEConfig:
 
 
 @dataclass
-class DonoiserConfig:
+class DenoiserConfig:
     """Base configuration for transformer model with required fields."""
 
     _class_name: str
@@ -254,14 +256,14 @@ class DonoiserConfig:
         pipeline_config: PipelineConfig,
         huggingface_config: AutoConfig,
         state_dict: dict[str, WeightData],
-    ) -> DonoiserConfig:
-        """Generate DonoiserConfig from HuggingFace transformer config.
+    ) -> DenoiserConfig:
+        """Generate DenoiserConfig from HuggingFace transformer config.
 
         Args:
             transformer_config: HuggingFace transformer configuration object.
 
         Returns:
-            Configured DonoiserConfig instance.
+            Configured DenoiserConfig instance.
         """
         # Parse (if present) a float8 configuration for the transformer path.
         t_float8 = parse_float8_config(
@@ -271,7 +273,7 @@ class DonoiserConfig:
             state_dict_name_prefix="transformer.",
             ignored_modules_prefix="transformer.",
         )
-        return DonoiserConfig(
+        return DenoiserConfig(
             _class_name=transformer_config._class_name,
             _diffusers_version=transformer_config._diffusers_version,
             dtype=dtype,
