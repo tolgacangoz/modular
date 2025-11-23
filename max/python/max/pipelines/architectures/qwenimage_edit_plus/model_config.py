@@ -19,24 +19,20 @@ from max.dtype import DType
 from max.graph import DeviceRef
 from max.graph.weights import WeightData
 from max.nn import ReturnLogits
-from max.nn.kv_cache import KVCacheParams
 from max.pipelines.architectures.llama3.model_config import Llama3Config
-from max.pipelines.lib import KVCacheConfig, MAXModelConfig, PipelineConfig
+from max.pipelines.lib import MAXModelConfig, PipelineConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
 
 @dataclass
-class VisionConfig:
-    """Base configuration for QwenImageEditPlus model with required fields."""
+class VAEConfig:
+    """Base configuration for VAE model with required fields."""
 
     dtype: DType
-    """DType of the QwenImageEditPlus vision model weights."""
-
-    llm_dtype: DType
-    """DType of the QwenImageEditPlus language model weights."""
+    """DType of the VAE model weights."""
 
     devices: list[DeviceRef]
-    """Devices that the QwenImageEditPlus vision encoder model is parallelized over."""
+    """Devices that the VAE model is parallelized over."""
 
     patch_size: int
     """Vision transformer patch size."""
@@ -74,40 +70,52 @@ class VisionConfig:
     num_position_embeddings: int
     """Number of position embeddings for the vision encoder."""
 
+    float8_config: Float8Config | None = None
+    """Float8 quantization configuration for the vision encoder."""
+
     @staticmethod
     def generate(
-        vision_config: AutoConfig,
+        vae_config: AutoConfig,
         dtype: DType,
-        llm_dtype: DType,
         pipeline_config: PipelineConfig,
-    ) -> VisionConfig:
-        """Generate VisionConfig from HuggingFace vision config.
+        huggingface_config: AutoConfig,
+        vision_state_dict: dict[str, WeightData],
+    ) -> VAEConfig:
+        """Generate VAEConfig from HuggingFace VAE config.
 
         Args:
-            vision_config: HuggingFace vision configuration object.
+            vae_config: HuggingFace VAE configuration object.
 
         Returns:
-            Configured VisionConfig instance.
+            Configured VAEConfig instance.
         """
-        return VisionConfig(
+        # Parse (if present) a float8 configuration for the vision path.
+        v_float8 = parse_float8_config(
+            huggingface_config,
+            vision_state_dict,
+            dtype,
+            state_dict_name_prefix="vision_encoder.",
+            ignored_modules_prefix="vision_encoder.",
+        )
+        return VAEConfig(
             dtype=dtype,
-            llm_dtype=llm_dtype,
             devices=[
                 DeviceRef(spec.device_type, spec.id)
                 for spec in pipeline_config.model_config.device_specs
             ],
-            patch_size=vision_config.patch_size,
-            temporal_patch_size=vision_config.temporal_patch_size,
-            in_channels=vision_config.in_channels,
-            hidden_size=vision_config.hidden_size,
-            num_attention_heads=vision_config.num_heads,
-            depth=vision_config.depth,
-            intermediate_size=vision_config.intermediate_size,
-            out_hidden_size=vision_config.out_hidden_size,
-            deepstack_visual_indexes=vision_config.deepstack_visual_indexes,
+            patch_size=vae_config.patch_size,
+            temporal_patch_size=vae_config.temporal_patch_size,
+            in_channels=vae_config.in_channels,
+            hidden_size=vae_config.hidden_size,
+            num_attention_heads=vae_config.num_heads,
+            depth=vae_config.depth,
+            intermediate_size=vae_config.intermediate_size,
+            out_hidden_size=vae_config.out_hidden_size,
+            deepstack_visual_indexes=vae_config.deepstack_visual_indexes,
             rms_norm_eps=1e-06,
-            spatial_merge_size=vision_config.spatial_merge_size,
-            num_position_embeddings=vision_config.num_position_embeddings,
+            spatial_merge_size=vae_config.spatial_merge_size,
+            num_position_embeddings=vae_config.num_position_embeddings,
+            float8_config=v_float8,
         )
 
 
@@ -134,13 +142,21 @@ class QwenImageEditPlusConfigBase:
     mrope_section: list[int]
     """List of indices for the mrope section."""
 
-    # Vision encoder configuration.
-    vision_config: VisionConfig
-    """Vision encoder configuration."""
+    # Scheduler configuration.
+    scheduler_config: SchedulerConfig
+    """Scheduler configuration."""
 
-    # Composed language model configuration.
-    llm_config: Llama3Config
-    """Language model configuration using Llama3 architecture."""
+    # VAE configuration.
+    vae_config: VAEConfig
+    """VAE configuration."""
+    
+    # Text encoder configuration.
+    text_encoder_config: Llama3Config
+    """Text encoder configuration."""
+    
+    # Denoising transformer configuration.
+    transformer_config: TransformerConfig
+    """Denoising transformer configuration."""
 
 
 @dataclass
@@ -223,21 +239,46 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
         Returns:
             Configured QwenImageEditPlusConfig instance.
         """
-        # Create VisionConfig from the vision config
-        hf_vision_config = getattr(huggingface_config, "vision_config", None)
-        if hf_vision_config is None:
-            raise ValueError("vision_config not found in huggingface_config")
-        vision_config = VisionConfig.generate(
-            hf_vision_config,
+        # Create SchedulerConfig from the scheduler config
+        hf_scheduler_config = getattr(huggingface_config, "scheduler_config", None)
+        if hf_scheduler_config is None:
+            raise ValueError("scheduler_config not found in huggingface_config")
+        scheduler_config = SchedulerConfig.generate(
+            hf_scheduler_config,
+            vision_state_dict["patch_embed.proj.weight"].dtype,
+            llm_state_dict["language_model.embed_tokens.weight"].dtype,
+            pipeline_config,
+        )
+        
+        # Create VAEConfig from the vae config
+        hf_vae_config = getattr(huggingface_config, "vae_config", None)
+        if hf_vae_config is None:
+            raise ValueError("vae_config not found in huggingface_config")
+        vae_config = VAEConfig.generate(
+            hf_vae_config,
             vision_state_dict["patch_embed.proj.weight"].dtype,
             llm_state_dict["language_model.embed_tokens.weight"].dtype,
             pipeline_config,
         )
 
-        # Create Llama3Config for the language model (with Qwen2 attention_bias=True)
-        llm_config = Llama3Config.generate(
+        # Create Llama3Config for the text encoder
+        text_encoder_config = Llama3Config.generate(
             pipeline_config=pipeline_config,
-            huggingface_config=huggingface_config.text_config,
+            huggingface_config=huggingface_config.text_encoder_config,
+            state_dict=llm_state_dict,
+            dtype=dtype,
+            n_devices=n_devices,
+            cache_dtype=cache_dtype,
+            kv_cache_config=kv_cache_config,
+            return_logits=return_logits,
+            norm_method=norm_method,
+            attention_bias=True,  # QwenImageEditPlus uses Qwen2 which has attention_bias=True
+        )
+        
+        # Create TransformerConfig for the denoiser model
+        transformer_config = TransformerConfig.generate(
+            pipeline_config=pipeline_config,
+            huggingface_config=huggingface_config.transformer_config,
             state_dict=llm_state_dict,
             dtype=dtype,
             n_devices=n_devices,
@@ -257,12 +298,18 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
             image_token_id=huggingface_config.image_token_id,
             video_token_id=huggingface_config.video_token_id,
             vision_start_token_id=huggingface_config.vision_start_token_id,
-            spatial_merge_size=hf_vision_config.spatial_merge_size,
+            spatial_merge_size=hf_vae_config.spatial_merge_size,
             mrope_section=huggingface_config.text_config.rope_scaling[
                 "mrope_section"
             ],
+            # Scheduler configuration
+            scheduler_config=scheduler_config,
             # Vision configuration
-            vision_config=vision_config,
+            vae_config=vae_config,
+            # Text encoder configuration
+            text_encoder_config=text_encoder_config,
+            # Denoising transformer configuration
+            transformer_config=transformer_config,
             # Composed language model configuration
             llm_config=llm_config,
         )

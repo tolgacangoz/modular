@@ -59,6 +59,49 @@ from max.nn import (
 )
 from max.nn.float8_config import Float8Config
 from max.nn.layer import Module
+from collections.abc import Callable, Iterable, Sequence
+
+from max.dtype import DType
+from max.graph import (
+    BufferValue,
+    DeviceRef,
+    ShardingStrategy,
+    TensorValue,
+    TensorValueLike,
+    Weight,
+    ops,
+)
+from max.nn import (
+    MLP,
+    ColumnParallelLinear,
+    LayerList,
+    Linear,
+    Llama3RotaryEmbedding,
+    Module,
+    ReturnLogits,
+    RMSNorm,
+    VocabParallelEmbedding,
+)
+from max.nn.attention.attention_with_rope import _compute_shard_range
+from max.nn.comm.allreduce import Allreduce
+from max.nn.float8_config import Float8Config
+from max.nn.kernels import (
+    MHAMaskVariant,
+    flash_attention_ragged,
+    fused_qk_ragged_rope,
+    fused_qkv_ragged_matmul,
+)
+from max.nn.kv_cache import KVCacheParams, PagedCacheValues
+from max.nn.layer import Shardable
+from max.nn.transformer.distributed_transformer import (
+    ShardableCallable,
+    forward_sharded_layers,
+)
+from max.pipelines.architectures.internvl.embedding_utils import (
+    merge_multimodal_embeddings_with_gather,
+)
+from max.pipelines.architectures.internvl.internvl import distribute_value
+
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -117,62 +160,14 @@ def get_timestep_embedding(
     return emb
 
 
-def apply_rotary_emb_qwen(
-    x: TensorValue,
-    freqs_cis: Union[TensorValue, Tuple[TensorValue]],
-    use_real: bool = True,
-    use_real_unbind_dim: int = -1,
-) -> Tuple[TensorValue, TensorValue]:
-    """
-    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
-    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
-    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
-    tensors contain rotary embeddings and are returned as real tensors.
-
-    Args:
-        x (`TensorValue`):
-            Query or key tensor to apply rotary embeddings. [B, S, H, D] xk (TensorValue): Key tensor to apply
-        freqs_cis (`Tuple[TensorValue]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
-
-    Returns:
-        Tuple[TensorValue, TensorValue]: Tuple of modified query tensor and key tensor with rotary embeddings.
-    """
-    if use_real:
-        cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
-        cos, sin = cos.to(x.device), sin.to(x.device)
-
-        if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
-        elif use_real_unbind_dim == -2:
-            # Used for Stable Audio, OmniGen, CogView4 and Cosmos
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
-            x_rotated = ops.concat([-x_imag, x_real], dim=-1)
-        else:
-            raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
-
-        out = (x.cast(DType.float32) * cos + x_rotated.cast(DType.float32) * sin).cast(x.dtype)
-
-        return out
-    else:
-        x_rotated = torch.view_as_complex(x.cast(DType.float32).reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(1)
-        x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
-
-        return x_out.type_as(x)
-
-
-class QwenTimestepProjEmbeddings(nn.Module):
+class QwenTimestepProjEmbeddings(Module):
     def __init__(self, embedding_dim):
         super().__init__()
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
 
-    def forward(self, timestep, hidden_states):
+    def forward(self, timestep: TensorValue, hidden_states: TensorValue) -> TensorValue:
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.cast(hidden_states.dtype))  # (N, D)
 
@@ -181,323 +176,405 @@ class QwenTimestepProjEmbeddings(nn.Module):
         return conditioning
 
 
-class QwenEmbedRope(nn.Module):
-    def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
-        super().__init__()
-        self.theta = theta
-        self.axes_dim = axes_dim
-        pos_index = torch.arange(4096)
-        neg_index = torch.arange(4096).flip(0) * -1 - 1
-        self.pos_freqs = ops.concat(
-            [
-                self.rope_params(pos_index, self.axes_dim[0], self.theta),
-                self.rope_params(pos_index, self.axes_dim[1], self.theta),
-                self.rope_params(pos_index, self.axes_dim[2], self.theta),
-            ],
-            dim=1,
-        )
-        self.neg_freqs = ops.concat(
-            [
-                self.rope_params(neg_index, self.axes_dim[0], self.theta),
-                self.rope_params(neg_index, self.axes_dim[1], self.theta),
-                self.rope_params(neg_index, self.axes_dim[2], self.theta),
-            ],
-            dim=1,
-        )
+class QwenImageAttentionWithRope(Module, Shardable):
+    """QwenImage attention layer with multi-axis rotary position embedding (mrope).
 
-        # DO NOT USING REGISTER BUFFER HERE, IT WILL CAUSE COMPLEX NUMBERS LOSE ITS IMAGINARY PART
-        self.scale_rope = scale_rope
+    This implementation is based on the Qwen2.5VL language model architecture, which
+    is similar to Llama3 but includes attention bias and multi-axis rotary position embedding (mrope).
 
-    def rope_params(self, index, dim, theta=10000):
-        """
-        Args:
-            index: [0, 1, 2, 3] 1D Tensor representing the position index of the token
-        """
-        assert dim % 2 == 0
-        freqs = torch.outer(index, 1.0 / torch.pow(theta, torch.arange(0, dim, 2).cast(DType.float32).div(dim)))
-        freqs = torch.polar(torch.ones_like(freqs), freqs)
-        return freqs
+    This is a distributed attention layer that supports tensor parallel and replicate sharding strategies.
 
-    def forward(
+    This attention implementation supports 2D position IDs for vision-language tasks.
+    """
+
+    # This class will not use the RotaryEmbedding to
+    # apply rope to the query, but it already includes a freqs_cis
+    # calculation, which we will borrow
+    rope: Llama3RotaryEmbedding
+
+    def __init__(
         self,
-        video_fhw: Union[Tuple[int, int, int], List[Tuple[int, int, int]]],
-        txt_seq_lens: List[int],
-        device: DeviceRef,
-    ) -> Tuple[TensorValue, TensorValue]:
-        """
+        *,
+        rope: Llama3RotaryEmbedding,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        hidden_size: int,
+        kv_params: KVCacheParams,
+        devices: Sequence[DeviceRef] | None = None,
+        dtype: DType = DType.float32,
+        linear_cls: Callable[..., Linear] = Linear,
+        scale: float | None = None,
+        has_bias: bool = True,
+        float8_config: Float8Config | None = None,
+    ) -> None:
+        """Initializes the QwenImage attention layer with mrope support.
+
         Args:
-            video_fhw (`Tuple[int, int, int]` or `List[Tuple[int, int, int]]`):
-                A list of 3 integers [frame, height, width] representing the shape of the video.
-            txt_seq_lens (`List[int]`):
-                A list of integers of length batch_size representing the length of each text prompt.
-            device: (`DeviceRef`):
-                The device on which to perform the RoPE computation.
+            rope: The rope layer to borrow the freqs_cis value from.
+            num_attention_heads: The number of attention heads.
+            num_key_value_heads: Number of key/value heads.
+            hidden_size: The dimension of the hidden states.
+            kv_params: KV Cache Params, including the number of kv heads, the head dim, and data type.
+            devices: Device to place the weights and run the computation. This is a distributed
+                attention layer, so we use all devices during attention computation.
+            dtype: DType of the QKV and output projection weights.
+            linear_cls: Linear class to use for the outputs dense layer.
+            scale: Value used to scale the results of the attention output.
+            has_bias: Whether to use an attention bias.
         """
-        if self.pos_freqs.device != device:
-            self.pos_freqs = self.pos_freqs.to(device)
-            self.neg_freqs = self.neg_freqs.to(device)
 
-        if isinstance(video_fhw, list):
-            video_fhw = video_fhw[0]
-        if not isinstance(video_fhw, list):
-            video_fhw = [video_fhw]
+        super().__init__()
+        self.rope = rope
+        self.n_heads = num_attention_heads
+        self.kv_params = kv_params
+        self.has_bias = has_bias
+        self.hidden_size = hidden_size
+        self.scale = (
+            scale if scale else math.sqrt(1.0 / self.kv_params.head_dim)
+        )
+        self.float8_config = float8_config
 
-        vid_freqs = []
-        max_vid_index = 0
-        for idx, fhw in enumerate(video_fhw):
-            frame, height, width = fhw
-            # RoPE frequencies are cached via a lru_cache decorator on _compute_video_freqs
-            video_freq = self._compute_video_freqs(frame, height, width, idx)
-            video_freq = video_freq.to(device)
-            vid_freqs.append(video_freq)
+        self.devices = devices or [DeviceRef.CPU()]
 
-            if self.scale_rope:
-                max_vid_index = max(height // 2, width // 2, max_vid_index)
-            else:
-                max_vid_index = max(height, width, max_vid_index)
+        self._sharding_strategy: ShardingStrategy | None = None
 
-        max_len = max(txt_seq_lens)
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
-        vid_freqs = ops.concat(vid_freqs, dim=0)
-
-        return vid_freqs, txt_freqs
-
-    @functools.lru_cache(maxsize=128)
-    def _compute_video_freqs(self, frame: int, height: int, width: int, idx: int = 0) -> torch.Tensor:
-        seq_lens = frame * height * width
-        freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-        freqs_neg = self.neg_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-
-        freqs_frame = freqs_pos[0][idx : idx + frame].view(frame, 1, 1, -1).expand(frame, height, width, -1)
-        if self.scale_rope:
-            freqs_height = ops.concat([freqs_neg[1][-(height - height // 2) :], freqs_pos[1][: height // 2]], dim=0)
-            freqs_height = freqs_height.view(1, height, 1, -1).expand(frame, height, width, -1)
-            freqs_width = ops.concat([freqs_neg[2][-(width - width // 2) :], freqs_pos[2][: width // 2]], dim=0)
-            freqs_width = freqs_width.view(1, 1, width, -1).expand(frame, height, width, -1)
-        else:
-            freqs_height = freqs_pos[1][:height].view(1, height, 1, -1).expand(frame, height, width, -1)
-            freqs_width = freqs_pos[2][:width].view(1, 1, width, -1).expand(frame, height, width, -1)
-
-        freqs = ops.concat([freqs_frame, freqs_height, freqs_width], dim=-1).reshape(seq_lens, -1)
-        return freqs.clone().contiguous()
-
-
-class QwenDoubleStreamAttnProcessor2_0:
-    """
-    Attention processor for Qwen double-stream architecture, matching DoubleStreamLayerMegatron logic. This processor
-    implements joint attention computation where text and image streams are processed together.
-    """
-
-    _attention_backend = None
-    _parallel_config = None
-
-    def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError(
-                "QwenDoubleStreamAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
+        if not self.kv_params.cache_strategy.uses_opaque():
+            raise ValueError(
+                f"{self.kv_params.cache_strategy} cache strategy, not supported"
+                " in Attention layer."
             )
+
+        q_weight_dim = self.kv_params.head_dim * num_attention_heads
+        kv_weight_dim = self.kv_params.head_dim * num_key_value_heads
+
+        self.q_proj = linear_cls(
+            in_dim=hidden_size,
+            out_dim=q_weight_dim,
+            dtype=dtype,
+            device=self.devices[0],
+            has_bias=has_bias,
+            float8_config=float8_config,
+        )
+        self.k_proj = linear_cls(
+            in_dim=hidden_size,
+            out_dim=kv_weight_dim,
+            dtype=dtype,
+            device=self.devices[0],
+            has_bias=has_bias,
+            float8_config=float8_config,
+        )
+        self.v_proj = linear_cls(
+            in_dim=hidden_size,
+            out_dim=kv_weight_dim,
+            dtype=dtype,
+            device=self.devices[0],
+            has_bias=has_bias,
+            float8_config=float8_config,
+        )
+
+        self.o_proj = linear_cls(
+            in_dim=q_weight_dim,
+            out_dim=hidden_size,
+            dtype=dtype,
+            device=self.devices[0],
+            float8_config=float8_config,
+        )
+
+    @property
+    def wqkv(self) -> TensorValue:
+        """The concatenation of q, k, and v weight vectors."""
+
+        wq: TensorValue = self.q_proj.weight
+        wk: TensorValue = self.k_proj.weight
+        wv: TensorValue = self.v_proj.weight
+
+        wqkv = ops.concat((wq, wk, wv))
+        return wqkv
+
+    @property
+    def wqkv_bias(self) -> TensorValue | None:
+        """The concatenation of q, k, and v bias weight vectors."""
+        if not self.has_bias:
+            return None
+
+        # Access bias, which should all exist since has_bias=True.
+        assert self.q_proj.bias is not None
+        assert self.k_proj.bias is not None
+        assert self.v_proj.bias is not None
+        return ops.concat(
+            (self.q_proj.bias, self.k_proj.bias, self.v_proj.bias)
+        )
 
     def __call__(
         self,
-        attn: Attention,
-        hidden_states: torch.FloatTensor,  # Image stream
-        encoder_hidden_states: torch.FloatTensor = None,  # Text stream
-        encoder_hidden_states_mask: torch.FloatTensor = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        image_rotary_emb: Optional[torch.Tensor] = None,
-    ) -> torch.FloatTensor:
-        if encoder_hidden_states is None:
-            raise ValueError("QwenDoubleStreamAttnProcessor2_0 requires encoder_hidden_states (text stream)")
+        layer_idx: TensorValue,
+        x: TensorValue,
+        kv_collection: PagedCacheValues,
+        freqs_cis: TensorValue,
+        input_row_offsets: TensorValue,
+        position_ids: TensorValue,
+        mrope_section: list[int],
+    ) -> TensorValue:
+        # Keep attention stack in BF16.
+        total_seq_len = x.shape[0]
+        self.kv_params.dtype = DType.bfloat16
 
-        seq_txt = encoder_hidden_states.shape[1]
+        # Make sure activations are BF16 for the fused kernel.
+        x_in = x if x.dtype == DType.bfloat16 else ops.cast(x, DType.bfloat16)
 
-        # Compute QKV for image stream (sample projections)
-        img_query = attn.to_q(hidden_states)
-        img_key = attn.to_k(hidden_states)
-        img_value = attn.to_v(hidden_states)
+        # Helper: dequantize an FP8 weight to BF16 using its scale, if present.
+        def _dequant_w_to_bf16(
+            w: Weight, w_scale: Weight | None
+        ) -> TensorValue:
+            w_bf16 = ops.cast(w.to(x_in.device), DType.bfloat16)
+            if w_scale is None:
+                return w_bf16
+            s = ops.cast(w_scale.to(x_in.device), DType.bfloat16)
+            # Supports scalar or rowwise scales via broadcasting.
+            return w_bf16 * s
 
-        # Compute QKV for text stream (context projections)
-        txt_query = attn.add_q_proj(encoder_hidden_states)
-        txt_key = attn.add_k_proj(encoder_hidden_states)
-        txt_value = attn.add_v_proj(encoder_hidden_states)
+        # Build BF16 WQKV for the fused kernel:
+        # - FP8 models: dequantize Q/K/V with their scales.
+        # - Non-FP8 models: just cast the concatenated weight to BF16.
+        if self.q_proj.weight.dtype.is_float8():
+            wq_bf16 = _dequant_w_to_bf16(
+                self.q_proj.weight, self.q_proj.weight_scale
+            )
+            wk_bf16 = _dequant_w_to_bf16(
+                self.k_proj.weight, self.k_proj.weight_scale
+            )
+            wv_bf16 = _dequant_w_to_bf16(
+                self.v_proj.weight, self.v_proj.weight_scale
+            )
+            wqkv_bf16 = ops.concat((wq_bf16, wk_bf16, wv_bf16), axis=0)
+        else:
+            wqkv_bf16 = self.wqkv
+            if wqkv_bf16.dtype != DType.bfloat16:
+                wqkv_bf16 = ops.cast(wqkv_bf16, DType.bfloat16)
 
-        # Reshape for multi-head attention
-        img_query = img_query.unflatten(-1, (attn.heads, -1))
-        img_key = img_key.unflatten(-1, (attn.heads, -1))
-        img_value = img_value.unflatten(-1, (attn.heads, -1))
-
-        txt_query = txt_query.unflatten(-1, (attn.heads, -1))
-        txt_key = txt_key.unflatten(-1, (attn.heads, -1))
-        txt_value = txt_value.unflatten(-1, (attn.heads, -1))
-
-        # Apply QK normalization
-        if attn.norm_q is not None:
-            img_query = attn.norm_q(img_query)
-        if attn.norm_k is not None:
-            img_key = attn.norm_k(img_key)
-        if attn.norm_added_q is not None:
-            txt_query = attn.norm_added_q(txt_query)
-        if attn.norm_added_k is not None:
-            txt_key = attn.norm_added_k(txt_key)
-
-        # Apply RoPE
-        if image_rotary_emb is not None:
-            img_freqs, txt_freqs = image_rotary_emb
-            img_query = apply_rotary_emb_qwen(img_query, img_freqs, use_real=False)
-            img_key = apply_rotary_emb_qwen(img_key, img_freqs, use_real=False)
-            txt_query = apply_rotary_emb_qwen(txt_query, txt_freqs, use_real=False)
-            txt_key = apply_rotary_emb_qwen(txt_key, txt_freqs, use_real=False)
-
-        # Concatenate for joint attention
-        # Order: [text, image]
-        joint_query = ops.concat([txt_query, img_query], dim=1)
-        joint_key = ops.concat([txt_key, img_key], dim=1)
-        joint_value = ops.concat([txt_value, img_value], dim=1)
-
-        # Compute joint attention
-        joint_hidden_states = dispatch_attention_fn(
-            joint_query,
-            joint_key,
-            joint_value,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            is_causal=False,
-            backend=self._attention_backend,
-            parallel_config=self._parallel_config,
+        # Fused QKV matmul: input and wqkv are both BF16 now.
+        xq = fused_qkv_ragged_matmul(
+            self.kv_params,
+            input=x_in,
+            wqkv=wqkv_bf16,
+            bias=self.wqkv_bias,
+            input_row_offsets=input_row_offsets,
+            kv_collection=kv_collection,
+            layer_idx=layer_idx,
+            n_heads=self.n_heads,
         )
 
-        # Reshape back
-        joint_hidden_states = joint_hidden_states.flatten(2, 3)
-        joint_hidden_states = joint_hidden_states.cast(joint_query.dtype)
+        # Apply RoPE and flash attention (also in BF16).
+        xq = xq.reshape((-1, self.n_heads, self.kv_params.head_dim))
+        freqs_cis = freqs_cis.to(xq.device)
+        xq = fused_qk_ragged_rope(
+            self.kv_params,
+            xq,
+            input_row_offsets,
+            kv_collection,
+            freqs_cis,
+            layer_idx,
+            interleaved=self.rope.interleaved,
+            position_ids=position_ids,
+            mrope_section=mrope_section,
+        )
 
-        # Split attention outputs back
-        txt_attn_output = joint_hidden_states[:, :seq_txt, :]  # Text part
-        img_attn_output = joint_hidden_states[:, seq_txt:, :]  # Image part
+        attn_out = flash_attention_ragged(
+            self.kv_params,
+            input=xq,
+            kv_collection=kv_collection,
+            layer_idx=layer_idx,
+            input_row_offsets=input_row_offsets,
+            mask_variant=MHAMaskVariant.CAUSAL_MASK,
+            scale=self.scale,
+        )
 
-        # Apply output projections
-        img_attn_output = attn.to_out[0](img_attn_output)
-        if len(attn.to_out) > 1:
-            img_attn_output = attn.to_out[1](img_attn_output)  # dropout
+        attn_out = ops.reshape(attn_out, shape=[total_seq_len, -1])
+        return self.o_proj(attn_out)
 
-        txt_attn_output = attn.to_add_out(txt_attn_output)
+    @property
+    def sharding_strategy(self) -> ShardingStrategy | None:
+        return self._sharding_strategy
 
-        return img_attn_output, txt_attn_output
+    @sharding_strategy.setter
+    def sharding_strategy(self, sharding_strategy: ShardingStrategy) -> None:
+        num_devices = sharding_strategy.num_devices
+
+        if sharding_strategy.is_replicate:
+            self.q_proj.sharding_strategy = sharding_strategy
+            self.k_proj.sharding_strategy = sharding_strategy
+            self.v_proj.sharding_strategy = sharding_strategy
+            self.o_proj.sharding_strategy = sharding_strategy
+
+        elif sharding_strategy.is_tensor_parallel:
+            self.q_proj.sharding_strategy = ShardingStrategy.rowwise(
+                num_devices
+            )
+            self.k_proj.sharding_strategy = ShardingStrategy.rowwise(
+                num_devices
+            )
+            self.v_proj.sharding_strategy = ShardingStrategy.rowwise(
+                num_devices
+            )
+            self.o_proj.sharding_strategy = (
+                ShardingStrategy.head_aware_columnwise(
+                    num_devices, self.n_heads, self.kv_params.head_dim
+                )
+            )
+
+        else:
+            raise ValueError(
+                "Qwen25VLDecoderAttentionWithRope only supports tensor parallel and replicate sharding strategy"
+            )
+
+        self._sharding_strategy = sharding_strategy
+
+    def shard(
+        self, devices: Iterable[DeviceRef]
+    ) -> list[Qwen25VLDecoderAttentionWithRope]:
+        """Creates sharded views of this attention layer across multiple devices.
+
+        Args:
+            devices: Iterable of devices to place the shards on.
+
+        Returns:
+            List of sharded Gemma3Attention instances, one for each device.
+        """
+        if not self.sharding_strategy:
+            raise ValueError(
+                "Qwen25VLDecoderAttentionWithRope layer cannot be sharded because no sharding strategy was provided."
+            )
+
+        # Get sharded weights
+        q_proj_shards = self.q_proj.shard(devices)
+        k_proj_shards = self.k_proj.shard(devices)
+        v_proj_shards = self.v_proj.shard(devices)
+        o_proj_shards = self.o_proj.shard(devices)
+
+        shards = []
+        for shard_idx, device in enumerate(devices):
+            # Calculate sharded dimensions - handle uneven head distribution
+            # Calculate the number of heads for this device
+            head_start, head_end = _compute_shard_range(
+                self.n_heads, shard_idx, len(self.devices)
+            )
+            sharded_num_heads = head_end - head_start
+
+            sharded_head_start, sharded_head_end = _compute_shard_range(
+                self.kv_params.n_kv_heads,
+                shard_idx,
+                len(self.devices),
+            )
+            sharded_num_kv_heads = sharded_head_end - sharded_head_start
+
+            # Create new attention instance with sharded configuration
+            sharded = Qwen25VLDecoderAttentionWithRope(
+                rope=self.rope,
+                num_attention_heads=sharded_num_heads,
+                num_key_value_heads=sharded_num_kv_heads,
+                hidden_size=self.hidden_size,
+                kv_params=self.kv_params,
+                dtype=self.q_proj.weight.dtype,
+                devices=[device],
+                linear_cls=self.o_proj.__class__,
+                scale=self.scale,
+                has_bias=self.has_bias,
+                float8_config=self.float8_config,
+            )
+
+            # Assign sharded weights
+            sharded.q_proj = q_proj_shards[shard_idx]
+            sharded.k_proj = k_proj_shards[shard_idx]
+            sharded.v_proj = v_proj_shards[shard_idx]
+            sharded.o_proj = o_proj_shards[shard_idx]
+
+            shards.append(sharded)
+
+        return shards
 
 
-@maybe_allow_in_graph
-class QwenImageTransformerBlock(nn.Module):
+
+class QwenImageTransformerBlock(Module):
+    """QwenImageTransformerBlock customized for supporting 2D position ids."""
+
     def __init__(
-        self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
-    ):
-        super().__init__()
-
-        self.dim = dim
-        self.num_attention_heads = num_attention_heads
-        self.attention_head_dim = attention_head_dim
-
-        # Image processing modules
-        self.img_mod = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(dim, 6 * dim, bias=True),  # For scale, shift, gate for norm1 and norm2
-        )
-        self.img_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.attn = Attention(
-            query_dim=dim,
-            cross_attention_dim=None,  # Enable cross attention for joint computation
-            added_kv_proj_dim=dim,  # Enable added KV projections for text stream
-            dim_head=attention_head_dim,
-            heads=num_attention_heads,
-            out_dim=dim,
-            context_pre_only=False,
-            bias=True,
-            processor=QwenDoubleStreamAttnProcessor2_0(),
-            qk_norm=qk_norm,
-            eps=eps,
-        )
-        self.img_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.img_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
-
-        # Text processing modules
-        self.txt_mod = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(dim, 6 * dim, bias=True),  # For scale, shift, gate for norm1 and norm2
-        )
-        self.txt_norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        # Text doesn't need separate attention - it's handled by img_attn joint computation
-        self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
-
-    def _modulate(self, x, mod_params):
-        """Apply modulation to input tensor"""
-        shift, scale, gate = mod_params.chunk(3, dim=-1)
-        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
-
-    def forward(
         self,
-        hidden_states: torch.Tensor,
-        encoder_hidden_states: torch.Tensor,
-        encoder_hidden_states_mask: torch.Tensor,
-        temb: torch.Tensor,
-        image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Get modulation parameters for both streams
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
-
-        # Split modulation parameters for norm1 and norm2
-        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
-        txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
-
-        # Process image stream - norm1 + modulation
-        img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1)
-
-        # Process text stream - norm1 + modulation
-        txt_normed = self.txt_norm1(encoder_hidden_states)
-        txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
-
-        # Use QwenAttnProcessor2_0 for joint attention computation
-        # This directly implements the DoubleStreamLayerMegatron logic:
-        # 1. Computes QKV for both streams
-        # 2. Applies QK normalization and RoPE
-        # 3. Concatenates and runs joint attention
-        # 4. Splits results back to separate streams
-        joint_attention_kwargs = joint_attention_kwargs or {}
-        attn_output = self.attn(
-            hidden_states=img_modulated,  # Image stream (will be processed as "sample")
-            encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
-            encoder_hidden_states_mask=encoder_hidden_states_mask,
-            image_rotary_emb=image_rotary_emb,
-            **joint_attention_kwargs,
+        attention: QwenImageAttentionWithRope,
+        mlp: ShardableCallable,
+        attention_norm: ShardableCallable,
+        mlp_norm: ShardableCallable,
+        devices: list[DeviceRef],
+    ) -> None:
+        super().__init__()
+        self.self_attn = attention
+        self.self_attn.sharding_strategy = ShardingStrategy.tensor_parallel(
+            len(devices)
         )
+        self.self_attn_shards = attention.shard(devices)
 
-        # QwenAttnProcessor2_0 returns (img_output, txt_output) when encoder_hidden_states is provided
-        img_attn_output, txt_attn_output = attn_output
+        self.mlp = mlp
+        self.mlp.sharding_strategy = ShardingStrategy.tensor_parallel(
+            len(devices)
+        )
+        self.mlp_shards = mlp.shard(devices)
 
-        # Apply attention gates and add residual (like in Megatron)
-        hidden_states = hidden_states + img_gate1 * img_attn_output
-        encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
+        self.input_layernorm = attention_norm
+        self.input_layernorm.sharding_strategy = ShardingStrategy.replicate(
+            len(devices)
+        )
+        self.input_layernorm_shards = attention_norm.shard(devices)
 
-        # Process image stream - norm2 + MLP
-        img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)
-        img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
+        self.post_attention_layernorm = mlp_norm
 
-        # Process text stream - norm2 + MLP
-        txt_normed2 = self.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2)
-        txt_mlp_output = self.txt_mlp(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        self.post_attention_layernorm.sharding_strategy = (
+            ShardingStrategy.replicate(len(devices))
+        )
+        self.post_attention_layernorm_shards = mlp_norm.shard(devices)
 
-        # Clip to prevent overflow for fp16
-        if encoder_hidden_states.dtype == DType.float16:
-            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-        if hidden_states.dtype == DType.float16:
-            hidden_states = hidden_states.clip(-65504, 65504)
+        self.devices = devices
+        self.allreduce = Allreduce(num_accelerators=len(devices))
 
-        return encoder_hidden_states, hidden_states
+    def __call__(
+        self,
+        layer_idx: TensorValue,
+        xs: list[TensorValue],
+        kv_collections: list[PagedCacheValues],
+        freqs_cis: list[TensorValue],
+        input_row_offsets: list[TensorValue],
+        position_ids: TensorValue,
+        mrope_section: list[int],
+        signal_buffers: list[BufferValue],
+    ) -> list[TensorValue]:
+        norm_xs = forward_sharded_layers(self.input_layernorm_shards, xs)
+
+        attn_out = [
+            shard(
+                layer_idx,
+                norm_xs[i],
+                kv_collections[i],
+                freqs_cis=freqs_cis[i],
+                input_row_offsets=input_row_offsets[i],
+                # TODO: how to pass position_ids and mrope_section to each shard?
+                position_ids=position_ids,
+                mrope_section=mrope_section,
+            )
+            for i, shard in enumerate(self.self_attn_shards)
+        ]
+        attn_outs = self.allreduce(attn_out, signal_buffers)
+
+        hs = [x + attn_out for x, attn_out in zip(xs, attn_outs, strict=True)]
+
+        # Apply post attention layer norm to each shard
+        norm_outs = forward_sharded_layers(
+            self.post_attention_layernorm_shards, hs
+        )
+        mlp_outs = forward_sharded_layers(self.mlp_shards, norm_outs)
+
+        mlp_outs = self.allreduce(mlp_outs, signal_buffers)
+
+        hs = [h + mlp_out for h, mlp_out in zip(hs, mlp_outs, strict=True)]
+
+        return hs
 
 
 class QwenImageTransformer2DModel(
@@ -529,24 +606,6 @@ class QwenImageTransformer2DModel(
             The dimensions to use for the rotary positional embeddings.
     """
 
-    _supports_gradient_checkpointing = True
-    _no_split_modules = ["QwenImageTransformerBlock"]
-    _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
-    _repeated_blocks = ["QwenImageTransformerBlock"]
-    _cp_plan = {
-        "": {
-            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
-            "encoder_hidden_states_mask": ContextParallelInput(split_dim=1, expected_dims=2, split_output=False),
-        },
-        "pos_embed": {
-            0: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
-            1: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
-        },
-        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
-    }
-
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 2,
