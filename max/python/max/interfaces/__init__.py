@@ -59,6 +59,11 @@ from .pipeline_variants import (
     TextGenerationRequestTool,
     TextGenerationResponseFormat,
     VLMTextGenerationContext,
+    VideoGenerationContextType,
+    VideoGenerationInputs,
+    VideoGenerationMetadata,
+    VideoGenerationOutput,
+    VideoGenerationRequest,
 )
 from .queue import MAXPullQueue, MAXPushQueue, drain_queue, get_blocking
 from .request import Request, RequestID, RequestType
@@ -146,6 +151,11 @@ __all__ = [
     "TextGenerationRequestTool",
     "TextGenerationResponseFormat",
     "VLMTextGenerationContext",
+    "VideoGenerationContextType",
+    "VideoGenerationInputs",
+    "VideoGenerationMetadata",
+    "VideoGenerationOutput",
+    "VideoGenerationRequest",
     "drain_queue",
     "get_blocking",
     "msgpack_eq",

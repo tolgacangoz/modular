@@ -38,12 +38,18 @@ from .text_generation import (
     TextGenerationResponseFormat,
     VLMTextGenerationContext,
 )
+from .video_generation import (
+    VideoGenerationContextType,
+    VideoGenerationInputs,
+    VideoGenerationMetadata,
+    VideoGenerationOutput,
+    VideoGenerationRequest,
+)
 
 __all__ = [
     "AudioGenerationContextType",
     "AudioGenerationInputs",
     "AudioGenerationMetadata",
-    "AudioGenerationOutput",
     "AudioGenerationOutput",
     "AudioGenerationRequest",
     "BatchType",
@@ -62,4 +68,9 @@ __all__ = [
     "TextGenerationRequestTool",
     "TextGenerationResponseFormat",
     "VLMTextGenerationContext",
+    "VideoGenerationContextType",
+    "VideoGenerationInputs",
+    "VideoGenerationMetadata",
+    "VideoGenerationOutput",
+    "VideoGenerationRequest",
 ]

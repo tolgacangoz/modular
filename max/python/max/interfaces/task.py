@@ -58,6 +58,8 @@ class PipelineTask(str, Enum):
     """Task for generating audio."""
     SPEECH_TOKEN_GENERATION = "speech_token_generation"
     """Task for generating speech tokens."""
+    VIDEO_GENERATION = "video_generation"
+    """Task for generating video."""
 
     @property
     def output_type(
@@ -73,6 +75,7 @@ class PipelineTask(str, Enum):
             AudioGenerationOutput,
             EmbeddingsGenerationOutput,
             TextGenerationOutput,
+            VideoGenerationOutput,
         )
         from .scheduler import SchedulerResult
 
@@ -85,6 +88,8 @@ class PipelineTask(str, Enum):
             return dict[RequestID, SchedulerResult[EmbeddingsGenerationOutput]]
         elif self == PipelineTask.AUDIO_GENERATION:
             return dict[RequestID, SchedulerResult[AudioGenerationOutput]]
+        elif self == PipelineTask.VIDEO_GENERATION:
+            return dict[RequestID, SchedulerResult[VideoGenerationOutput]]
         else:
             raise ValueError(
                 f"PipelineTask ({self}) does not have an output_type defined."
