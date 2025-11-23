@@ -260,9 +260,8 @@ class QwenImageEditPlusModel(
             A tuple of (vision_model, language_model).
         """
         # Pre-allocation for multi-step execution
-        assert self.pipeline_config.max_batch_size, (
-            "Expected max_batch_size to be set"
-        )
+        if not self.pipeline_config.max_batch_size:
+            raise ValueError("Expected max_batch_size to be set")
         self._input_row_offsets_prealloc = Tensor.from_numpy(
             np.arange(self.pipeline_config.max_batch_size + 1, dtype=np.uint32)
         ).to(self.devices)
@@ -309,7 +308,8 @@ class QwenImageEditPlusModel(
         )
         self.model_config = qwenimageeditplus_config
 
-        assert self.model_config is not None, "Model config must be initialized"
+        if self.model_config is None:
+            raise RuntimeError("Model config must be initialized")
         self.model: Module = QwenImageEditPlus(self.model_config)
         self.model.load_state_dict(model_state_dict, strict=True)
 
@@ -343,8 +343,9 @@ class QwenImageEditPlusModel(
         Now supports multi-GPU processing for the vision encoder.
         """
 
-        # Create Qwen2.5VL model and vision encoder
-        assert isinstance(self.model, QwenImageEditPlus)
+        # Create QwenImageEditPlus model and vision encoder
+        if not isinstance(self.model, QwenImageEditPlus):
+            raise TypeError(f"Expected QwenImageEditPlus model, got {type(self.model).__name__}")
         vision_encoder = self.model.vision_encoder
         # Define vision graph input types - one per device
         # vision_seq_len is the number of patches in all images and videos in the request
@@ -483,9 +484,8 @@ class QwenImageEditPlusModel(
             )
 
             # Ensure we have a valid output
-            assert vision_outputs is not None, (
-                "Vision encoder must return a valid output"
-            )
+            if vision_outputs is None:
+                raise RuntimeError("Vision encoder must return a valid output")
 
             graph.output(*vision_outputs)
 
@@ -494,7 +494,8 @@ class QwenImageEditPlusModel(
     def _build_language_graph(self) -> Graph:
         """Build the language model graph for text generation with image embeddings."""
 
-        assert isinstance(self.model, QwenImageEditPlus)
+        if not isinstance(self.model, QwenImageEditPlus):
+            raise TypeError(f"Expected QwenImageEditPlus model, got {type(self.model).__name__}")
         language_model = self.model.language_model
 
         # Generate DeviceRef
@@ -523,7 +524,8 @@ class QwenImageEditPlusModel(
         signals = Signals(
             devices=(DeviceRef(d.label, d.id) for d in self.devices)
         )
-        assert self.model_config is not None, "Model config must be initialized"
+        if self.model_config is None:
+            raise RuntimeError("Model config must be initialized")
 
         # Add image embeddings type - one per device, can be empty for text-only inputs
         image_embeddings_types = [
@@ -685,7 +687,8 @@ class QwenImageEditPlusModel(
             List of tensors containing all scatter indices distributed across devices
             List of tensors containing all gather indices distributed across devices
         """
-        assert self.model_config is not None, "Model config must be initialized"
+        if self.model_config is None:
+            raise RuntimeError("Model config must be initialized")
 
         np_scatter_indices, np_gather_indices = compute_scatter_gather_indices(
             context_batch
@@ -706,16 +709,26 @@ class QwenImageEditPlusModel(
         image_embeddings: list[Tensor]
 
         if model_inputs.has_vision_inputs:
-            assert model_inputs.scatter_indices is not None
-            assert model_inputs.gather_indices is not None
-            assert model_inputs.pixel_values is not None
-            assert model_inputs.vision_position_ids is not None
-            assert model_inputs.window_index is not None
-            assert model_inputs.cu_seqlens is not None
-            assert model_inputs.cu_window_seqlens is not None
-            assert model_inputs.max_seqlen is not None
-            assert model_inputs.max_window_seqlen is not None
-            assert model_inputs.max_grid_size is not None
+            if model_inputs.scatter_indices is None:
+                raise ValueError("scatter_indices must not be None for vision inputs")
+            if model_inputs.gather_indices is None:
+                raise ValueError("gather_indices must not be None for vision inputs")
+            if model_inputs.pixel_values is None:
+                raise ValueError("pixel_values must not be None for vision inputs")
+            if model_inputs.vision_position_ids is None:
+                raise ValueError("vision_position_ids must not be None for vision inputs")
+            if model_inputs.window_index is None:
+                raise ValueError("window_index must not be None for vision inputs")
+            if model_inputs.cu_seqlens is None:
+                raise ValueError("cu_seqlens must not be None for vision inputs")
+            if model_inputs.cu_window_seqlens is None:
+                raise ValueError("cu_window_seqlens must not be None for vision inputs")
+            if model_inputs.max_seqlen is None:
+                raise ValueError("max_seqlen must not be None for vision inputs")
+            if model_inputs.max_window_seqlen is None:
+                raise ValueError("max_window_seqlen must not be None for vision inputs")
+            if model_inputs.max_grid_size is None:
+                raise ValueError("max_grid_size must not be None for vision inputs")
 
             # Execute vision model: pixel_values -> image_embeddings (multi-GPU)
 
@@ -732,7 +745,8 @@ class QwenImageEditPlusModel(
             )
 
             # Extract image embeddings from vision outputs (one per device)
-            assert len(vision_outputs) == len(self.devices)
+            if len(vision_outputs) != len(self.devices):
+                raise ValueError(f"Expected {len(self.devices)} vision outputs, got {len(vision_outputs)}")
             image_embeddings = [
                 output
                 for output in vision_outputs
@@ -747,18 +761,28 @@ class QwenImageEditPlusModel(
 
             # The size of scatter and gather indices must match, equalling the
             # number of image placeholder tokens in the input ids.
-            assert scatter_indices[0].shape[0] == gather_indices[0].shape[0]
+            if scatter_indices[0].shape[0] != gather_indices[0].shape[0]:
+                raise ValueError(
+                    f"Scatter and gather indices must have the same size, "
+                    f"got {scatter_indices[0].shape[0]} and {gather_indices[0].shape[0]}"
+                )
 
             # Since we gather a subset of the image embeddings, the number of
             # gathered indices cannot exceed the number of image embeddings.
-            assert gather_indices[0].shape[0] <= image_embeddings[0].shape[0]
+            if gather_indices[0].shape[0] > image_embeddings[0].shape[0]:
+                raise ValueError(
+                    f"Gather indices size ({gather_indices[0].shape[0]}) cannot exceed "
+                    f"image embeddings size ({image_embeddings[0].shape[0]})"
+                )
 
             # Since we scatter these image embeddings to some rows of the text
             # embeddings, the number of scattered indices cannot exceed the
             # number of input ids.
-            assert (
-                scatter_indices[0].shape[0] <= model_inputs.input_ids.shape[0]
-            )
+            if scatter_indices[0].shape[0] > model_inputs.input_ids.shape[0]:
+                raise ValueError(
+                    f"Scatter indices size ({scatter_indices[0].shape[0]}) cannot exceed "
+                    f"input_ids size ({model_inputs.input_ids.shape[0]})"
+                )
 
             # Normalize index dtypes to match the language graph contract.
             scatter_indices = cast_tensors_to(
@@ -789,16 +813,20 @@ class QwenImageEditPlusModel(
 
         # Return model outputs based on what the language model returns
         if len(language_outputs) == 3:
-            assert isinstance(language_outputs[0], Tensor)
-            assert isinstance(language_outputs[1], Tensor)
-            assert isinstance(language_outputs[2], Tensor)
+            if not isinstance(language_outputs[0], Tensor):
+                raise TypeError(f"Expected Tensor at index 0, got {type(language_outputs[0]).__name__}")
+            if not isinstance(language_outputs[1], Tensor):
+                raise TypeError(f"Expected Tensor at index 1, got {type(language_outputs[1]).__name__}")
+            if not isinstance(language_outputs[2], Tensor):
+                raise TypeError(f"Expected Tensor at index 2, got {type(language_outputs[2]).__name__}")
             return ModelOutputs(
                 next_token_logits=language_outputs[0],
                 logits=language_outputs[1],
                 logit_offsets=language_outputs[2],
             )
         else:
-            assert isinstance(language_outputs[0], Tensor)
+            if not isinstance(language_outputs[0], Tensor):
+                raise TypeError(f"Expected Tensor at index 0, got {type(language_outputs[0]).__name__}")
             return ModelOutputs(
                 next_token_logits=language_outputs[0],
                 logits=language_outputs[0],
@@ -811,7 +839,7 @@ class QwenImageEditPlusModel(
         kv_cache_inputs: KVCacheInputs | None = None,
         return_n_logits: int = 1,
     ) -> QwenImageEditPlusInputs:
-        """Prepares the initial inputs for the first execution pass of the Qwen2.5VL model."""
+        """Prepares the initial inputs for the first execution pass of the QwenImageEditPlus model."""
 
         if kv_cache_inputs is None:
             raise ValueError("KV Cache Inputs must be provided")
@@ -820,13 +848,15 @@ class QwenImageEditPlusModel(
         vision_datas: list[VisionEncodingData] = []
         for ctx in context_batch:
             # Validate all contexts are the correct type
-            assert isinstance(ctx, QwenImageEditPlusTextAndVisionContext), (
-                f"Expected QwenImageEditPlusTextAndVisionContext, got {type(ctx).__name__}"
-            )
-            if ctx.needs_vision_encoding:
-                assert ctx.vision_data is not None, (
-                    "vision_data must be present when needs_vision_encoding is True"
+            if not isinstance(ctx, QwenImageEditPlusTextAndVisionContext):
+                raise TypeError(
+                    f"Expected QwenImageEditPlusTextAndVisionContext, got {type(ctx).__name__}"
                 )
+            if ctx.needs_vision_encoding:
+                if ctx.vision_data is None:
+                    raise ValueError(
+                        "vision_data must be present when needs_vision_encoding is True"
+                    )
                 vision_datas.append(ctx.vision_data)
         any_needs_vision_encoding = len(vision_datas) > 0
 
@@ -986,9 +1016,10 @@ class QwenImageEditPlusModel(
             index_offset = 0
             for ctx in context_batch:
                 if ctx.needs_vision_encoding:
-                    assert ctx.vision_data is not None, (
-                        "vision_data must be present when needs_vision_encoding is True"
-                    )
+                    if ctx.vision_data is None:
+                        raise ValueError(
+                            "vision_data must be present when needs_vision_encoding is True"
+                        )
                     per_ctx_index = ctx.vision_data.window_index.astype(
                         np.int64
                     )
@@ -1105,7 +1136,10 @@ class QwenImageEditPlusModel(
     ) -> QwenImageEditPlusInputs:
         """Prepares the inputs for subsequent execution steps in a multi-step generation."""
         # TODO: This is still buggy. Use max_num_steps=1 until this is fixed.
-        assert isinstance(prev_model_inputs, QwenImageEditPlusInputs)
+        if not isinstance(prev_model_inputs, QwenImageEditPlusInputs):
+            raise TypeError(
+                f"Expected QwenImageEditPlusInputs, got {type(prev_model_inputs).__name__}"
+            )
 
         # input_ids, old_row_offsets, Optional: [pixel_values, attention_mask]
         old_row_offsets = prev_model_inputs.input_row_offsets
@@ -1151,7 +1185,7 @@ class QwenImageEditPlusModel(
     def load_kv_manager(
         self, session: InferenceSession, available_cache_memory: int | None
     ) -> PagedKVCacheManager | NullKVCacheManager:
-        """Loads and initializes the PagedKVCacheManager for the Qwen2.5VL model."""
+        """Loads and initializes the PagedKVCacheManager for the QwenImageEditPlus model."""
         return load_kv_manager(
             params=QwenImageEditPlusConfig.get_kv_params(
                 huggingface_config=self.huggingface_config,
