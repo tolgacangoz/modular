@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Config for QwenImageEditPlus model."""
+"""Config for QwenImageEdit2511 model."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -286,11 +286,11 @@ class DenoiserConfig:
 
 
 @dataclass
-class QwenImageEditPlusConfigBase:
-    """Base configuration for QwenImageEditPlus models with required fields."""
+class QwenImageEdit2511ConfigBase:
+    """Base configuration for QwenImageEdit2511 models with required fields."""
 
     devices: list[DeviceRef]
-    """Devices that the QwenImageEditPlus model is parallelized over."""
+    """Devices that the QwenImageEdit2511 model is parallelized over."""
 
     # Multimodal parameters
     image_token_id: int
@@ -326,8 +326,8 @@ class QwenImageEditPlusConfigBase:
 
 
 @dataclass
-class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
-    """Implementation of MAXModelConfig for QwenImageEditPlus models."""
+class QwenImageEdit2511Config(MAXModelConfig, QwenImageEdit2511ConfigBase):
+    """Implementation of MAXModelConfig for QwenImageEdit2511 models."""
 
     @staticmethod
     def help() -> dict[str, str]:
@@ -365,7 +365,7 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
     def calculate_max_seq_len(
         pipeline_config: PipelineConfig, huggingface_config: AutoConfig
     ) -> int:
-        """Calculate maximum sequence length for QwenImageEditPlus."""
+        """Calculate maximum sequence length for QwenImageEdit2511."""
         # Delegate to Llama3Config for language model parameters.
         llm_config = getattr(
             huggingface_config, "text_config", huggingface_config
@@ -388,8 +388,8 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
         kv_cache_config: KVCacheConfig,
         return_logits: ReturnLogits,
         norm_method: Literal["rms_norm"] | Literal["layer_norm"] = "layer_norm",
-    ) -> QwenImageEditPlusConfig:
-        """Generate QwenImageEditPlusConfig from pipeline and HuggingFace configs.
+    ) -> QwenImageEdit2511Config:
+        """Generate QwenImageEdit2511Config from pipeline and HuggingFace configs.
 
         Args:
             pipeline_config: Pipeline configuration.
@@ -405,7 +405,7 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
             norm_method: Normalization method.
 
         Returns:
-            Configured QwenImageEditPlusConfig instance.
+            Configured QwenImageEdit2511Config instance.
         """
         # Create SchedulerConfig from the scheduler config
         hf_scheduler_config = getattr(huggingface_config, "scheduler_config", None)
@@ -452,7 +452,7 @@ class QwenImageEditPlusConfig(MAXModelConfig, QwenImageEditPlusConfigBase):
             denoiser_state_dict,
         )
 
-        return QwenImageEditPlusConfig(
+        return QwenImageEdit2511Config(
             devices=[
                 DeviceRef(spec.device_type, spec.id)
                 for spec in pipeline_config.model_config.device_specs

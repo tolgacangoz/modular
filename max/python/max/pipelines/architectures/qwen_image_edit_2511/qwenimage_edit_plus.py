@@ -10,23 +10,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Implements the QwenImageEditPlus multimodal model architecture."""
+"""Implements the QwenImageEdit2511 multimodal model architecture."""
 
 from max.nn import (
     Module,
 )
 
-from .model_config import QwenImageEditPlusConfig
+from .model_config import QwenImageEdit2511Config
 from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from .nn.autoencoderkl_qwenimage import AutoencoderKLQwenImage
 from .nn.transformer_qwenimage import QwenImageTransformer2DModel
 from max.pipelines.architectures.qwen2_5vl.model import Qwen2_5VLModel
 
 
-class QwenImageEditPlus(Module):
-    """The overall interface to the QwenImageEditPlus model."""
+class QwenImageEdit2511(Module):
+    """The overall interface to the QwenImageEdit2511 model."""
 
-    def __init__(self, config: QwenImageEditPlusConfig) -> None:
+    def __init__(self, config: QwenImageEdit2511Config) -> None:
         self.config = config
         self.scheduler = self.build_scheduler()
         self.vae = self.build_vae()
@@ -52,5 +52,5 @@ class QwenImageEditPlus(Module):
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""
         raise NotImplementedError(
-            "QwenImageEditPlus is a container class. Use scheduler(), vae(), text_encoder(), or transformer() instead"
+            "QwenImageEdit2511 is a container class. Use scheduler(), vae(), text_encoder(), or transformer() instead"
         )

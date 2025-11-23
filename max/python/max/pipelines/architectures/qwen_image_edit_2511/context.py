@@ -46,12 +46,12 @@ class VisionEncodingData(
     concatenated_pixel_values: npt.NDArray[np.float32]
 
 
-class QwenImageEditPlusTextAndVisionContext(
+class QwenImageEdit2511TextAndVisionContext(
     TextAndVisionContext, tag=True, kw_only=True, omit_defaults=True
 ):
-    """Context object for QwenImageEditPlus multimodal model processing.
+    """Context object for QwenImageEdit2511 multimodal model processing.
 
-    Extends TextAndVisionContext with QwenImageEditPlus-specific configuration and state.
+    Extends TextAndVisionContext with QwenImageEdit2511-specific configuration and state.
     Vision encoding data is stored in an optional VisionEncodingData object that
     is only present when images/videos need to be encoded.
     """
