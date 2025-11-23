@@ -27,7 +27,7 @@ qwen_image_edit_2511_arch = SupportedArchitecture(
     name="QwenImageEdit2511Pipeline",
     task=PipelineTask.IMAGE_GENERATION,
     example_repo_ids=[
-        "Qwen/Qwen-Image-Edit-2509",
+        "Qwen/Qwen-Image-Edit-2511",
     ],
     default_weights_format=WeightsFormat.safetensors,
     multi_gpu_supported=True,
