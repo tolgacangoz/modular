@@ -34,6 +34,7 @@ Available tasks:
     - EMBEDDINGS_GENERATION: Generate vector embeddings for input data.
     - AUDIO_GENERATION: Generate audio outputs from input data.
     - SPEECH_TOKEN_GENERATION: Generate speech tokens for speech-related tasks.
+    - IMAGE_GENERATION: Generate or edit images from input data.
 
 See the `PipelineTask` enum for further details on each task type.
 """
