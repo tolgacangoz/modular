@@ -408,7 +408,7 @@ class FlowMatchEulerDiscreteScheduler:
         s_tmin: float = 0.0,
         s_tmax: float = float("inf"),
         s_noise: float = 1.0,
-        generator: Generator | None = None,
+        # generator: Generator | None = None,
         per_token_timesteps: Tensor | None = None,
         return_dict: bool = True,
     ) -> FlowMatchEulerDiscreteSchedulerOutput | Tuple:

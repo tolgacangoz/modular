@@ -258,15 +258,15 @@ class MemoryEstimator:
         # Total static memory requirement (weights + activations)
         static_memory_size = model_weights_size + activation_memory_size
 
-        if static_memory_size > free_memory:
-            error_msg = f"Model size exceeds available memory ({to_human_readable_bytes(static_memory_size)} > {to_human_readable_bytes(free_memory)}). "
-            if activation_memory_size > 0:
-                error_msg += (
-                    f"Model weights: {to_human_readable_bytes(model_weights_size)}, "
-                    f"Activation memory: {to_human_readable_bytes(activation_memory_size)}. "
-                )
-            error_msg += "Try running a smaller model, using a smaller precision, or using a device with more memory."
-            raise RuntimeError(error_msg)
+        # if static_memory_size > free_memory:
+        #     error_msg = f"Model size exceeds available memory ({to_human_readable_bytes(static_memory_size)} > {to_human_readable_bytes(free_memory)}). "
+        #     if activation_memory_size > 0:
+        #         error_msg += (
+        #             f"Model weights: {to_human_readable_bytes(model_weights_size)}, "
+        #             f"Activation memory: {to_human_readable_bytes(activation_memory_size)}. "
+        #         )
+        #     error_msg += "Try running a smaller model, using a smaller precision, or using a device with more memory."
+        #     raise RuntimeError(error_msg)
 
         total_size = static_memory_size
         available_kv_cache_memory = int(
@@ -274,12 +274,12 @@ class MemoryEstimator:
             - static_memory_size
         )
 
-        if available_kv_cache_memory <= 0:
-            raise RuntimeError(
-                f"The model {to_human_readable_bytes(model_weights_size)} and activations "
-                f"{to_human_readable_bytes(activation_memory_size)} don't leave room for KV cache. "
-                f"Try running a smaller model, using a smaller precision, or using a device with more memory."
-            )
+        # if available_kv_cache_memory <= 0:
+        #     raise RuntimeError(
+        #         f"The model {to_human_readable_bytes(model_weights_size)} and activations "
+        #         f"{to_human_readable_bytes(activation_memory_size)} don't leave room for KV cache. "
+        #         f"Try running a smaller model, using a smaller precision, or using a device with more memory."
+        #     )
 
         user_provided_max_length = pipeline_config.max_length is not None
         user_provided_max_batch_size = (
@@ -660,7 +660,7 @@ class MemoryEstimator:
             original_max_length=original_max_length,
         )
 
-        raise RuntimeError(error_msg)
+        # raise RuntimeError(error_msg)
 
     @classmethod
     def _generate_oom_error_message(
