@@ -57,7 +57,7 @@ class TimestepEmbedder(nn.Module):
                 / half
             )
         )
-        args = t[:, None].cast(DType.float32) * freqs[None, :]
+        args = F.unsqueeze(t, -1).cast(DType.float32) * F.unsqueeze(freqs, 0)
         embedding = F.concat([F.cos(args), F.sin(args)], axis=-1)
 
         if dim % 2:

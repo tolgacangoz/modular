@@ -314,7 +314,9 @@ class DiagonalGaussianDistribution(object):
                 self.mean.shape, device=self.parameters.device, dtype=self.parameters.dtype
             )
 
-    def sample(self, generator: "Generator" | None = None) -> Tensor:
+    def sample(self,
+            #    generator: "Generator" | None = None
+               ) -> Tensor:
         # make sure sample is on the same device as the parameters and has same dtype
         sample = random.normal(
             self.mean.shape,

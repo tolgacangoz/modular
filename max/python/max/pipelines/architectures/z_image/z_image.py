@@ -28,26 +28,26 @@ class ZImage(Module):
 
     def __init__(self, config: ZImageConfig) -> None:
         self.config = config
-        self.scheduler = self.build_scheduler()
-        self.vae = self.build_vae()
-        self.text_encoder = self.build_text_encoder()
-        self.transformer = self.build_transformer()
+        self.scheduler: FlowMatchEulerDiscreteScheduler | None = None
+        self.vae: AutoencoderKL | None = None
+        self.text_encoder: Qwen3 | None = None
+        self.transformer: ZImageTransformer2DModel | None = None
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""
-        return FlowMatchEulerDiscreteScheduler(self.config.scheduler_config)
+        return FlowMatchEulerDiscreteScheduler(**self.config.scheduler_config)
 
     def build_vae(self) -> AutoencoderKL:
         """Build the VAE component."""
-        return AutoencoderKL(self.config.vae_config)
+        return AutoencoderKL(**self.config.vae_config)
 
-    def build_text_encoder(self) -> Qwen3Model:
+    def build_text_encoder(self) -> Qwen3:
         """Build the text encoder component."""
         return Qwen3(self.config.text_encoder_config)
 
     def build_transformer(self) -> ZImageTransformer2DModel:
         """Build the transformer component."""
-        return ZImageTransformer2DModel(self.config.transformer_config)
+        return ZImageTransformer2DModel(**self.config.transformer_config)
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""

@@ -11,6 +11,8 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
+from typing import Any
+
 from max.driver import Tensor
 from max.dtype import DType
 from max.graph.weights import WeightData, Weights
@@ -23,12 +25,13 @@ QWEN3_VL_MODEL_MAPPING = {
 }
 
 
-def convert_qwen3vl_model_state_dict(
+def convert_z_image_model_state_dict(
     state_dict: dict[str, Weights],
+    **kwargs: Any,
 ) -> dict[str, WeightData]:
-    """Convert Qwen3VL model weights.
+    """Convert ZImage model weights.
 
-    Qwen3VL checkpoints have language model weights prefixed with
+    ZImage checkpoints have language model weights prefixed with
     `language_model.`, but Qwen3VLLanguageModel expects the standard Llama3
     naming without this prefix.
 
@@ -49,11 +52,22 @@ def convert_qwen3vl_model_state_dict(
     """
     llm_state_dict: dict[str, WeightData] = {}
 
+    pipeline_config = kwargs.get("pipeline_config", None)
+    target_dtype: DType | None = None
+    if pipeline_config is not None:
+        try:
+            target_dtype = (
+                pipeline_config.model_config.quantization_encoding.dtype
+                if pipeline_config.model_config.quantization_encoding
+                else None
+            )
+        except Exception:
+            target_dtype = None
+
     for checkpoint_name, weight in state_dict.items():
-        if weight.data().dtype != DType.bfloat16:
-            weight_data = weight.data().astype(DType.bfloat16)
-        else:
-            weight_data = weight.data()
+        weight_data = weight.data()
+        if target_dtype is not None and weight_data.dtype != target_dtype:
+            weight_data = weight_data.astype(target_dtype)
         # Special case for lm_head. Because config.tie_word_embeddings is true
         # for some Qwen3VL models and false for others.
         if checkpoint_name.startswith("lm_head."):

@@ -18,7 +18,6 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from .nn.image_processor import VaeImageProcessor
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.transformer_z_image import ZImageTransformer2DModel
-#from diffusers.pipelines.pipeline_utils import DiffusionPipeline  # TODO ?
 from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from tqdm.auto import tqdm
 
@@ -53,7 +52,6 @@ from max.kv_cache import (
 from max.nn import Module, ReturnLogits, Signals
 from max.nn.kv_cache import KVCacheInputs, KVCacheParams, PagedCacheValues
 from max.nn.parallel import ParallelArrayOps
-from max.pipelines.core import TextAndVisionContext
 from max.pipelines.lib import (
     AlwaysSignalBuffersMixin,
     ModelInputs,
@@ -69,14 +67,13 @@ from max.interfaces.pipeline_variants.image_generation import (
 from max.profiler import Tracer, traced
 from transformers import AutoConfig
 
-from .context import ZImageTextAndVisionContext, VisionEncodingData
 from .model_config import ZImageConfig
 from max.pipelines.architectures.qwen3.model_config import Qwen3Config
+from max.pipelines.core import TextContext
 from .z_image import ZImage
 from .qwen3_encoder import Qwen3Encoder
 
 from max.experimental import tensor, random, functional as F
-from max.experimental.tensor import ops
 
 logger = logging.getLogger("max.pipelines")
 
@@ -135,7 +132,7 @@ class ZImageInputs(ModelInputs):
     num_images_per_prompt: int | None = 1
     """ The number of images to generate per prompt."""
 
-    generator: F.Generator | List[F.Generator] | None = None
+    # generator: F.Generator | List[F.Generator] | None = None
     """ One or a list of [max generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
     to make generation deterministic."""
 
@@ -255,7 +252,7 @@ def retrieve_timesteps(
 
 class ZImageModel(
     #AlwaysSignalBuffersMixin,
-    PipelineModel[TextAndVisionContext],
+    PipelineModel[TextContext],
 ):
     """A ZImage model for text-to-image generation."""
 
@@ -306,8 +303,6 @@ class ZImageModel(
 
         self.vae, self.text_encoder, self.transformer = self.load_model(session)
 
-        self._parallel_ops = ParallelArrayOps(max_workers=24)
-
         # self.vae_scale_factor = 2 ** (len(self.vae.block_out_channels) - 1)
         # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (len(self.model_config.vae_config.block_out_channels) - 1)
@@ -322,7 +317,7 @@ class ZImageModel(
         return self
 
     def next_chunk(
-        self, contexts: dict[RequestID, TextAndVisionContext]
+        self, contexts: dict[RequestID, TextContext]
     ) -> dict[RequestID, ImageGenerationOutput]:
         """Process the next chunk of inputs (serving interface)."""
         outputs = {}
@@ -334,7 +329,7 @@ class ZImageModel(
             input_ids = tensor.Tensor(ctx.all_tokens, dtype=DType.int32, device=self.devices[0]).unsqueeze(0)
 
             # Extract parameters from extra_model_args or use defaults
-            # TextAndVisionContext extra_model_args values are numpy arrays.
+            # TextContext extra_model_args values are numpy arrays.
             width = int(ctx.extra_model_args.get("width", np.array([1024])).item()) if "width" in ctx.extra_model_args else 1024
             height = int(ctx.extra_model_args.get("height", np.array([1024])).item()) if "height" in ctx.extra_model_args else 1024
             guidance_scale = float(ctx.extra_model_args.get("guidance_scale", np.array([5.0])).item()) if "guidance_scale" in ctx.extra_model_args else 5.0
@@ -399,15 +394,31 @@ class ZImageModel(
         return ZImageConfig.get_num_layers(huggingface_config)
 
     def load_model(self, session: InferenceSession) -> tuple[AutoencoderKL, Model, ZImageTransformer2DModel]:
+        """Loads the compiled Z-Image model into the MAX Engine session.
+
+        Args:
+            session: The MAX Engine inference session.
+
+        Returns:
+            The loaded MAX Engine model object.
+        """
         if self.pipeline_config.max_batch_size is None:
             raise ValueError("Expected max_batch_size to be set")
-        self._input_row_offsets_prealloc = F.range(self.pipeline_config.max_batch_size + 1, dtype=DType.uint32).to(self.devices)
+        self._input_row_offsets_prealloc = F.range(self.pipeline_config.max_batch_size + 1,
+                                                   dtype=DType.uint32).to(self.devices[0])
+
+        logger.info("Building and compiling model...")
+        before = time.perf_counter()
 
         if not isinstance(self.weights, SafetensorWeights):
             raise ValueError("ZImage currently only supports safetensors weights")
 
         if self.adapter:
-            model_state_dict = self.adapter(dict(self.weights.items()))
+            model_state_dict = self.adapter(
+                dict(self.weights.items()),
+                huggingface_config=self.huggingface_config,
+                pipeline_config=self.pipeline_config
+            )
         else:
             model_state_dict = {key: value.data() for key, value in self.weights.items()}
 
@@ -446,88 +457,135 @@ class ZImageModel(
             raise ValueError("Model config must be initialized")
 
         # Instantiate ZImage container to build sub-models
-        self.model = ZImage(self.model_config)
+        nn_model = ZImage(self.model_config)
 
-        # Load weights for VAE (Eager)
-        self.model.vae.load_state_dict(vae_state_dict)
+        vae = nn_model.build_vae()
+        vae.to(self.devices[0])
+        transformer = nn_model.build_transformer()
+        transformer.to(self.devices[0])
 
-        # Load weights for Transformer (Eager)
-        self.model.transformer.load_state_dict(transformer_state_dict)
+        compiled_vae_model = vae.compile(
+            tokens_type,
+            return_n_logits_type,
+            input_row_offsets_type,
+            weights=vae_state_dict,
+        )
+        compiled_transformer_model = transformer.compile(
+            tokens_type,
+            return_n_logits_type,
+            input_row_offsets_type,
+            weights=transformer_state_dict,
+        )
 
-        # Compile Text Encoder (Graph)
-        logger.info("Building and compiling text encoder model...")
-        before = time.perf_counter()
-        text_encoder_graph = self._build_text_encoder_graph()
-        text_encoder_model = session.load(
-            text_encoder_graph, weights_registry=text_encoder_state_dict
+        logger.info("Building and compiling model...")
+        text_encoder = nn_model.build_text_encoder()
+
+        before_text_encoder_build = time.perf_counter()
+        text_encoder_graph = self._build_text_encoder_graph(
+            text_encoder,
+            text_encoder_state_dict,
+            session,
+        )
+        after_text_encoder_build = time.perf_counter()
+
+        logger.info(f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds")
+
+        before_text_encoder_compile = time.perf_counter()
+        compiled_text_encoder_model = session.load(
+            text_encoder_graph,
+            weights_registry=text_encoder_state_dict
         )
         after = time.perf_counter()
-        logger.info(f"Building and compiling text encoder model took {after - before:.6f} seconds")
 
-        return self.model.vae, text_encoder_model, self.model.transformer
+        logger.info(
+            f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
+        )
+        logger.info(
+            f"Building and compiling the whole model took {after - before:.6f} seconds"
+        )
+        return compiled_vae_model, compiled_text_encoder_model, compiled_transformer_model
 
     def _build_text_encoder_graph(
         self,
-        weights: Weights,
-        adapter: WeightsAdapter | None = None,
+        nn_model: Any,
+        text_encoder_state_dict: Weights,
         session: InferenceSession | None = None,
     ) -> Graph:
-        # Retrieve config
-        state_dict = self._get_state_dict(weights, adapter)
-        model_config = Qwen3Config.generate(
-            pipeline_config=self.pipeline_config,
-            huggingface_config=self.huggingface_config,
-            state_dict=state_dict,
-            dtype=self.dtype,
-            n_devices=len(self.devices),
-            norm_method=self.norm_method,
-            attention_bias=self.attention_bias,
-            cache_dtype=self.encoding.cache_dtype,
-            kv_cache_config=self.kv_cache_config,
-            return_logits=self.return_logits,
+        device0 = self.devices[0]
+        device_ref = DeviceRef(device0.label, device0.id)
+        tokens_type = TensorType(
+            DType.int64, shape=["total_seq_len"], device=device_ref
         )
-
-        # Build Graph
-        nn_model: Module
-        nn_model = Qwen3Encoder(model_config)
-
-        # Get Graph Inputs
-        graph_inputs = nn_model.input_types(self.kv_manager)
-
-        # Load weights.
+        # NOTE: input_row_offsets_len should be batch_size + 1.
+        # Create input_row_offsets_type for each device
+        input_row_offsets_types = [
+            TensorType(
+                DType.uint32,
+                shape=["input_row_offsets_len"],
+                device=DeviceRef(device.label, device.id),
+            )
+            for device in self.devices
+        ]
+        return_n_logits_type = TensorType(
+            DType.int64, shape=["return_n_logits"], device=DeviceRef.CPU()
+        )
+        signals = Signals(
+            devices=(DeviceRef(d.label, d.id) for d in self.devices)
+        )
         nn_model.load_state_dict(
-            state_dict,
-            override_quantization_encoding=True,
+            text_encoder_state_dict,
             weight_alignment=1,
-            # Stops strict from raising error when sharing LM head weights
-            # (as LM head is never technically loaded from the state dict)
-            strict=(
-                not getattr(
-                    self.huggingface_config, "tie_word_embeddings", False
-                )
-            ),
+            strict=self._strict_state_dict_loading,
+        )
+        self.state_dict = nn_model.state_dict(auto_initialize=False)
+
+        # Create signal types for distributed communication
+        signals = Signals(
+            devices=(DeviceRef(d.label, d.id) for d in self.devices)
         )
 
-        self.state_dict = nn_model.state_dict()
+        kv_inputs = self.kv_manager.get_symbolic_inputs()
+        flattened_kv_types = [
+            kv_type for sublist in kv_inputs for kv_type in sublist
+        ]
 
-        with Graph("qwen3", input_types=graph_inputs) as graph:
-            tokens, input_row_offsets, return_n_logits, *kv_cache_inputs = (
-                graph.inputs
-            )
-            kv_collection = PagedCacheValues(
-                kv_blocks=kv_cache_inputs[0].buffer,
-                cache_lengths=kv_cache_inputs[1].tensor,
-                lookup_table=kv_cache_inputs[2].tensor,
-                max_lengths=kv_cache_inputs[3].tensor,
-            )
+        with Graph(
+            getattr(self.huggingface_config, "model_type", "GptOss"),
+            input_types=[
+                tokens_type,
+                return_n_logits_type,
+                *input_row_offsets_types,
+                *signals.input_types(),
+                *flattened_kv_types,
+            ],
+        ) as graph:
+            # Unpack inputs following InternVL pattern
+            tokens, return_n_logits, *variadic_args = graph.inputs
+
+            # Extract input_row_offsets (one per device)
+            input_row_offsets = [
+                v.tensor for v in variadic_args[: len(self.devices)]
+            ]
+            variadic_args = variadic_args[len(self.devices) :]
+
+            # Extract signal buffers (one per device)
+            signal_buffers = [
+                v.buffer for v in variadic_args[: len(self.devices)]
+            ]
+            variadic_args = variadic_args[len(self.devices) :]
+
+            # Extract KV cache inputs
+            kv_cache = self._unflatten_kv_inputs(variadic_args)
+
             outputs = nn_model(
-                tokens.tensor,
-                kv_collection,
-                return_n_logits.tensor,
-                input_row_offsets.tensor,
+                tokens=tokens.tensor,
+                signal_buffers=signal_buffers,
+                kv_cache_inputs_per_dev=kv_cache,
+                return_n_logits=return_n_logits.tensor,
+                input_row_offsets=input_row_offsets,
             )
             graph.output(*outputs)
-            return graph
+        return graph
 
     def encode_prompt(
         self,
@@ -623,7 +681,7 @@ class ZImageModel(
         width: int,
         dtype: DType,
         device: Device,
-        generator: Generator,
+        # generator: Generator,
         latents: Tensor | None = None,
     ):
         height = 2 * (int(height) // (self.vae_scale_factor * 2))
@@ -679,7 +737,7 @@ class ZImageModel(
         cfg_truncation: float = 1.0,
         negative_prompt: str | List[str] | None = None,
         num_images_per_prompt: int | None = 1,
-        generator: Generator | List[Generator] | None = None,
+        # generator: Generator | List[Generator] | None = None,
         latents: Tensor | None = None,
         prompt_embeds: List[Tensor] | None = None,
         negative_prompt_embeds: List[Tensor] | None = None,
@@ -831,7 +889,7 @@ class ZImageModel(
             width,
             DType.float32,
             device,
-            generator,
+            # generator,
             latents,
         )
 

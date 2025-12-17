@@ -16,11 +16,14 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import huggingface_hub
 import numpy as np
 import numpy.typing as npt
 from max.driver import load_devices
@@ -41,12 +44,14 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
+from transformers.configuration_utils import PretrainedConfig
 
 if TYPE_CHECKING:
     from .audio_generator_pipeline import AudioGeneratorPipeline
     from .config import PipelineConfig
 
 from .audio_generator_pipeline import AudioGeneratorPipeline
+from .config_enums import RepoType
 from .config_enums import RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo
@@ -234,6 +239,18 @@ class SupportedArchitecture:
     the max sequence length of the model.
     """
 
+    scheduler: Any | None = None
+    """Optional scheduler class or object."""
+
+    vae: Any | None = None
+    """Optional VAE class or object."""
+
+    text_encoder: Any | None = None
+    """Optional text encoder class or object."""
+
+    transformer: Any | None = None
+    """Optional transformer class or object."""
+
     @property
     def tokenizer_cls(self) -> type[PipelineTokenizer[Any, Any, Any]]:
         if isinstance(self.tokenizer, type):
@@ -245,7 +262,9 @@ class SupportedArchitecture:
 class PipelineRegistry:
     def __init__(self, architectures: list[SupportedArchitecture]) -> None:
         self.architectures = {arch.name: arch for arch in architectures}
-        self._cached_huggingface_configs: dict[HuggingFaceRepo, AutoConfig] = {}
+        self._cached_huggingface_configs: dict[
+            HuggingFaceRepo, PretrainedConfig
+        ] = {}
         self._cached_huggingface_tokenizers: dict[
             HuggingFaceRepo, PreTrainedTokenizer | PreTrainedTokenizerFast
         ] = {}
@@ -297,7 +316,7 @@ class PipelineRegistry:
 
     def get_active_huggingface_config(
         self, huggingface_repo: HuggingFaceRepo
-    ) -> AutoConfig:
+    ) -> PretrainedConfig:
         """Retrieves or creates a cached HuggingFace AutoConfig for the given
         model configuration.
 
@@ -319,13 +338,48 @@ class PipelineRegistry:
             AutoConfig: The HuggingFace configuration object for the model.
         """
         if huggingface_repo not in self._cached_huggingface_configs:
-            self._cached_huggingface_configs[huggingface_repo] = (
-                AutoConfig.from_pretrained(
-                    huggingface_repo.repo_id,
-                    trust_remote_code=huggingface_repo.trust_remote_code,
-                    revision=huggingface_repo.revision,
+            model_index_path: str | None = None
+
+            if huggingface_repo.repo_type == RepoType.local:
+                local_index = Path(huggingface_repo.repo_id) / "model_index.json"
+                if local_index.exists():
+                    model_index_path = str(local_index)
+            else:
+                try:
+                    if huggingface_hub.file_exists(
+                        huggingface_repo.repo_id,
+                        "model_index.json",
+                        revision=huggingface_repo.revision,
+                    ):
+                        model_index_path = huggingface_hub.hf_hub_download(
+                            huggingface_repo.repo_id,
+                            "model_index.json",
+                            revision=huggingface_repo.revision,
+                        )
+                except Exception:
+                    model_index_path = None
+
+            if model_index_path is not None:
+                with open(model_index_path, "r", encoding="utf-8") as f:
+                    model_index = json.load(f)
+
+                class_name = model_index.get("_class_name")
+                if not class_name or not isinstance(class_name, str):
+                    raise ValueError(
+                        f"Diffusers-style repository '{huggingface_repo.repo_id}' is missing a valid '_class_name' in model_index.json"
+                    )
+
+                self._cached_huggingface_configs[huggingface_repo] = (
+                    PretrainedConfig(architectures=[class_name])
                 )
-            )
+            else:
+                self._cached_huggingface_configs[huggingface_repo] = (
+                    AutoConfig.from_pretrained(
+                        huggingface_repo.repo_id,
+                        trust_remote_code=huggingface_repo.trust_remote_code,
+                        revision=huggingface_repo.revision,
+                    )
+                )
 
         return self._cached_huggingface_configs[huggingface_repo]
 
@@ -485,6 +539,7 @@ class PipelineRegistry:
                 pipeline_config=pipeline_config,
                 chat_template=pipeline_config.retrieve_chat_template(),
                 context_validators=arch.context_validators,
+                subfolder='tokenizer'
             )
         # Cast tokenizer to the proper type for text generation pipeline compatibility
         typed_tokenizer = cast(

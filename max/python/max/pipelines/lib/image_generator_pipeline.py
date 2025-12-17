@@ -23,7 +23,7 @@ from max.interfaces import (
     RequestID,
 )
 from max.nn import ReturnLogits
-from max.pipelines.core import TextAndVisionContext
+from max.pipelines.core import TextContext
 
 if TYPE_CHECKING:
     from .config import PipelineConfig
@@ -33,7 +33,7 @@ from max.serve.telemetry.metrics import METRICS
 from .interfaces import PipelineModel
 
 ImageGeneratorPipelineType = Pipeline[
-    ImageGenerationInputs[TextAndVisionContext], ImageGenerationOutput
+    ImageGenerationInputs[TextContext], ImageGenerationOutput
 ]
 
 

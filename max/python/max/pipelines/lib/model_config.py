@@ -671,6 +671,34 @@ class MAXModelConfig(MAXModelConfigBase):
                 logger.debug(msg)
                 self.quantization_encoding = default_encoding
 
+        assert self.quantization_encoding is not None
+
+        # If the inferred/default encoding is incompatible with the selected
+        # device, pick a compatible encoding from the repo when possible.
+        # This is most common for CPU runs where the model default may be bf16.
+        if not self.quantization_encoding.supported_on(
+            device_spec=self.default_device_spec
+        ):
+            compatible = [
+                enc
+                for enc in self.huggingface_weight_repo.supported_encodings
+                if enc.supported_on(device_spec=self.default_device_spec)
+            ]
+            if not compatible:
+                raise ValueError(
+                    f"The encoding '{self.quantization_encoding}' is not compatible with the selected device type '{self.default_device_spec.device_type}'.\n\n"
+                    f"Encodings available for this model: {', '.join(str(enc) for enc in self.huggingface_weight_repo.supported_encodings)}"
+                )
+
+            # Prefer float32 on CPU when multiple encodings are present.
+            if (
+                self.default_device_spec.device_type == "cpu"
+                and SupportedEncoding.float32 in compatible
+            ):
+                self.quantization_encoding = SupportedEncoding.float32
+            else:
+                self.quantization_encoding = compatible[0]
+
     def _validate_quantization_encoding_device_compatibility(
         self,
         supported_encodings_list: list[SupportedEncoding],

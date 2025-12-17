@@ -19,9 +19,10 @@ from max.pipelines.lib import (
     SupportedEncoding,
     TextTokenizer,
 )
+from max.pipelines.core import TextContext
 
 from .model import ZImageModel
-from max.pipelines.architectures.qwen3 import qwen3_arch
+from .qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .nn.autoencoder_kl import AutoencoderKL
 from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
@@ -47,11 +48,12 @@ z_image_arch = SupportedArchitecture(
     pipeline_model=ZImageModel,
     scheduler=FlowMatchEulerDiscreteScheduler,
     vae=AutoencoderKL,
-    text_encoder=qwen3_arch,
+    text_encoder=Qwen3Encoder,
     tokenizer=TextTokenizer,
     transformer=ZImageTransformer2DModel,
     rope_type=RopeType.normal,
     required_arguments={
         "enable_chunked_prefill": False,
     },
+    context_type=TextContext,
 )
