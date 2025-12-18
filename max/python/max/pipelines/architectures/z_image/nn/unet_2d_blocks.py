@@ -166,7 +166,7 @@ class UNetMidBlock2D(nn.Module):
         attention_head_dim: int = 1,
         output_scale_factor: float = 1.0,
     ):
-        super().__init__()
+
         resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
         self.add_attention = add_attention
 
@@ -262,7 +262,7 @@ class DownEncoderBlock2D(nn.Module):
         add_downsample: bool = True,
         downsample_padding: int = 1,
     ):
-        super().__init__()
+
         resnets = []
 
         for i in range(num_layers):
@@ -323,7 +323,7 @@ class UpDecoderBlock2D(nn.Module):
         add_upsample: bool = True,
         temb_channels: int | None = None,
     ):
-        super().__init__()
+
         resnets = []
 
         for i in range(num_layers):
