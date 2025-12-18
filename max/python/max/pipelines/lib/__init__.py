@@ -11,7 +11,7 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-"""Types to interface with ML pipelines such as text/token generation."""
+"""Types to interface with ML pipelines such as text/token/image generation."""
 
 from max.config import (
     MAXConfig,
@@ -48,6 +48,7 @@ from .lora_request_processor import LoRARequestProcessor
 from .memory_estimation import MemoryEstimator
 from .model_config import MAXModelConfig, MAXModelConfigBase
 from .pipeline_variants.text_generation import TextGenerationPipeline
+from .pipeline_variants.image_generation import ImageGenerationPipeline
 from .profiling_config import ProfilingConfig
 from .registry import PIPELINE_REGISTRY, SupportedArchitecture
 from .sampling import (
@@ -110,6 +111,7 @@ __all__ = [
     "TextAndVisionTokenizer",
     "TextGenerationPipeline",
     "TextTokenizer",
+    "ImageGenerationPipeline",
     "WeightPathParser",
     "convert_max_config_value",
     "deep_merge_max_configs",
