@@ -90,7 +90,7 @@ class Encoder(nn.Module):
         double_z: bool = True,
         mid_block_add_attention: bool = True,
     ):
-        super().__init__()
+
         self.layers_per_block = layers_per_block
 
         self.conv_in = Conv2d(
@@ -202,7 +202,6 @@ class Decoder(nn.Module):
         norm_type: str = "group",  # group, spatial
         mid_block_add_attention: bool = True,
     ):
-        super().__init__()
         self.layers_per_block = layers_per_block
 
         self.conv_in = Conv2d(

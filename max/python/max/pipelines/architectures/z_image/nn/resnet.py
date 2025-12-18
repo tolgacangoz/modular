@@ -78,7 +78,7 @@ class ResnetBlockCondNorm2D(nn.Module):
         conv_shortcut_bias: bool = True,
         conv_2d_out_channels: int | None = None,
     ):
-        super().__init__()
+
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
@@ -219,7 +219,7 @@ class ResnetBlock2D(nn.Module):
         conv_shortcut_bias: bool = True,
         conv_2d_out_channels: int | None = None,
     ):
-        super().__init__()
+
         if time_embedding_norm == "ada_group":
             raise ValueError(
                 "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",

@@ -13,6 +13,7 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
+from max.nn.kv_cache import KVCacheStrategy
 from max.pipelines.lib import (
     RopeType,
     SupportedArchitecture,
@@ -39,8 +40,8 @@ z_image_arch = SupportedArchitecture(
     multi_gpu_supported=True,
     default_encoding=SupportedEncoding.bfloat16,
     supported_encodings={
-        SupportedEncoding.float32: None,
-        SupportedEncoding.bfloat16: None,
+        SupportedEncoding.bfloat16: KVCacheStrategy.PAGED,
+        SupportedEncoding.float32: KVCacheStrategy.PAGED,
     },
     weight_adapters={
         WeightsFormat.safetensors: convert_z_image_model_state_dict,

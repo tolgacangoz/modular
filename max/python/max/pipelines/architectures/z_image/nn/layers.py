@@ -201,7 +201,7 @@ class Conv2d(nn.Module):
         device=None,
         dtype=None,
     ):
-        super().__init__()
+
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
         if isinstance(stride, int):
@@ -262,7 +262,7 @@ class RMSNorm(nn.Module):
         bias (`bool`, defaults to False): If also training the `bias` param.
     """
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = True, bias: bool = False):
-        super().__init__()
+
 
         self.eps = eps
         self.elementwise_affine = elementwise_affine
@@ -297,7 +297,7 @@ class RMSNorm(nn.Module):
 
 class GroupNorm(nn.Module):
     def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True):
-        super().__init__()
+
         self.num_groups = num_groups
         self.num_channels = num_channels
         self.eps = eps
@@ -338,7 +338,7 @@ class GroupNorm(nn.Module):
 
 class LayerNorm(nn.Module):
     def __init__(self, normalized_shape: int, eps: float = 1e-5, elementwise_affine: bool = True):
-        super().__init__()
+
         self.normalized_shape = normalized_shape
         self.eps = eps
         self.elementwise_affine = elementwise_affine
@@ -374,7 +374,7 @@ class SpatialNorm(nn.Module):
         f_channels: int,
         zq_channels: int,
     ):
-        super().__init__()
+
         self.norm_layer = GroupNorm(num_channels=f_channels, num_groups=32, eps=1e-6, affine=True)
         self.conv_y = Conv2d(zq_channels, f_channels, kernel_size=1, stride=1, padding=0)
         self.conv_b = Conv2d(zq_channels, f_channels, kernel_size=1, stride=1, padding=0)
@@ -397,7 +397,7 @@ class Identity(nn.Module):
 
 class Dropout(nn.Module):
     def __init__(self, p: float = 0.5):
-        super().__init__()
+
         self.p = p
 
     def __call__(self, x: Tensor) -> Tensor:
@@ -438,7 +438,7 @@ class Attention(nn.Module):
         bias: bool = True,
         upcast_softmax: bool = True,
     ):
-        super().__init__()
+
         self.inner_dim = dim_head * heads
         self.heads = heads
         self.head_dim = dim_head

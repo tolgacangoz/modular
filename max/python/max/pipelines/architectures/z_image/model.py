@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 from max._core.engine import Model
-from max.driver import Device, Tensor
+from max.driver import Device
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.graph import DeviceRef, Graph, TensorType, Value
@@ -55,6 +55,7 @@ from max.nn.parallel import ParallelArrayOps
 from max.pipelines.lib import (
     AlwaysSignalBuffersMixin,
     ModelInputs,
+    ModelOutputs,
     PipelineConfig,
     PipelineModel,
     SupportedEncoding,
@@ -93,9 +94,9 @@ class ZImagePipelineOutput:
 
 @dataclass(eq=False)
 class ZImageInputs(ModelInputs):
-    """A class representing inputs for the ZImage model.
+    """A class representing inputs for the Z-Image model.
 
-    This class encapsulates the input tensors required for the ZImage model execution,
+    This class encapsulates the input tensors required for the Z-Image model execution,
     including both text and vision inputs. Vision inputs are optional and can be None
     for text-only processing."""
 
@@ -404,8 +405,8 @@ class ZImageModel(
         """
         if self.pipeline_config.max_batch_size is None:
             raise ValueError("Expected max_batch_size to be set")
-        self._input_row_offsets_prealloc = F.range(self.pipeline_config.max_batch_size + 1,
-                                                   dtype=DType.uint32).to(self.devices[0])
+        self._input_row_offsets_prealloc = F.range(0, self.pipeline_config.max_batch_size + 1,
+                                                   dtype=DType.uint32, device=self.devices[0])
 
         logger.info("Building and compiling model...")
         before = time.perf_counter()
@@ -725,7 +726,7 @@ class ZImageModel(
     def progress_bar(self, total: int):
         return tqdm(total=total)
 
-    def __call__(
+    def execute(
         self,
         prompt: str | List[str] | None = None,
         height: int | None = None,
@@ -828,6 +829,49 @@ class ZImageModel(
             `return_dict` is True, otherwise a `tuple`. When returning a tuple, the first element is a list with the
             generated images.
         """
+
+        """
+    def execute(self, model_inputs: ModelInputs) -> ModelOutputs:
+        Executes the Z-Image model with the prepared inputs.
+
+        Args:
+            model_inputs: The prepared inputs for the model execution, typically including
+                token IDs, attention masks/offsets, and KV cache inputs.
+
+        Returns:
+            An object containing the output logits from the model execution.
+
+        model_inputs = cast(ZImageInputs, model_inputs)
+        curr_kv_cache_inputs = model_inputs.kv_cache_inputs or ()
+
+        # For backward compatibility, distribute the single tensor to all devices
+        if isinstance(model_inputs.input_row_offsets, np.ndarray):
+            # Convert numpy array to tensor first
+            tensor = Tensor.from_numpy(model_inputs.input_row_offsets)
+            input_row_offsets = tensor.to(self.devices[0])
+        else:
+            # Already a tensor
+            input_row_offsets = model_inputs.input_row_offsets
+
+        model_outputs = self.model(
+            model_inputs.tokens,
+            model_inputs.return_n_logits,
+            input_row_offsets,
+            *curr_kv_cache_inputs,
+        )
+        if len(model_outputs) == 3:
+            return ModelOutputs(
+                logits=cast(Tensor, model_outputs[1].driver_tensor),
+                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
+                logit_offsets=cast(Tensor, model_outputs[2].driver_tensor),
+            )
+        else:
+            return ModelOutputs(
+                logits=cast(Tensor, model_outputs[0].driver_tensor),
+                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
+            )
+        """
+
         height = height or 1024
         width = width or 1024
 
@@ -1033,60 +1077,75 @@ class ZImageModel(
 
         return ZImagePipelineOutput(images=image)
 
-    def next_chunk(
-        self, batch: dict[str, Any]
-    ) -> dict[str, "ImageGenerationOutput"]:
-        """Process a batch of image generation requests.
-
-        This method implements the serving interface expected by ImageGeneratorPipeline.
+    def prepare_initial_token_inputs(
+        self,
+        replica_batches: Sequence[Sequence[TextContext]],
+        kv_cache_inputs: KVCacheInputs | None = None,
+        return_n_logits: int = 1,
+    ) -> ModelInputs:
+        """Prepares the initial inputs for the first execution pass of the GPT OSS model.
 
         Args:
-            batch: Dictionary mapping request IDs to context objects containing prompts.
+            replica_batches: A sequence of sequences of :obj:`TextContext` objects representing
+                the input prompts for each replica.
+            kv_cache_inputs: Optional inputs required by the KV cache manager.
 
         Returns:
-            Dictionary mapping request IDs to ImageGenerationOutput objects.
+            The prepared :obj:`ModelInputs` object for the initial execution step.
         """
-        from max.interfaces import ImageGenerationOutput
+        if len(replica_batches) > 1:
+            raise ValueError("Model does not support DP>1")
 
-        outputs: dict[str, ImageGenerationOutput] = {}
+        context_batch = replica_batches[0]
+        assert kv_cache_inputs is not None
+        kv_cache_inputs = cast(KVCacheInputsSequence, kv_cache_inputs)
 
-        for request_id, context in batch.items():
-            # Track active request
-            self._active_requests[request_id] = context
+        # This needs to be replaced with actual input preparation
+        # Get input_row_offsets: start and end position of each batch in the
+        # combined total_seq_len dimension.
+        input_row_offsets = np.cumsum(
+            [0] + [ctx.active_length for ctx in context_batch], dtype=np.uint32
+        )
 
-            # Extract prompt from context
-            prompt = getattr(context, "prompt", None) or getattr(context, "text", "")
-            height = getattr(context, "height", 1024)
-            width = getattr(context, "width", 1024)
-            num_inference_steps = getattr(context, "num_inference_steps", 50)
+        # Create a ragged token vector of length: sum(len(t) for t in tokens).
+        tokens = np.concatenate([ctx.next_tokens for ctx in context_batch])
 
-            # Generate image using __call__
-            result = self(
-                prompt=prompt,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                output_type="pil",
-                return_dict=True,
-            )
+        # Create input_row_offsets
+        input_row_offsets_tensor = Tensor.from_numpy(input_row_offsets).to(
+            self.devices[0]
+        )
 
-            # Create output
-            outputs[request_id] = ImageGenerationOutput(
-                image_data=result.images[0] if isinstance(result.images, list) else result.images,
-                steps_executed=num_inference_steps,
-            )
+        return GptOssInputs(
+            tokens=Tensor.from_numpy(tokens).to(self.devices[0]),
+            input_row_offsets=input_row_offsets_tensor,
+            return_n_logits=Tensor.from_numpy(
+                np.array([return_n_logits], dtype=np.int64)
+            ),
+            kv_cache_inputs=kv_cache_inputs,
+        )
 
-            # Clean up
-            if request_id in self._active_requests:
-                del self._active_requests[request_id]
-
-        return outputs
-
-    def release(self, request_id: str) -> None:
-        """Release resources for a completed request.
+    def prepare_next_token_inputs(
+        self, next_tokens: Tensor, prev_model_inputs: ModelInputs
+    ) -> ModelInputs:
+        """Prepares the inputs for subsequent execution steps in a multi-step generation.
 
         Args:
-            request_id: The ID of the request to release.
+            next_tokens: The tensor containing the token IDs generated in the previous step.
+            prev_model_inputs: The :obj:`ModelInputs` used in the previous execution step.
+
+        Returns:
+            The prepared :obj:`ModelInputs` object for the next execution step.
         """
-        if request_id in self._active_requests:
-            del self._active_requests[request_id]
+        prev_model_inputs = cast(GptOssInputs, prev_model_inputs)
+        row_offsets_size = prev_model_inputs.input_row_offsets.shape[0]
+
+        next_row_offsets = self._input_row_offsets_prealloc[
+            :row_offsets_size
+        ].to(self.devices[0])
+
+        return GptOssInputs(
+            tokens=next_tokens,
+            input_row_offsets=next_row_offsets,
+            return_n_logits=prev_model_inputs.return_n_logits,
+            kv_cache_inputs=prev_model_inputs.kv_cache_inputs,
+        )

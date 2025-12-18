@@ -52,7 +52,7 @@ class Upsample2D(nn.Module):
         bias: bool = True,
         interpolate: bool = True,
     ):
-        super().__init__()
+
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv

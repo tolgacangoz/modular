@@ -12,3 +12,4 @@
 # ===----------------------------------------------------------------------=== #
 
 from .text_generation import TextGenerationPipeline
+from .image_generation import ImageGenerationPipeline

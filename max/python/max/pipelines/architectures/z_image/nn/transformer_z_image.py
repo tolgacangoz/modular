@@ -33,7 +33,7 @@ SEQ_MULTI_OF = 32
 
 class TimestepEmbedder(nn.Module):
     def __init__(self, out_size: int, mid_size: int | None = None, frequency_embedding_size: int = 256):
-        super().__init__()
+
         if mid_size is None:
             mid_size = out_size
 
@@ -85,7 +85,7 @@ class ZImageSingleStreamAttention(nn.Module):
         dim_head: int,
         eps: float = 1e-5,
     ):
-        super().__init__()
+
 
         self.inner_dim = dim_head * heads
         self.heads = heads
@@ -205,7 +205,7 @@ class ZImageSingleStreamAttention(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(self, dim: int, hidden_dim: int):
-        super().__init__()
+
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
@@ -224,7 +224,7 @@ class ZImageTransformerBlock(nn.Module):
         qk_norm: bool,
         modulation: bool = True,
     ):
-        super().__init__()
+
         self.dim = dim
         head_dim = dim // n_heads
 
@@ -276,7 +276,7 @@ class ZImageTransformerBlock(nn.Module):
 
 class FinalLayer(nn.Module):
     def __init__(self, hidden_size: int, out_channels: int):
-        super().__init__()
+
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, out_channels)
 
@@ -361,7 +361,7 @@ class ZImageTransformer2DModel(nn.Module):
         axes_dims: Sequence[int] = [32, 48, 48],
         axes_lens: Sequence[int] = [1024, 512, 512],
     ) -> None:
-        super().__init__()
+
         self.in_channels = in_channels
         self.out_channels = in_channels
         self.all_patch_size = all_patch_size

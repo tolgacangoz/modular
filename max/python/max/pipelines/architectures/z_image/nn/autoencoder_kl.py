@@ -81,8 +81,6 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         use_post_quant_conv: bool = True,
         mid_block_add_attention: bool = True,
     ):
-        super().__init__()
-
         # pass init params to Encoder
         self.encoder = Encoder(
             in_channels=in_channels,
