@@ -78,29 +78,29 @@ class BatchInfo:
     """Number of steps to do in the pipeline"""
 
 
-class TextGenerationPipeline(
+class ImageGenerationPipeline(
     Pipeline[
-        TextGenerationInputs[TextGenerationContextType], TextGenerationOutput
+        ImageGenerationInputs[ImageGenerationContextType], ImageGenerationOutput
     ],
-    GenerateMixin[TextGenerationContextType, TextGenerationRequest],
-    Generic[TextGenerationContextType],
+    GenerateMixin[ImageGenerationContextType, ImageGenerationRequest],
+    Generic[ImageGenerationContextType],
 ):
     """Generalized token generator pipeline."""
 
     def __init__(
         self,
         pipeline_config: PipelineConfig,
-        pipeline_model: type[PipelineModel[TextGenerationContextType]],
+        pipeline_model: type[PipelineModel[ImageGenerationContextType]],
         # TODO: This should be removed.
         eos_token_id: int,
         weight_adapters: dict[WeightsFormat, WeightsAdapter],
         tokenizer: PipelineTokenizer[
-            TextGenerationContextType,
+            ImageGenerationContextType,
             npt.NDArray[np.integer[Any]],
-            TextGenerationRequest,
+            ImageGenerationRequest,
         ],
     ) -> None:
-        """Initialize a text generation pipeline instance.
+        """Initialize a image generation pipeline instance.
 
         This sets up devices, the inference session, tokenizer, KV-cache manager,
         sampling kernel, and loads model weights and adapters.
@@ -269,9 +269,9 @@ class TextGenerationPipeline(
     def tokenizer(
         self,
     ) -> PipelineTokenizer[
-        TextGenerationContextType,
+        ImageGenerationContextType,
         npt.NDArray[np.integer[Any]],
-        TextGenerationRequest,
+        ImageGenerationRequest,
     ]:
         """Return the tokenizer used for building contexts and decoding."""
         return self._tokenizer
@@ -286,7 +286,7 @@ class TextGenerationPipeline(
     def calculate_num_steps(
         self,
         num_steps: int,
-        context: TextGenerationContextType,
+        context: ImageGenerationContextType,
     ) -> int:
         """Compute the number of generation steps allowed for a context.
 
@@ -315,7 +315,7 @@ class TextGenerationPipeline(
 
     def update_for_structured_output(
         self,
-        context: TextGenerationContextType,
+        context: ImageGenerationContextType,
         bitmask: npt.NDArray[np.int32],
         index: int,
     ) -> None:
@@ -365,7 +365,7 @@ class TextGenerationPipeline(
             )
 
     def initialize_bitmask(
-        self, batch: list[TextGenerationContextType]
+        self, batch: list[ImageGenerationContextType]
     ) -> npt.NDArray[np.int32] | None:
         """Allocate a per-request token bitmask for structured decoding.
 
@@ -392,13 +392,13 @@ class TextGenerationPipeline(
     @traced
     def prepare_batch(
         self,
-        batches: list[dict[RequestID, TextGenerationContextType]],
+        batches: list[dict[RequestID, ImageGenerationContextType]],
         num_steps: int,
     ) -> tuple[
         Any,
         int,
         npt.NDArray[np.int32] | None,
-        list[TextGenerationContextType],
+        list[ImageGenerationContextType],
     ]:
         """Prepare model inputs and ancillary state for multi-step execution.
 
@@ -415,7 +415,7 @@ class TextGenerationPipeline(
                 - ModelInputs: Prepared inputs for the first step.
                 - int: The clamped number of steps to run.
                 - Optional[np.ndarray]: The structured decoding bitmask or None.
-                - list[TextGenerationContextType]: The flattened context batch.
+                - list[ImageGenerationContextType]: The flattened context batch.
         """
         # Initialize a flat batch of contexts and their replica ids.
         replica_ids: list[int] = [
@@ -423,7 +423,7 @@ class TextGenerationPipeline(
             for replica_idx, batch in enumerate(batches)
             for _ in batch.values()
         ]
-        replica_batches: list[list[TextGenerationContextType]] = [
+        replica_batches: list[list[ImageGenerationContextType]] = [
             [ctx for ctx in self._maybe_sort_loras(batch).values()]
             for batch in batches
         ]
@@ -480,8 +480,8 @@ class TextGenerationPipeline(
 
     @traced
     def _maybe_sort_loras(
-        self, batch: dict[RequestID, TextGenerationContextType]
-    ) -> dict[RequestID, TextGenerationContextType]:
+        self, batch: dict[RequestID, ImageGenerationContextType]
+    ) -> dict[RequestID, ImageGenerationContextType]:
         """
         Maybe sorts the batch by LoRA Ids. Requests that use the same LoRA need
         to be adjacent to each other.
@@ -532,7 +532,7 @@ class TextGenerationPipeline(
         self,
         generated_tokens_host: npt.NDArray[np.int32],
         batch_log_probabilities: list[list[LogProbabilities | None]],
-        flat_batch: list[TextGenerationContextType],
+        flat_batch: list[ImageGenerationContextType],
         num_steps: int,
         enable_log_probs: bool,
     ) -> dict[RequestID, TextGenerationOutput]:
@@ -578,7 +578,7 @@ class TextGenerationPipeline(
     @traced
     def execute(
         self,
-        inputs: TextGenerationInputs[TextGenerationContextType],
+        inputs: TextGenerationInputs[ImageGenerationContextType],
     ) -> PipelineOutputsDict[TextGenerationOutput]:
         """Provided a batch, process batch inputs, execute the graph for num_steps in a multi-step scenario,
         then decode the tokens holistically and return the list of decoded tokens.

@@ -56,7 +56,7 @@ from .config_enums import RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo
 from .interfaces import PipelineModel
-from .image_generator_pipeline import ImageGeneratorPipeline
+from .pipeline_variants.image_generation import ImageGenerationPipeline
 from .pipeline_variants.text_generation import TextGenerationPipeline
 from .speculative_decoding import (
     EAGLESpeculativeDecodingPipeline,
@@ -80,7 +80,7 @@ def get_pipeline_for_task(
     | type[StandaloneSpeculativeDecodingPipeline]
     | type[SpeechTokenGenerationPipeline]
     | type[EAGLESpeculativeDecodingPipeline]
-    | type[ImageGeneratorPipeline]
+    | type[ImageGenerationPipeline]
 ):
     if task == PipelineTask.TEXT_GENERATION:
         if pipeline_config._speculative_config is not None:
@@ -111,7 +111,7 @@ def get_pipeline_for_task(
     elif task == PipelineTask.SPEECH_TOKEN_GENERATION:
         return SpeechTokenGenerationPipeline
     elif task == PipelineTask.IMAGE_GENERATION:
-        return ImageGeneratorPipeline
+        return ImageGenerationPipeline
 
 
 @dataclass(frozen=False)
