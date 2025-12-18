@@ -200,8 +200,6 @@ class VAEConfig:
         vae_config: AutoConfig,
         dtype: DType,
         pipeline_config: PipelineConfig,
-        huggingface_config: AutoConfig,
-        vision_state_dict: dict[str, WeightData],
     ) -> VAEConfig:
         """Generate VAEConfig from HuggingFace VAE config.
 
@@ -211,14 +209,6 @@ class VAEConfig:
         Returns:
             Configured VAEConfig instance.
         """
-        # Parse (if present) a float8 configuration for the vision path.
-        v_float8 = parse_float8_config(
-            huggingface_config,
-            vision_state_dict,
-            dtype,
-            state_dict_name_prefix="vision_encoder.",
-            ignored_modules_prefix="vision_encoder.",
-        )
         return VAEConfig(
             _class_name=vae_config._class_name,
             _diffusers_version=vae_config._diffusers_version,
@@ -245,7 +235,6 @@ class VAEConfig:
             up_block_types=tuple(vae_config.up_block_types),
             use_post_quant_conv=vae_config.use_post_quant_conv,
             use_quant_conv=vae_config.use_quant_conv,
-            float8_config=v_float8,
         )
 
 
@@ -318,8 +307,6 @@ class TransformerConfig:
         transformer_config: AutoConfig,
         dtype: DType,
         pipeline_config: PipelineConfig,
-        huggingface_config: AutoConfig,
-        state_dict: dict[str, WeightData],
     ) -> TransformerConfig:
         """Generate TransformerConfig from HuggingFace transformer config.
 
@@ -329,14 +316,6 @@ class TransformerConfig:
         Returns:
             Configured TransformerConfig instance.
         """
-        # Parse (if present) a float8 configuration for the transformer path.
-        t_float8 = parse_float8_config(
-            huggingface_config,
-            state_dict,
-            dtype,
-            state_dict_name_prefix="transformer.",
-            ignored_modules_prefix="transformer.",
-        )
         return TransformerConfig(
             _class_name=transformer_config._class_name,
             _diffusers_version=transformer_config._diffusers_version,
@@ -360,7 +339,7 @@ class TransformerConfig:
             qk_norm=transformer_config.qk_norm,
             rope_theta=transformer_config.rope_theta,
             t_scale=transformer_config.t_scale,
-            float8_config=t_float8,
+            float8_config=None,
         )
 
 
@@ -453,10 +432,13 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
     @staticmethod
     def generate(
         pipeline_config: PipelineConfig,
-        huggingface_config: AutoConfig,
+        scheduler_config: SchedulerConfig,
+        vae_config: VAEConfig,
+        text_encoder_config: AutoConfig,
+        transformer_config: TransformerConfig,
         vae_state_dict: dict[str, WeightData],
         text_encoder_state_dict: dict[str, dict[str, WeightData]],
-        denoiser_state_dict: dict[str, WeightData],
+        transformer_state_dict: dict[str, WeightData],
         dtype: DType,
         n_devices: int,
         cache_dtype: DType,
@@ -467,11 +449,14 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         """Generate ZImageConfig from pipeline and HuggingFace configs.
 
         Args:
-            pipeline_config: Pipeline configuration.
-            huggingface_config: HuggingFace model configuration.
+            pipeline_config: Pipeline configuration.            
+            scheduler_config: Scheduler configuration.
+            vae_config: VAE configuration.
+            text_encoder_config: Text encoder configuration.
+            transformer_config: Transformer configuration.
             vae_state_dict: VAE weights dictionary.
             text_encoder_state_dict: Text encoder weights dictionary.
-            denoiser_state_dict: Denoiser weights dictionary.
+            transformer_state_dict: Transformer weights dictionary.
             dtype: Data type for model parameters.
             n_devices: Number of devices.
             cache_dtype: KV cache data type.
@@ -482,34 +467,21 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         Returns:
             Configured ZImageConfig instance.
         """
-        # Create SchedulerConfig from the scheduler config
-        hf_scheduler_config = getattr(huggingface_config, "scheduler_config", None)
-        if hf_scheduler_config is None:
-            raise ValueError("scheduler_config not found in huggingface_config")
-        scheduler_config = SchedulerConfig.generate(
-            hf_scheduler_config,
-            vae_state_dict["patch_embed.proj.weight"].dtype,
-            text_encoder_state_dict["language_model.embed_tokens.weight"].dtype,
-            pipeline_config,
-        )
+        # Create SchedulerConfig from the scheduler_config
+        scheduler_config = SchedulerConfig.generate(scheduler_config)
 
-        # Create VAEConfig from the VAE config
-        hf_vae_config = getattr(huggingface_config, "vae_config", None)
-        if hf_vae_config is None:
-            raise ValueError("vae_config not found in huggingface_config")
+        # Create VAEConfig from the vae_config
         vae_config = VAEConfig.generate(
-            hf_vae_config,
-            vae_state_dict["patch_embed.proj.weight"].dtype,
-            text_encoder_state_dict["language_model.embed_tokens.weight"].dtype,
+            vae_config,
+            vae_state_dict["encoder.conv_in.weight"].dtype,
             pipeline_config,
         )
 
         # Create Qwen3Config for the text encoder
         text_encoder_config = Qwen3Config.generate(
             pipeline_config,
-            huggingface_config,
+            text_encoder_config,
             text_encoder_state_dict["llm_state_dict"],
-            text_encoder_state_dict["vision_state_dict"],
             dtype,
             n_devices,
             cache_dtype,
@@ -520,11 +492,9 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
 
         # Create TransformerConfig for the backbone of the pipeline
         transformer_config = TransformerConfig.generate(
-            huggingface_config.transformer_config,
-            dtype,
+            transformer_config,
+            transformer_state_dict["layers.0.feed_forward.w1.weight"],
             pipeline_config,
-            huggingface_config,
-            denoiser_state_dict,
         )
 
         return ZImageConfig(
@@ -533,19 +503,14 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
                 for spec in pipeline_config.model_config.device_specs
             ],
             # Multimodal parameters
-            image_token_id=huggingface_config.image_token_id,
-            video_token_id=huggingface_config.video_token_id,
-            vision_start_token_id=huggingface_config.vision_start_token_id,
-            spatial_merge_size=hf_vae_config.spatial_merge_size,
-            mrope_section=huggingface_config.text_config.rope_scaling[
-                "mrope_section"
-            ],
-            # Scheduler configuration
+            image_token_id=text_encoder_config.image_token_id,
+            video_token_id=text_encoder_config.video_token_id,
+            vision_start_token_id=text_encoder_config.vision_start_token_id,
+            spatial_merge_size=vae_config.spatial_merge_size,
+            mrope_section=text_encoder_config.text_config.rope_scaling["mrope_section"],
+            # Components' configurations
             scheduler_config=scheduler_config,
-            # Vision configuration
             vae_config=vae_config,
-            # Text encoder configuration
             text_encoder_config=text_encoder_config,
-            # Denoising transformer configuration
             transformer_config=transformer_config,
         )
