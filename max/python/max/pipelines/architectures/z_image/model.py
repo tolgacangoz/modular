@@ -49,7 +49,8 @@ from max.kv_cache import (
     estimate_kv_cache_size,
     load_kv_manager,
 )
-from max.nn import Module, ReturnLogits, Signals
+from max.nn import ReturnLogits, Signals
+from max.nn.module_v3 import Module
 from max.nn.kv_cache import KVCacheInputs, KVCacheParams, PagedCacheValues
 from max.nn.parallel import ParallelArrayOps
 from max.pipelines.lib import (
@@ -460,21 +461,31 @@ class ZImageModel(
             raise ValueError("Model config must be initialized")
 
         # Instantiate ZImage container to build sub-models
-        nn_model = ZImage(self.model_config)
-
-        vae = nn_model.build_vae()
-        vae.to(self.devices[0])
-        transformer = nn_model.build_transformer()
-        transformer.to(self.devices[0])
-
+        self.model: Module = ZImage(self.model_config)
+        
+        graph_inputs = self.model.text_encoder.input_types(self.kv_params)
+        self.model.text_encoder.load_state_dict(
+            text_encoder_state_dict,
+            override_quantization_encoding=True,
+            weight_alignment=1,
+            # Stops strict from raising error when sharing LM head weights
+            # (as LM head is never technically loaded from the state dict)
+            strict=(
+                not getattr(
+                    self.huggingface_config, "tie_word_embeddings", False
+                )
+            ),
+        )
         device0 = self.devices[0]
+
+        self.model.to(device0)
         device_ref = DeviceRef(device0.label, device0.id)
         sample_type = TensorType(
             DType.bfloat16, shape=(1, 77), device=device_ref
         )
         sample_posterior_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
         return_dict_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
-        compiled_vae_model = vae.compile(
+        compiled_vae_model = self.model.vae.compile(
             sample_type,
             sample_posterior_type,
             return_dict_type,
@@ -487,7 +498,7 @@ class ZImageModel(
         patch_size_type = TensorType(DType.int64, shape=[], device=device_ref)
         f_patch_size_type = TensorType(DType.int64, shape=[], device=device_ref)
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
-        compiled_transformer_model = transformer.compile(
+        compiled_transformer_model = self.model.transformer.compile(
             hidden_states_type,
             t_type,
             cap_feats_type,
@@ -497,15 +508,9 @@ class ZImageModel(
             weights=transformer_state_dict,
         )
 
-        logger.info("Building and compiling model...")
-        text_encoder = nn_model.build_text_encoder()
-
+        logger.info("Building and compiling text encoder...")
         before_text_encoder_build = time.perf_counter()
-        text_encoder_graph = self._build_text_encoder_graph(
-            text_encoder,
-            text_encoder_state_dict,
-            session,
-        )
+        text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
         after_text_encoder_build = time.perf_counter()
 
         logger.info(f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds")
@@ -525,87 +530,25 @@ class ZImageModel(
         )
         return compiled_vae_model, compiled_text_encoder_model, compiled_transformer_model
 
-    def _build_text_encoder_graph(
-        self,
-        nn_model: Any,
-        text_encoder_state_dict: Weights,
-        session: InferenceSession | None = None,
-    ) -> Graph:
-        device0 = self.devices[0]
-        device_ref = DeviceRef(device0.label, device0.id)
-        tokens_type = TensorType(
-            DType.int64, shape=["total_seq_len"], device=device_ref
-        )
-        # NOTE: input_row_offsets_len should be batch_size + 1.
-        # Create input_row_offsets_type for each device
-        input_row_offsets_types = [
-            TensorType(
-                DType.uint32,
-                shape=["input_row_offsets_len"],
-                device=DeviceRef(device.label, device.id),
+    def _build_text_encoder_graph(self, graph_inputs: tuple[TensorType, ...]) -> Graph:
+        with Graph("qwen3", input_types=graph_inputs) as graph:
+            tokens, input_row_offsets, return_n_logits, *kv_cache_inputs = (
+                graph.inputs
             )
-            for device in self.devices
-        ]
-        return_n_logits_type = TensorType(
-            DType.int64, shape=["return_n_logits"], device=DeviceRef.CPU()
-        )
-        signals = Signals(
-            devices=(DeviceRef(d.label, d.id) for d in self.devices)
-        )
-        nn_model.load_state_dict(
-            text_encoder_state_dict,
-            weight_alignment=1,
-            strict=self._strict_state_dict_loading,
-        )
-        self.state_dict = nn_model.state_dict(auto_initialize=False)
-
-        # Create signal types for distributed communication
-        signals = Signals(
-            devices=(DeviceRef(d.label, d.id) for d in self.devices)
-        )
-
-        kv_inputs = self.kv_manager.get_symbolic_inputs()
-        flattened_kv_types = [
-            kv_type for sublist in kv_inputs for kv_type in sublist
-        ]
-
-        with Graph(
-            getattr(self.huggingface_config, "model_type", "GptOss"),
-            input_types=[
-                tokens_type,
-                return_n_logits_type,
-                *input_row_offsets_types,
-                *signals.input_types(),
-                *flattened_kv_types,
-            ],
-        ) as graph:
-            # Unpack inputs following InternVL pattern
-            tokens, return_n_logits, *variadic_args = graph.inputs
-
-            # Extract input_row_offsets (one per device)
-            input_row_offsets = [
-                v.tensor for v in variadic_args[: len(self.devices)]
-            ]
-            variadic_args = variadic_args[len(self.devices) :]
-
-            # Extract signal buffers (one per device)
-            signal_buffers = [
-                v.buffer for v in variadic_args[: len(self.devices)]
-            ]
-            variadic_args = variadic_args[len(self.devices) :]
-
-            # Extract KV cache inputs
-            kv_cache = self._unflatten_kv_inputs(variadic_args)
-
-            outputs = nn_model(
-                tokens=tokens.tensor,
-                signal_buffers=signal_buffers,
-                kv_cache_inputs_per_dev=kv_cache,
-                return_n_logits=return_n_logits.tensor,
-                input_row_offsets=input_row_offsets,
+            kv_collection = PagedCacheValues(
+                kv_blocks=kv_cache_inputs[0].buffer,
+                cache_lengths=kv_cache_inputs[1].tensor,
+                lookup_table=kv_cache_inputs[2].tensor,
+                max_lengths=kv_cache_inputs[3].tensor,
+            )
+            outputs = self.model.text_encoder(
+                tokens.tensor,
+                kv_collection,
+                return_n_logits.tensor,
+                input_row_offsets.tensor,
             )
             graph.output(*outputs)
-        return graph
+            return graph
 
     def encode_prompt(
         self,
@@ -680,7 +623,7 @@ class ZImageModel(
             text_input_ids = text_inputs.input_ids.to(device)
             prompt_masks = text_inputs.attention_mask.to(device).bool()
 
-        prompt_embeds = self.text_encoder(
+        prompt_embeds = self.model.text_encoder(
             input_ids=text_input_ids,
             attention_mask=prompt_masks,
             output_hidden_states=True,

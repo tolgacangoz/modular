@@ -27,10 +27,10 @@ class ZImage(Module):
 
     def __init__(self, config: ZImageConfig) -> None:
         self.config = config
-        self.scheduler: FlowMatchEulerDiscreteScheduler | None = None
-        self.vae: AutoencoderKL | None = None
-        self.text_encoder: Qwen3Encoder | None = None
-        self.transformer: ZImageTransformer2DModel | None = None
+        self.scheduler = self.build_scheduler()
+        self.vae = self.build_vae()
+        self.text_encoder = self.build_text_encoder()
+        self.transformer = self.build_transformer()
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""
