@@ -11,7 +11,6 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
 from max.nn.kv_cache import KVCacheStrategy
 from max.pipelines.lib import (
@@ -27,7 +26,6 @@ from .qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .nn.autoencoder_kl import AutoencoderKL
 from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
-from .weight_adapters import convert_z_image_model_state_dict
 
 z_image_arch = SupportedArchitecture(
     name="ZImagePipeline",
@@ -36,16 +34,17 @@ z_image_arch = SupportedArchitecture(
         "Tongyi-MAI/Z-Image-Base",
         "Tongyi-MAI/Z-Image-Turbo",
     ],
-    default_weights_format=WeightsFormat.safetensors,
+    # Z-Image uses standard safetensors layout for Qwen3 text encoder and
+    # diffusers-style layouts for VAE/transformer, so no custom weight adapter
+    # is required at the architecture level.
+    default_weights_format=None,
     multi_gpu_supported=True,
     default_encoding=SupportedEncoding.bfloat16,
     supported_encodings={
         SupportedEncoding.bfloat16: KVCacheStrategy.PAGED,
         SupportedEncoding.float32: KVCacheStrategy.PAGED,
     },
-    weight_adapters={
-        WeightsFormat.safetensors: convert_z_image_model_state_dict,
-    },
+    weight_adapters={},
     pipeline_model=ZImageModel,
     scheduler=FlowMatchEulerDiscreteScheduler,
     vae=AutoencoderKL,

@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 from pathlib import Path
+import json
+from types import SimpleNamespace
 
 import numpy as np
 import numpy.typing as npt
@@ -299,6 +301,54 @@ class ZImageModel(
             adapter,
             return_logits,
         )
+
+        # For Z-Image, the Hugging Face repository is a diffusers pipeline with
+        # separate subfolders for scheduler, VAE, transformer, and text_encoder.
+        # The base PipelineModel only knows about the main huggingface_config
+        # (the text encoder). Here we explicitly load the configs for the
+        # scheduler, VAE, and transformer components so ZImageConfig.generate
+        # can build the full MAX configuration.
+
+        model_config = self.pipeline_config.model_config
+        repo_id = model_config.model_path
+        model_revision = model_config.huggingface_model_revision
+        trust_remote_code = model_config.trust_remote_code
+
+        # Scheduler config is a diffusers-style `scheduler_config.json` that is
+        # not a standard Transformers model config (no `model_type` field).
+        # Load it directly as JSON and wrap it in a SimpleNamespace so
+        # SchedulerConfig.generate can access attributes.
+        from huggingface_hub import hf_hub_download
+
+        scheduler_config_path = hf_hub_download(
+            repo_id,
+            filename="scheduler/scheduler_config.json",
+            revision=model_revision,
+        )
+        with open(scheduler_config_path, "r", encoding="utf-8") as f:
+            scheduler_dict = json.load(f)
+        self.scheduler_config = SimpleNamespace(**scheduler_dict)
+
+        # VAE and transformer are also diffusers components with their own
+        # `config.json` files that are not standard Transformers model configs
+        # (no `model_type`). Load them similarly via JSON.
+        vae_config_path = hf_hub_download(
+            repo_id,
+            filename="vae/config.json",
+            revision=model_revision,
+        )
+        with open(vae_config_path, "r", encoding="utf-8") as f:
+            vae_dict = json.load(f)
+        self.vae_config = SimpleNamespace(**vae_dict)
+
+        transformer_config_path = hf_hub_download(
+            repo_id,
+            filename="transformer/config.json",
+            revision=model_revision,
+        )
+        with open(transformer_config_path, "r", encoding="utf-8") as f:
+            transformer_dict = json.load(f)
+        self.transformer_config = SimpleNamespace(**transformer_dict)
 
         self.model_config = None
         self._session = session  # reuse for on-device casts
