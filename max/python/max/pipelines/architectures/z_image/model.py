@@ -28,6 +28,7 @@ import dataclasses
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -414,30 +415,60 @@ class ZImageModel(
         if not isinstance(self.weights, SafetensorWeights):
             raise ValueError("ZImage currently only supports safetensors weights")
 
+        # Partition raw safetensor weights by their originating file path.
+        # This lets us treat diffusers-style folders (vae/, text_encoder/, transformer/)
+        # as separate components without relying on key-name heuristics.
+        st_weights: SafetensorWeights = self.weights
+        filepaths = [Path(p) for p in st_weights._filepaths]
+
+        vae_weights: dict[str, Weights] = {}
+        text_encoder_weights: dict[str, Weights] = {}
+        transformer_weights: dict[str, Weights] = {}
+
+        for key, weight in st_weights.items():
+            file_idx = st_weights._tensors_to_file_idx[key]
+            filepath = filepaths[file_idx]
+            parts = set(filepath.parts)
+
+            if "vae" in parts:
+                vae_weights[key] = weight
+            elif "text_encoder" in parts:
+                text_encoder_weights[key] = weight
+            elif "transformer" in parts:
+                transformer_weights[key] = weight
+            else:
+                logger.debug(
+                    "Unrecognized Z-Image weight file '%s' for key '%s', assigning to transformer",
+                    filepath,
+                    key,
+                )
+                transformer_weights[key] = weight
+
+        # Materialize VAE and transformer weights directly.
+        vae_state_dict: dict[str, WeightData] = {
+            key: weight.data() for key, weight in vae_weights.items()
+        }
+        transformer_state_dict: dict[str, WeightData] = {
+            key: weight.data() for key, weight in transformer_weights.items()
+        }
+
+        # Apply the architecture weight adapter (if any) only to the text encoder
+        # subset. For Z-Image this maps Qwen3-VL style names to the expected
+        # Qwen3Encoder format.
         if self.adapter:
-            model_state_dict = self.adapter(
-                dict(self.weights.items()),
+            text_encoder_llm_state_dict: dict[str, WeightData] = self.adapter(
+                text_encoder_weights,
                 huggingface_config=self.huggingface_config,
-                pipeline_config=self.pipeline_config
+                pipeline_config=self.pipeline_config,
             )
         else:
-            model_state_dict = {key: value.data() for key, value in self.weights.items()}
+            text_encoder_llm_state_dict = {
+                key: weight.data() for key, weight in text_encoder_weights.items()
+            }
 
-        vae_state_dict: dict[str, WeightData] = {}
-        text_encoder_state_dict: dict[str, WeightData] = {}
-        transformer_state_dict: dict[str, WeightData] = {}
-
-        for key, value in model_state_dict.items():
-            if key.startswith("vae."):
-                vae_state_dict[key] = value
-            elif key.startswith("text_encoder."):
-                text_encoder_state_dict[key] = value
-            elif key.startswith("transformer."):
-                transformer_state_dict[key] = value
-            else:
-                raise ValueError(
-                    f"Key: {key} is not part of the VAE, text encoder or transformer"
-                )
+        text_encoder_state_dict: dict[str, dict[str, WeightData]] = {
+            "llm_state_dict": text_encoder_llm_state_dict,
+        }
 
         # Generate ZImage config from HuggingFace config
         zimage_config = ZImageConfig.generate(
@@ -465,7 +496,7 @@ class ZImageModel(
         
         graph_inputs = self.model.text_encoder.input_types(self.kv_params)
         self.model.text_encoder.load_state_dict(
-            text_encoder_state_dict,
+            text_encoder_llm_state_dict,
             override_quantization_encoding=True,
             weight_alignment=1,
             # Stops strict from raising error when sharing LM head weights
@@ -518,7 +549,7 @@ class ZImageModel(
         before_text_encoder_compile = time.perf_counter()
         compiled_text_encoder_model = session.load(
             text_encoder_graph,
-            weights_registry=text_encoder_state_dict
+            weights_registry=text_encoder_llm_state_dict,
         )
         after = time.perf_counter()
 
