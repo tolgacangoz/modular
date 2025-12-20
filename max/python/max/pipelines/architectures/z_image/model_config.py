@@ -427,7 +427,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         pipeline_config: PipelineConfig,
         scheduler_config: SchedulerConfig,
         vae_config: VAEConfig,
-        text_encoder_config: SimpleNamespace,
+        text_encoder_config: dict[str, any],
         transformer_config: SimpleNamespace,
         vae_state_dict: dict[str, WeightData],
         text_encoder_state_dict: dict[str, dict[str, WeightData]],

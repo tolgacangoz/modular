@@ -348,7 +348,7 @@ class ZImageModel(
         )
         with open(text_encoder_config_path, "r", encoding="utf-8") as f:
             text_encoder_dict = json.load(f)
-        self.text_encoder_config = SimpleNamespace(**text_encoder_dict)
+        self.text_encoder_config = text_encoder_dict
 
         transformer_config_path = hf_hub_download(
             repo_id,
