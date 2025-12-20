@@ -341,14 +341,12 @@ class ZImageModel(
             vae_dict = json.load(f)
         self.vae_config = SimpleNamespace(**vae_dict)
 
-        text_encoder_config_path = hf_hub_download(
+        self.text_encoder_config = AutoConfig.from_pretrained(
             repo_id,
-            filename="text_encoder/config.json",
+            subfolder="text_encoder",
             revision=model_revision,
+            trust_remote_code=trust_remote_code,
         )
-        with open(text_encoder_config_path, "r", encoding="utf-8") as f:
-            text_encoder_dict = json.load(f)
-        self.text_encoder_config = text_encoder_dict
 
         transformer_config_path = hf_hub_download(
             repo_id,

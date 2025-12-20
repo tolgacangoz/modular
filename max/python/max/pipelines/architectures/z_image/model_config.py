@@ -84,7 +84,7 @@ class SchedulerConfig:
 
     @staticmethod
     def generate(
-        scheduler_config: AutoConfig,
+        scheduler_config: SimpleNamespace,
     ) -> SchedulerConfig:
         """Generate SchedulerConfig from HuggingFace scheduler config.
 
@@ -194,7 +194,7 @@ class VAEConfig:
 
     @staticmethod
     def generate(
-        vae_config: AutoConfig,
+        vae_config: SimpleNamespace,
         dtype: DType,
         pipeline_config: PipelineConfig,
     ) -> VAEConfig:
@@ -298,7 +298,7 @@ class TransformerConfig:
 
     @staticmethod
     def generate(
-        transformer_config: AutoConfig,
+        transformer_config: SimpleNamespace,
         dtype: DType,
         pipeline_config: PipelineConfig,
     ) -> TransformerConfig:
@@ -427,7 +427,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         pipeline_config: PipelineConfig,
         scheduler_config: SchedulerConfig,
         vae_config: VAEConfig,
-        text_encoder_config: dict[str, any],
+        text_encoder_config: AutoConfig,
         transformer_config: SimpleNamespace,
         vae_state_dict: dict[str, WeightData],
         text_encoder_state_dict: dict[str, dict[str, WeightData]],
