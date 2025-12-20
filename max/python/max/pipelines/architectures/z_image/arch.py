@@ -20,7 +20,9 @@ from max.pipelines.lib import (
     TextTokenizer,
 )
 from max.pipelines.core import TextContext
+from max.graph.weights import WeightsFormat
 
+from ..llama3 import weight_adapters
 from .model import ZImageModel
 from .qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
@@ -30,30 +32,17 @@ from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteSchedule
 z_image_arch = SupportedArchitecture(
     name="ZImagePipeline",
     task=PipelineTask.IMAGE_GENERATION,
-    example_repo_ids=[
-        "Tongyi-MAI/Z-Image-Base",
-        "Tongyi-MAI/Z-Image-Turbo",
-    ],
-    # Z-Image uses standard safetensors layout for Qwen3 text encoder and
-    # diffusers-style layouts for VAE/transformer, so no custom weight adapter
-    # is required at the architecture level.
-    default_weights_format=None,
-    multi_gpu_supported=True,
+    example_repo_ids=["Tongyi-MAI/Z-Image-Turbo"],
+    default_weights_format=WeightsFormat.safetensors,
     default_encoding=SupportedEncoding.bfloat16,
-    supported_encodings={
-        SupportedEncoding.bfloat16: KVCacheStrategy.PAGED,
-        SupportedEncoding.float32: KVCacheStrategy.PAGED,
-    },
-    weight_adapters={},
+    supported_encodings={SupportedEncoding.bfloat16: KVCacheStrategy.PAGED},
     pipeline_model=ZImageModel,
     scheduler=FlowMatchEulerDiscreteScheduler,
     vae=AutoencoderKL,
     text_encoder=Qwen3Encoder,
     tokenizer=TextTokenizer,
     transformer=ZImageTransformer2DModel,
-    rope_type=RopeType.normal,
-    required_arguments={
-        "enable_chunked_prefill": False,
-    },
     context_type=TextContext,
+    rope_type=RopeType.normal,
+    weight_adapters={WeightsFormat.safetensors: weight_adapters.convert_safetensor_state_dict},
 )

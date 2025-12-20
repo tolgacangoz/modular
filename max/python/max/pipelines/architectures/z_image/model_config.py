@@ -480,7 +480,6 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
             cache_dtype,
             kv_cache_config,
             return_logits,
-            norm_method,
         )
 
         # Create TransformerConfig for the backbone of the pipeline
