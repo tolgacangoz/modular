@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+
 from types import SimpleNamespace
 
 from max.dtype import DType

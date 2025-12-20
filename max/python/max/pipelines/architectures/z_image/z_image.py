@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from max.nn.module_v3 import Module
 
 from .model_config import ZImageConfig
@@ -34,11 +36,11 @@ class ZImage(Module):
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""
-        return FlowMatchEulerDiscreteScheduler(**self.config.scheduler_config)
+        return FlowMatchEulerDiscreteScheduler(**asdict(self.config.scheduler_config))
 
     def build_vae(self) -> AutoencoderKL:
         """Build the VAE component."""
-        return AutoencoderKL(**self.config.vae_config)
+        return AutoencoderKL(**asdict(self.config.vae_config))
 
     def build_text_encoder(self) -> Qwen3Encoder:
         """Build the text encoder component."""
@@ -46,7 +48,7 @@ class ZImage(Module):
 
     def build_transformer(self) -> ZImageTransformer2DModel:
         """Build the transformer component."""
-        return ZImageTransformer2DModel(**self.config.transformer_config)
+        return ZImageTransformer2DModel(**asdict(self.config.transformer_config))
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""
