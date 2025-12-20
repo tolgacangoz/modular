@@ -343,22 +343,6 @@ class ZImageConfigBase:
     devices: list[DeviceRef]
     """Devices that the ZImage model is parallelized over."""
 
-    # Multimodal parameters
-    image_token_id: int
-    """Token ID used for image placeholders in the input sequence."""
-
-    video_token_id: int
-    """Token ID used for video placeholders in the input sequence."""
-
-    vision_start_token_id: int
-    """Token ID that marks the start of vision content."""
-
-    spatial_merge_size: int
-    """Size parameter for spatial merging of vision features."""
-
-    mrope_section: list[int]
-    """List of indices for the mrope section."""
-
     scheduler_config: SchedulerConfig
     """Scheduler configuration."""
 
@@ -489,18 +473,8 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
             pipeline_config,
         )
 
+        # Return a new ZImageConfig with the corrected parameters
         return ZImageConfig(
-            devices=[
-                DeviceRef(spec.device_type, spec.id)
-                for spec in pipeline_config.model_config.device_specs
-            ],
-            # Multimodal parameters
-            image_token_id=text_encoder_config.image_token_id,
-            video_token_id=text_encoder_config.video_token_id,
-            vision_start_token_id=text_encoder_config.vision_start_token_id,
-            spatial_merge_size=vae_config.spatial_merge_size,
-            mrope_section=text_encoder_config.text_config.rope_scaling["mrope_section"],
-            # Components' configurations
             scheduler_config=scheduler_config,
             vae_config=vae_config,
             text_encoder_config=text_encoder_config,
