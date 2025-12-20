@@ -570,7 +570,7 @@ class ZImageModel(
         device_ref = DeviceRef(device0.label, device0.id)
         sample_type = TensorType(DType.bfloat16, shape=(1, 16, 128, 128), device=device_ref)
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
-        compiled_vae_decode_model = self.model.vae.decode.compile(
+        compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
             return_dict_type,
             weights=vae_state_dict,
