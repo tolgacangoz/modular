@@ -568,7 +568,7 @@ class ZImageModel(
 
         self.model.to(device0)
         device_ref = DeviceRef(device0.label, device0.id)
-        sample_type = TensorType(DType.bfloat16, shape=(1, 77), device=device_ref)
+        sample_type = TensorType(DType.bfloat16, shape=(1, 16, 128, 128), device=device_ref)
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
         compiled_vae_decode_model = self.model.vae.decode.compile(
             sample_type,
@@ -576,9 +576,9 @@ class ZImageModel(
             weights=vae_state_dict,
         )
 
-        hidden_states_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
-        t_type = TensorType(DType.bfloat16, shape=(1,), device=device_ref)
-        cap_feats_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
+        hidden_states_type = list[TensorType(DType.bfloat16, shape=(16, 1, 128, 128), device=device_ref)]
+        t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
+        cap_feats_type = list[TensorType(DType.bfloat16, shape=(101, 2560), device=device_ref)]
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
         compiled_transformer_model = self.model.transformer.compile(
             hidden_states_type,
