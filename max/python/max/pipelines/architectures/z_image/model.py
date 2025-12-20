@@ -568,15 +568,15 @@ class ZImageModel(
 
         self.model.to(device0)
         device_ref = DeviceRef(device0.label, device0.id)
-        sample_type = TensorType(
-            DType.bfloat16, shape=(1, 77), device=device_ref
-        )
-        sample_posterior_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
-        return_dict_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
+        sample_type = TensorType(DType.bfloat16, shape=(1, 77), device=device_ref)
+        # sample_posterior_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
+        latent_embeds_type = TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)
+        # return_dict_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
         compiled_vae_decoder_model = self.model.vae.decoder.compile(
             sample_type,
-            sample_posterior_type,
-            return_dict_type,
+            latent_embeds_type,
+            # sample_posterior_type,
+            # return_dict_type,
             weights=vae_state_dict,
         )
 
