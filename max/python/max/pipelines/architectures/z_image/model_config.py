@@ -128,61 +128,61 @@ class VAEConfig:
     devices: list[DeviceRef] | None = None
     """Devices that the VAE model is parallelized over."""
 
-    act_fn: str
+    act_fn: str | None = None
     """Activation function."""
 
-    block_out_channels: list[int]
+    block_out_channels: list[int] | None = None
     """List of block output channels."""
 
-    down_block_types: list[str]
+    down_block_types: list[str] | None = None
     """List of downsample block types."""
 
-    force_upcast: bool
+    force_upcast: bool | None = None
     """If enabled it will force the VAE to run in float32 for high image resolution pipelines, such as SD-XL. VAE
     can be fine-tuned / trained to a lower range without losing too much precision in which case `force_upcast`
     can be set to `False` - see: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix"""
 
-    in_channels: int
+    in_channels: int | None = None
     """Number of channels in the input image."""
 
-    latent_channels: int
+    latent_channels: int | None = None
     """Number of channels in the latent space."""
 
-    latents_mean: list[float]
+    latents_mean: list[float] | None = None
     """Latents mean."""
 
-    latents_std: list[float]
+    latents_std: list[float] | None = None
     """Latents standard deviation."""
 
-    layers_per_block: int
+    layers_per_block: int | None = None
     """Number of layers per block."""
 
-    mid_block_add_attention: bool
+    mid_block_add_attention: bool | None = None
     """If enabled, the mid_block of the Encoder and Decoder will have attention blocks. If set to false, the
     mid_block will only have resnet blocks"""
 
-    norm_num_groups: int
+    norm_num_groups: int | None = None
     """Number of normalization groups."""
 
-    out_channels: int
+    out_channels: int | None = None
     """Number of output channels."""
 
-    sample_size: int
+    sample_size: int | None = None
     """Sample size."""
 
-    shift_factor: float
+    shift_factor: float | None = None
     """Shift factor."""
 
-    up_block_types: list[str]
+    up_block_types: list[str] | None = None
     """List of upsample block types."""
 
-    use_post_quant_conv: bool
+    use_post_quant_conv: bool | None = None
     """Use post quantization convolution flag."""
 
-    use_quant_conv: bool
+    use_quant_conv: bool | None = None
     """Use quantization convolution flag."""
 
-    scaling_factor: float
+    scaling_factor: float | None = None
     """The component-wise standard deviation of the trained latent space computed using the first batch of the
     training set. This is used to scale the latent space to have unit variance when training the diffusion
     model. The latents are scaled with the formula `z = z * scaling_factor` before being passed to the
@@ -242,49 +242,49 @@ class TransformerConfig:
     devices: list[DeviceRef] | None = None
     """Devices that the transformer model is parallelized over."""
 
-    all_f_patch_size: list[int]
+    all_f_patch_size: list[int] | None = None
     """All f patch size."""
 
-    all_patch_size: list[int]
+    all_patch_size: list[int] | None = None
     """All patch size."""
 
-    axes_dims: list[int]
+    axes_dims: list[int] | None = None
     """Axes dimensions."""
 
-    axes_lens: list[int]
+    axes_lens: list[int] | None = None
     """Axes lengths."""
 
-    cap_feat_dim: int
+    cap_feat_dim: int | None = None
     """Capacity feature dimension."""
 
-    dim: int
+    dim: int | None = None
     """Dimension."""
 
-    in_channels: int
+    in_channels: int | None = None
     """Number of input channels."""
 
-    n_heads: int
+    n_heads: int | None = None
     """Number of heads."""
 
-    n_kv_heads: int
+    n_kv_heads: int | None = None
     """Number of KV heads."""
 
-    n_layers: int
+    n_layers: int | None = None
     """Number of layers."""
 
-    n_refiner_layers: int
+    n_refiner_layers: int | None = None
     """Number of refiner layers."""
 
-    norm_eps: float
+    norm_eps: float | None = None
     """Normalization epsilon."""
 
-    qk_norm: bool
+    qk_norm: bool | None = None
     """Query-Key normalization flag."""
 
-    rope_theta: float
+    rope_theta: float | None = None
     """RoPE theta."""
 
-    t_scale: float
+    t_scale: float | None = None
     """Time scale."""
 
     @staticmethod
