@@ -36,7 +36,7 @@ class SchedulerConfig:
     _class_name: str = "FlowMatchEulerDiscreteScheduler"
     """Scheduler class name."""
 
-    _diffusers_version: str
+    _diffusers_version: str | None = None
     """Diffusers version."""
 
     base_image_seq_len: int | None = 256
