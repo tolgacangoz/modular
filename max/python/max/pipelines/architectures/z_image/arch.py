@@ -22,7 +22,7 @@ from max.pipelines.lib import (
 from max.pipelines.core import TextContext
 from max.graph.weights import WeightsFormat
 
-from ..llama3 import weight_adapters
+from .max.pipelines.architectures.llama3 import weight_adapters
 from .model import ZImageModel
 from .qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
