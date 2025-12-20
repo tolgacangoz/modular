@@ -25,7 +25,6 @@ from max.pipelines.lib import MAXModelConfig, PipelineConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
 from max.pipelines.architectures.qwen3.model_config import Qwen3Config
-from max.nn.float8_config import Float8Config, parse_float8_config
 from max.nn.kv_cache import KVCacheParams
 from max.pipelines.lib import KVCacheConfig
 
@@ -34,52 +33,52 @@ from max.pipelines.lib import KVCacheConfig
 class SchedulerConfig:
     """Base configuration for scheduler model with required fields."""
 
-    _class_name: str
+    _class_name: str = "FlowMatchEulerDiscreteScheduler"
     """Scheduler class name."""
 
     _diffusers_version: str
     """Diffusers version."""
 
-    base_image_seq_len: int
+    base_image_seq_len: int | None = 256
     """Base image sequence length."""
 
-    base_shift: float
+    base_shift: float | None = 0.5
     """Base shift value."""
 
-    invert_sigmas: bool
+    invert_sigmas: bool = False
     """Invert sigmas flag."""
 
-    max_image_seq_len: int
+    max_image_seq_len: int | None = 4096
     """Max image sequence length."""
 
-    max_shift: float
+    max_shift: float | None = 1.15
     """Max shift value."""
 
-    num_train_timesteps: int
+    num_train_timesteps: int = 1000
     """Number of training timesteps."""
 
-    shift: float
+    shift: float = 1.0
     """Shift value."""
 
-    shift_terminal: float
+    shift_terminal: float | None = None
     """Shift terminal value."""
 
-    stochastic_sampling: bool
+    stochastic_sampling: bool = False
     """Stochastic sampling flag."""
 
-    time_shift_type: str
+    time_shift_type: str = "exponential"
     """Time shift type."""
 
-    use_beta_sigmas: bool
+    use_beta_sigmas: bool = False
     """Use beta sigmas flag."""
 
-    use_dynamic_shifting: bool
+    use_dynamic_shifting: bool = False
     """Use dynamic shifting flag."""
 
-    use_exponential_sigmas: bool
+    use_exponential_sigmas: bool | None = False
     """Use exponential sigmas flag."""
 
-    use_karras_sigmas: bool
+    use_karras_sigmas: bool | None = False
     """Use karras sigmas flag."""
 
     @staticmethod
@@ -192,9 +191,6 @@ class VAEConfig:
     / scaling_factor * z`. For more details, refer to sections 4.3.2 and D.1 of the [High-Resolution Image
     Synthesis with Latent Diffusion Models](https://huggingface.co/papers/2112.10752) paper."""
 
-    float8_config: Float8Config | None = None
-    """Float8 quantization configuration for the VAE model."""
-
     @staticmethod
     def generate(
         vae_config: AutoConfig,
@@ -299,9 +295,6 @@ class TransformerConfig:
     t_scale: float
     """Time scale."""
 
-    float8_config: Float8Config | None = None
-    """Float8 quantization configuration for the transformer model."""
-
     @staticmethod
     def generate(
         transformer_config: AutoConfig,
@@ -339,7 +332,6 @@ class TransformerConfig:
             qk_norm=transformer_config.qk_norm,
             rope_theta=transformer_config.rope_theta,
             t_scale=transformer_config.t_scale,
-            float8_config=None,
         )
 
 
@@ -449,7 +441,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         """Generate ZImageConfig from pipeline and HuggingFace configs.
 
         Args:
-            pipeline_config: Pipeline configuration.            
+            pipeline_config: Pipeline configuration.
             scheduler_config: Scheduler configuration.
             vae_config: VAE configuration.
             text_encoder_config: Text encoder configuration.
