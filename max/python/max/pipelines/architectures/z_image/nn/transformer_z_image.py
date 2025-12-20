@@ -570,10 +570,10 @@ class ZImageTransformer2DModel(nn.Module):
         x: List[Tensor],
         t: Tensor,
         cap_feats: List[Tensor],
-        patch_size: int = 2,
-        f_patch_size: int = 1,
         return_dict: bool = True,
     ):
+        patch_size: int = 2
+        f_patch_size: int = 1
         if patch_size not in self.all_patch_size:
             raise ValueError(f"patch_size must be in {self.all_patch_size}")
         if f_patch_size not in self.all_f_patch_size:

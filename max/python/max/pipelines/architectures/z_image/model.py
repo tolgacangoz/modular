@@ -569,29 +569,21 @@ class ZImageModel(
         self.model.to(device0)
         device_ref = DeviceRef(device0.label, device0.id)
         sample_type = TensorType(DType.bfloat16, shape=(1, 77), device=device_ref)
-        # sample_posterior_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
-        latent_embeds_type = TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)
-        # return_dict_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
-        compiled_vae_decoder_model = self.model.vae.decoder.compile(
+        return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
+        compiled_vae_decode_model = self.model.vae.decode.compile(
             sample_type,
-            latent_embeds_type,
-            # sample_posterior_type,
-            # return_dict_type,
+            return_dict_type,
             weights=vae_state_dict,
         )
 
         hidden_states_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
         t_type = TensorType(DType.bfloat16, shape=(1,), device=device_ref)
         cap_feats_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
-        patch_size_type = TensorType(DType.int64, shape=[], device=device_ref)
-        f_patch_size_type = TensorType(DType.int64, shape=[], device=device_ref)
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
         compiled_transformer_model = self.model.transformer.compile(
             hidden_states_type,
             t_type,
             cap_feats_type,
-            patch_size_type,
-            f_patch_size_type,
             return_dict_type,
             weights=transformer_state_dict,
         )
@@ -616,7 +608,7 @@ class ZImageModel(
         logger.info(
             f"Building and compiling the whole model took {after - before:.6f} seconds"
         )
-        return compiled_vae_decoder_model, compiled_text_encoder_model, compiled_transformer_model
+        return compiled_vae_decode_model, compiled_text_encoder_model, compiled_transformer_model
 
     def _build_text_encoder_graph(self, graph_inputs: tuple[TensorType, ...]) -> Graph:
         with Graph("qwen3", input_types=graph_inputs) as graph:
