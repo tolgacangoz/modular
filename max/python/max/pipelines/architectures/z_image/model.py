@@ -263,13 +263,13 @@ class ZImageModel(
     scheduler: FlowMatchEulerDiscreteScheduler
     """The scheduler to be used for image generation."""
 
-    vae: Model
+    vae: AutoencoderKL
     """The VAE to be used for image generation."""
 
     text_encoder: Qwen3Encoder
     """The text encoder to be used for image generation."""
 
-    transformer: Model
+    transformer: ZImageTransformer2DModel
     """The transformer to be used for image generation."""
 
     model_config: ZImageConfig | None
@@ -360,7 +360,7 @@ class ZImageModel(
         self.model_config = None
         self._session = session  # reuse for on-device casts
 
-        self.vae, self.text_encoder, self.transformer = self.load_model(session)
+        self.vae.decoder, self.text_encoder, self.transformer = self.load_model(session)
 
         # self.vae_scale_factor = 2 ** (len(self.vae.block_out_channels) - 1)
         # Access config from vae instance or config object
@@ -573,7 +573,7 @@ class ZImageModel(
         )
         sample_posterior_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
         return_dict_type = TensorType(DType.bool, shape=[], device=DeviceRef.CPU())
-        compiled_vae_model = self.model.vae.compile(
+        compiled_vae_decoder_model = self.model.vae.decoder.compile(
             sample_type,
             sample_posterior_type,
             return_dict_type,
@@ -616,7 +616,7 @@ class ZImageModel(
         logger.info(
             f"Building and compiling the whole model took {after - before:.6f} seconds"
         )
-        return compiled_vae_model, compiled_text_encoder_model, compiled_transformer_model
+        return compiled_vae_decoder_model, compiled_text_encoder_model, compiled_transformer_model
 
     def _build_text_encoder_graph(self, graph_inputs: tuple[TensorType, ...]) -> Graph:
         with Graph("qwen3", input_types=graph_inputs) as graph:
