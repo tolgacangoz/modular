@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Tuple
+from typing import Literal
 
 from max.dtype import DType
 from max.graph import DeviceRef
@@ -132,11 +132,11 @@ class VAEConfig:
     act_fn: str
     """Activation function."""
 
-    block_out_channels: Tuple[int]
-    """Tuple of block output channels."""
+    block_out_channels: list[int]
+    """List of block output channels."""
 
-    down_block_types: Tuple[str]
-    """Tuple of downsample block types."""
+    down_block_types: list[str]
+    """List of downsample block types."""
 
     force_upcast: bool
     """If enabled it will force the VAE to run in float32 for high image resolution pipelines, such as SD-XL. VAE
@@ -149,10 +149,10 @@ class VAEConfig:
     latent_channels: int
     """Number of channels in the latent space."""
 
-    latents_mean: Tuple[float]
+    latents_mean: list[float]
     """Latents mean."""
 
-    latents_std: Tuple[float]
+    latents_std: list[float]
     """Latents standard deviation."""
 
     layers_per_block: int
@@ -174,8 +174,8 @@ class VAEConfig:
     shift_factor: float
     """Shift factor."""
 
-    up_block_types: Tuple[str]
-    """Tuple of upsample block types."""
+    up_block_types: list[str]
+    """List of upsample block types."""
 
     use_post_quant_conv: bool
     """Use post quantization convolution flag."""
@@ -214,13 +214,13 @@ class VAEConfig:
                 for spec in pipeline_config.model_config.device_specs
             ],
             act_fn=vae_config.act_fn,
-            block_out_channels=tuple(vae_config.block_out_channels),
-            down_block_types=tuple(vae_config.down_block_types),
+            block_out_channels=vae_config.block_out_channels,
+            down_block_types=vae_config.down_block_types,
             force_upcast=vae_config.force_upcast,
             in_channels=vae_config.in_channels,
             latent_channels=vae_config.latent_channels,
-            latents_mean=tuple(vae_config.latents_mean),
-            latents_std=tuple(vae_config.latents_std),
+            latents_mean=vae_config.latents_mean,
+            latents_std=vae_config.latents_std,
             layers_per_block=vae_config.layers_per_block,
             mid_block_add_attention=vae_config.mid_block_add_attention,
             norm_num_groups=vae_config.norm_num_groups,
@@ -228,7 +228,7 @@ class VAEConfig:
             sample_size=vae_config.sample_size,
             scaling_factor=vae_config.scaling_factor,
             shift_factor=vae_config.shift_factor,
-            up_block_types=tuple(vae_config.up_block_types),
+            up_block_types=vae_config.up_block_types,
             use_post_quant_conv=vae_config.use_post_quant_conv,
             use_quant_conv=vae_config.use_quant_conv,
         )
