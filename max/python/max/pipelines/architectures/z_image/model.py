@@ -771,9 +771,9 @@ class ZImageModel(
     def execute(
         self,
         prompt: str | list[str] | None = None,
-        height: int | None = None,
-        width: int | None = None,
-        num_inference_steps: int = 50,
+        height: int | None = 1024,
+        width: int | None = 1024,
+        num_inference_steps: int = 9,
         sigmas: list[float] | None = None,
         guidance_scale: float = 5.0,
         cfg_normalization: bool = False,
@@ -805,7 +805,7 @@ class ZImageModel(
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to 1024):
                 The width in pixels of the generated image.
-            num_inference_steps (`int`, *optional*, defaults to 50):
+            num_inference_steps (`int`, *optional*, defaults to 9):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the
                 expense of slower inference.
             sigmas (`list[float]`, *optional*):
