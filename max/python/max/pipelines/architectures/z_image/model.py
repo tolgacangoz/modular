@@ -341,6 +341,15 @@ class ZImageModel(
             vae_dict = json.load(f)
         self.vae_config = SimpleNamespace(**vae_dict)
 
+        text_encoder_config_path = hf_hub_download(
+            repo_id,
+            filename="text_encoder/config.json",
+            revision=model_revision,
+        )
+        with open(text_encoder_config_path, "r", encoding="utf-8") as f:
+            text_encoder_dict = json.load(f)
+        self.text_encoder_config = SimpleNamespace(**text_encoder_dict)
+
         transformer_config_path = hf_hub_download(
             repo_id,
             filename="transformer/config.json",
@@ -543,7 +552,7 @@ class ZImageModel(
 
         # Instantiate ZImage container to build sub-models
         self.model: Module = ZImage(self.model_config)
-        
+
         graph_inputs = self.model.text_encoder.input_types(self.kv_params)
         self.model.text_encoder.load_state_dict(
             text_encoder_llm_state_dict,
@@ -572,7 +581,7 @@ class ZImageModel(
             return_dict_type,
             weights=vae_state_dict,
         )
-        
+
         hidden_states_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
         t_type = TensorType(DType.bfloat16, shape=(1,), device=device_ref)
         cap_feats_type = list[TensorType(DType.bfloat16, shape=(1, 77, 1024), device=device_ref)]
