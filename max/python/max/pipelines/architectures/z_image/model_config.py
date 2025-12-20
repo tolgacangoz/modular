@@ -116,16 +116,16 @@ class SchedulerConfig:
 class VAEConfig:
     """Base configuration for VAE model with required fields."""
 
-    _class_name: str
+    _class_name: str = "AutoencoderKL"
     """VAE class name."""
 
-    _diffusers_version: str
+    _diffusers_version: str | None = None
     """Diffusers version."""
 
-    dtype: DType
+    dtype: DType | None = None
     """DType of the VAE model weights."""
 
-    devices: list[DeviceRef]
+    devices: list[DeviceRef] | None = None
     """Devices that the VAE model is parallelized over."""
 
     act_fn: str
@@ -230,16 +230,16 @@ class VAEConfig:
 class TransformerConfig:
     """Base configuration for transformer model with required fields."""
 
-    _class_name: str
+    _class_name: str = "ZImageTransformer2DModel"
     """Transformer class name."""
 
-    _diffusers_version: str
+    _diffusers_version: str | None = None
     """Diffusers version."""
 
-    dtype: DType
+    dtype: DType | None = None
     """DType of the transformer model weights."""
 
-    devices: list[DeviceRef]
+    devices: list[DeviceRef] | None = None
     """Devices that the transformer model is parallelized over."""
 
     all_f_patch_size: list[int]
