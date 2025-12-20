@@ -534,7 +534,7 @@ class ZImageModel(
             pipeline_config=self.pipeline_config,
             scheduler_config=self.scheduler_config,
             vae_config=self.vae_config,
-            text_encoder_config=self.huggingface_config,
+            text_encoder_config=self.text_encoder_config,
             transformer_config=self.transformer_config,
             vae_state_dict=vae_state_dict,
             text_encoder_state_dict=text_encoder_state_dict,
