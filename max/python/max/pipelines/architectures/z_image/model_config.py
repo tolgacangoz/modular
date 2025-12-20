@@ -34,12 +34,6 @@ from max.pipelines.lib import KVCacheConfig
 class SchedulerConfig:
     """Base configuration for scheduler model with required fields."""
 
-    _class_name: str = "FlowMatchEulerDiscreteScheduler"
-    """Scheduler class name."""
-
-    _diffusers_version: str | None = None
-    """Diffusers version."""
-
     base_image_seq_len: int | None = 256
     """Base image sequence length."""
 
@@ -115,18 +109,6 @@ class SchedulerConfig:
 @dataclass
 class VAEConfig:
     """Base configuration for VAE model with required fields."""
-
-    _class_name: str = "AutoencoderKL"
-    """VAE class name."""
-
-    _diffusers_version: str | None = None
-    """Diffusers version."""
-
-    dtype: DType | None = None
-    """DType of the VAE model weights."""
-
-    devices: list[DeviceRef] | None = None
-    """Devices that the VAE model is parallelized over."""
 
     act_fn: str | None = None
     """Activation function."""
@@ -229,18 +211,6 @@ class VAEConfig:
 @dataclass
 class TransformerConfig:
     """Base configuration for transformer model with required fields."""
-
-    _class_name: str = "ZImageTransformer2DModel"
-    """Transformer class name."""
-
-    _diffusers_version: str | None = None
-    """Diffusers version."""
-
-    dtype: DType | None = None
-    """DType of the transformer model weights."""
-
-    devices: list[DeviceRef] | None = None
-    """Devices that the transformer model is parallelized over."""
 
     all_f_patch_size: list[int] | None = None
     """All f patch size."""
