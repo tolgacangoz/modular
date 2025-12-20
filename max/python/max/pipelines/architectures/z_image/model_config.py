@@ -95,8 +95,6 @@ class SchedulerConfig:
             Configured SchedulerConfig instance.
         """
         return SchedulerConfig(
-            _class_name=scheduler_config._class_name,
-            _diffusers_version=scheduler_config._diffusers_version,
             base_image_seq_len=getattr(scheduler_config, 'base_image_seq_len', 256),
             base_shift=getattr(scheduler_config, 'base_shift', 0.5),
             invert_sigmas=getattr(scheduler_config, 'invert_sigmas', False),
@@ -207,13 +205,6 @@ class VAEConfig:
             Configured VAEConfig instance.
         """
         return VAEConfig(
-            _class_name=vae_config._class_name,
-            _diffusers_version=vae_config._diffusers_version,
-            dtype=dtype,
-            devices=[
-                DeviceRef(spec.device_type, spec.id)
-                for spec in pipeline_config.model_config.device_specs
-            ],
             act_fn=vae_config.act_fn,
             block_out_channels=vae_config.block_out_channels,
             down_block_types=vae_config.down_block_types,
@@ -311,13 +302,6 @@ class TransformerConfig:
             Configured TransformerConfig instance.
         """
         return TransformerConfig(
-            _class_name=transformer_config._class_name,
-            _diffusers_version=transformer_config._diffusers_version,
-            dtype=dtype,
-            devices=[
-                DeviceRef(spec.device_type, spec.id)
-                for spec in pipeline_config.model_config.device_specs
-            ],
             all_f_patch_size=transformer_config.all_f_patch_size,
             all_patch_size=transformer_config.all_patch_size,
             axes_dims=transformer_config.axes_dims,
