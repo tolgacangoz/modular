@@ -551,7 +551,7 @@ class ZImageModel(
         # Instantiate ZImage container to build sub-models
         self.model: Module = ZImage(self.model_config)
 
-        graph_inputs = self.model.text_encoder.input_types(self.kv_params)
+        graph_inputs = self.model.text_encoder.input_types(self.model.text_encoder.kv_params)
         self.model.text_encoder.load_state_dict(
             text_encoder_llm_state_dict,
             override_quantization_encoding=True,
