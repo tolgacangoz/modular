@@ -340,9 +340,6 @@ class TransformerConfig:
 class ZImageConfigBase:
     """Base configuration for ZImage models with required fields."""
 
-    devices: list[DeviceRef]
-    """Devices that the ZImage model is parallelized over."""
-
     scheduler_config: SchedulerConfig
     """Scheduler configuration."""
 
@@ -421,7 +418,6 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         cache_dtype: DType,
         kv_cache_config: KVCacheConfig,
         return_logits: ReturnLogits,
-        norm_method: Literal["rms_norm"] | Literal["layer_norm"] = "layer_norm",
     ) -> ZImageConfig:
         """Generate ZImageConfig from pipeline and HuggingFace configs.
 
