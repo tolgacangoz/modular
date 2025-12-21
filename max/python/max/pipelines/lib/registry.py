@@ -18,9 +18,9 @@ from __future__ import annotations
 import functools
 import json
 import logging
-from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import huggingface_hub
@@ -51,8 +51,7 @@ if TYPE_CHECKING:
     from .config import PipelineConfig
 
 from .audio_generator_pipeline import AudioGeneratorPipeline
-from .config_enums import RepoType
-from .config_enums import RopeType, SupportedEncoding
+from .config_enums import RepoType, RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo
 from .interfaces import PipelineModel
@@ -341,7 +340,9 @@ class PipelineRegistry:
             model_index_path: str | None = None
 
             if huggingface_repo.repo_type == RepoType.local:
-                local_index = Path(huggingface_repo.repo_id) / "model_index.json"
+                local_index = (
+                    Path(huggingface_repo.repo_id) / "model_index.json"
+                )
                 if local_index.exists():
                     model_index_path = str(local_index)
             else:
@@ -360,7 +361,7 @@ class PipelineRegistry:
                     model_index_path = None
 
             if model_index_path is not None:
-                with open(model_index_path, "r", encoding="utf-8") as f:
+                with open(model_index_path, encoding="utf-8") as f:
                     model_index = json.load(f)
 
                 class_name = model_index.get("_class_name")
@@ -539,7 +540,7 @@ class PipelineRegistry:
                 pipeline_config=pipeline_config,
                 chat_template=pipeline_config.retrieve_chat_template(),
                 context_validators=arch.context_validators,
-                subfolder='tokenizer'
+                subfolder="tokenizer",
             )
         # Cast tokenizer to the proper type for text generation pipeline compatibility
         typed_tokenizer = cast(

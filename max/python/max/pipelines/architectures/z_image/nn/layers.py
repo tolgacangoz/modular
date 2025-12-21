@@ -1,19 +1,33 @@
-from typing import Tuple
-from typing_extensions import TypeVar
+# ===----------------------------------------------------------------------=== #
+# Copyright (c) 2025, Modular Inc. All rights reserved.
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions:
+# https://llvm.org/LICENSE.txt
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ===----------------------------------------------------------------------=== #
+
+import numbers
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-import numbers
 
-import max.nn.module_v3 as nn
 import max.experimental.functional as F
-from max.experimental.tensor import Tensor
-from max.experimental import random
+import max.nn.module_v3 as nn
+from max.driver import Device
 from max.dtype import DType
+from max.experimental import random
+from max.experimental.tensor import Tensor
 from max.graph.type import ConvInputLayout
+from typing_extensions import TypeVar
 
 # ===----------------------------------------------------------------------=== #
 # Output Dataclasses
 # ===----------------------------------------------------------------------=== #
+
 
 @dataclass(eq=False)
 class Transformer2DModelOutput:
@@ -22,6 +36,7 @@ class Transformer2DModelOutput:
     Attributes:
         sample: The output tensor from the transformer.
     """
+
     sample: Tensor
 
 
@@ -32,12 +47,14 @@ class AutoencoderKLOutput:
     Attributes:
         latent_dist: The diagonal gaussian distribution of the latent space.
     """
+
     latent_dist: "DiagonalGaussianDistribution"  # Forward reference
 
 
 # ===----------------------------------------------------------------------=== #
 # Utility Functions
 # ===----------------------------------------------------------------------=== #
+
 
 def pad_sequence(
     sequences: Sequence[Tensor],
@@ -130,7 +147,9 @@ def create_attention_mask(
     positions = Tensor.arange(0, max_seq_len, dtype=DType.int32)
 
     # Create seq_lens as a column tensor for broadcasting
-    seq_lens_tensor = Tensor.constant(seq_lens, dtype=DType.int32).reshape([batch_size, 1])
+    seq_lens_tensor = Tensor.constant(seq_lens, dtype=DType.int32).reshape(
+        [batch_size, 1]
+    )
 
     # Broadcast comparison: positions < seq_lens for each batch item
     # Result: (batch_size, max_seq_len) boolean mask
@@ -170,7 +189,6 @@ def masked_scatter(
     return F.where(mask, value, tensor)
 
 
-
 def reduce_mean(x: Tensor, axis: int | Sequence[int]) -> Tensor:
     """Compute mean along one or more axes, keeping dimensions."""
     if isinstance(axis, int):
@@ -180,28 +198,29 @@ def reduce_mean(x: Tensor, axis: int | Sequence[int]) -> Tensor:
         x = F.mean(x, axis=ax)
     return x
 
+
 def reduce_var(x: Tensor, axis: int | Sequence[int]) -> Tensor:
     """Compute variance along one or more axes, keeping dimensions."""
-    mean_sq = reduce_mean(x ** 2, axis)
+    mean_sq = reduce_mean(x**2, axis)
     sq_mean = reduce_mean(x, axis) ** 2
     return mean_sq - sq_mean
+
 
 class Conv2d(nn.Module):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int | Tuple[int, int],
-        stride: int | Tuple[int, int] = 1,
-        padding: int | Tuple[int, int] = 0,
-        dilation: int | Tuple[int, int] = 1,
+        kernel_size: int | tuple[int, int],
+        stride: int | tuple[int, int] = 1,
+        padding: int | tuple[int, int] = 0,
+        dilation: int | tuple[int, int] = 1,
         groups: int = 1,
         bias: bool = True,
         padding_mode: str = "zeros",
-        device=None,
-        dtype=None,
+        device: Device | None = None,
+        dtype: DType | None = None,
     ):
-
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
         if isinstance(stride, int):
@@ -222,7 +241,9 @@ class Conv2d(nn.Module):
 
         # Weight shape: (out_channels, in_channels // groups, *kernel_size)
         weight_shape = [out_channels, in_channels // groups, *kernel_size]
-        self.weight = random.normal(weight_shape, dtype=DType.float32) # Initialize with random normal
+        self.weight = random.normal(
+            weight_shape, dtype=DType.float32
+        )  # Initialize with random normal
 
         if bias:
             self.bias = Tensor.zeros([out_channels], dtype=DType.float32)
@@ -250,6 +271,7 @@ class Conv2d(nn.Module):
         # F.conv2d returns NHWC, convert back to NCHW
         return out.permute([0, 3, 1, 2])
 
+
 class RMSNorm(nn.Module):
     r"""
     RMS Norm as introduced in https://huggingface.co/papers/1910.07467 by Zhang et al.
@@ -261,9 +283,14 @@ class RMSNorm(nn.Module):
             Boolean flag to denote if affine transformation should be applied.
         bias (`bool`, defaults to False): If also training the `bias` param.
     """
-    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = True, bias: bool = False):
 
-
+    def __init__(
+        self,
+        dim: int,
+        eps: float = 1e-6,
+        elementwise_affine: bool = True,
+        bias: bool = False,
+    ):
         self.eps = eps
         self.elementwise_affine = elementwise_affine
 
@@ -280,7 +307,9 @@ class RMSNorm(nn.Module):
 
     def __call__(self, hidden_states: Tensor) -> Tensor:
         input_dtype = hidden_states.dtype
-        variance = reduce_mean(F.pow(hidden_states.cast(DType.float32), 2), axis=-1)
+        variance = reduce_mean(
+            F.pow(hidden_states.cast(DType.float32), 2), axis=-1
+        )
         hidden_states = hidden_states * F.rsqrt(variance + self.eps)
 
         if self.weight is not None:
@@ -295,9 +324,15 @@ class RMSNorm(nn.Module):
 
         return hidden_states
 
-class GroupNorm(nn.Module):
-    def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True):
 
+class GroupNorm(nn.Module):
+    def __init__(
+        self,
+        num_groups: int,
+        num_channels: int,
+        eps: float = 1e-5,
+        affine: bool = True,
+    ):
         self.num_groups = num_groups
         self.num_channels = num_channels
         self.eps = eps
@@ -336,9 +371,14 @@ class GroupNorm(nn.Module):
 
         return x
 
-class LayerNorm(nn.Module):
-    def __init__(self, normalized_shape: int, eps: float = 1e-5, elementwise_affine: bool = True):
 
+class LayerNorm(nn.Module):
+    def __init__(
+        self,
+        normalized_shape: int,
+        eps: float = 1e-5,
+        elementwise_affine: bool = True,
+    ):
         self.normalized_shape = normalized_shape
         self.eps = eps
         self.elementwise_affine = elementwise_affine
@@ -374,10 +414,15 @@ class SpatialNorm(nn.Module):
         f_channels: int,
         zq_channels: int,
     ):
-
-        self.norm_layer = GroupNorm(num_channels=f_channels, num_groups=32, eps=1e-6, affine=True)
-        self.conv_y = Conv2d(zq_channels, f_channels, kernel_size=1, stride=1, padding=0)
-        self.conv_b = Conv2d(zq_channels, f_channels, kernel_size=1, stride=1, padding=0)
+        self.norm_layer = GroupNorm(
+            num_channels=f_channels, num_groups=32, eps=1e-6, affine=True
+        )
+        self.conv_y = Conv2d(
+            zq_channels, f_channels, kernel_size=1, stride=1, padding=0
+        )
+        self.conv_b = Conv2d(
+            zq_channels, f_channels, kernel_size=1, stride=1, padding=0
+        )
 
     def forward(self, f: Tensor, zq: Tensor) -> Tensor:
         f_size = f.shape[-2:]
@@ -391,13 +436,14 @@ class SiLU(nn.Module):
     def __call__(self, x: Tensor) -> Tensor:
         return F.silu(x)
 
+
 class Identity(nn.Module):
     def __call__(self, x: Tensor) -> Tensor:
         return x
 
+
 class Dropout(nn.Module):
     def __init__(self, p: float = 0.5):
-
         self.p = p
 
     def __call__(self, x: Tensor) -> Tensor:
@@ -438,20 +484,26 @@ class Attention(nn.Module):
         bias: bool = True,
         upcast_softmax: bool = True,
     ):
-
         self.inner_dim = dim_head * heads
         self.heads = heads
         self.head_dim = dim_head
-        self.scale = dim_head ** -0.5
+        self.scale = dim_head**-0.5
         self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection
         self.upcast_softmax = upcast_softmax
 
         # Normalization
         if spatial_norm_dim is not None:
-            self.group_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
+            self.group_norm = SpatialNorm(
+                f_channels=query_dim, zq_channels=spatial_norm_dim
+            )
         elif norm_num_groups is not None:
-            self.group_norm = GroupNorm(num_groups=norm_num_groups, num_channels=query_dim, eps=eps, affine=True)
+            self.group_norm = GroupNorm(
+                num_groups=norm_num_groups,
+                num_channels=query_dim,
+                eps=eps,
+                affine=True,
+            )
         else:
             self.group_norm = None
 
@@ -525,7 +577,9 @@ class Attention(nn.Module):
         hidden_states = attn_probs @ value
 
         # Reshape back: (B, heads, seq_len, head_dim) -> (B, seq_len, heads * head_dim)
-        hidden_states = hidden_states.permute([0, 2, 1, 3])  # (B, seq_len, heads, head_dim)
+        hidden_states = hidden_states.permute(
+            [0, 2, 1, 3]
+        )  # (B, seq_len, heads, head_dim)
         hidden_states = hidden_states.reshape([batch, seq_len, self.inner_dim])
 
         # Output projection
@@ -545,7 +599,9 @@ class Attention(nn.Module):
 
         return hidden_states
 
+
 T = TypeVar("T")
+
 
 class ModuleDict(dict[str, T], nn.Module):
     """A ``Module`` subclass which is locally a dict container.
@@ -574,20 +630,21 @@ class ModuleDict(dict[str, T], nn.Module):
 
     def __rich_repr__(self):
         """Omits the path for children in the repr."""
-        for name, child in self.items():
-            yield name, child
+        yield from self.items()
 
     # C3 linearization resolves dict.__repr__ before nn.Module.__repr__.
     # This explicitly overrides and tells the class to use nn.Module.__repr__.
     __repr__ = nn.Module.__repr__
 
+
 ACT2CLS = {
     "swish": SiLU,
     "silu": SiLU,
-    #"mish": nn.Mish,
-    #"gelu": nn.GELU,
-    #"relu": nn.ReLU,
+    # "mish": nn.Mish,
+    # "gelu": nn.GELU,
+    # "relu": nn.ReLU,
 }
+
 
 def get_activation(act_fn: str) -> nn.Module:
     """Helper function to get activation function from string.
@@ -603,4 +660,6 @@ def get_activation(act_fn: str) -> nn.Module:
     if act_fn in ACT2CLS:
         return ACT2CLS[act_fn]()
     else:
-        raise ValueError(f"activation function {act_fn} not found in ACT2FN mapping {list(ACT2CLS.keys())}")
+        raise ValueError(
+            f"activation function {act_fn} not found in ACT2FN mapping {list(ACT2CLS.keys())}"
+        )

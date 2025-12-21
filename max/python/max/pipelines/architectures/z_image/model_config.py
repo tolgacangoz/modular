@@ -15,19 +15,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 from types import SimpleNamespace
 
 from max.dtype import DType
-from max.graph import DeviceRef
 from max.graph.weights import WeightData
 from max.nn import ReturnLogits
-from max.pipelines.lib import MAXModelConfig, PipelineConfig
-from transformers.models.auto.configuration_auto import AutoConfig
-
-from max.pipelines.architectures.qwen3.model_config import Qwen3Config
 from max.nn.kv_cache import KVCacheParams
-from max.pipelines.lib import KVCacheConfig
+from max.pipelines.architectures.qwen3.model_config import Qwen3Config
+from max.pipelines.lib import KVCacheConfig, MAXModelConfig, PipelineConfig
+from transformers.models.auto.configuration_auto import AutoConfig
 
 
 @dataclass
@@ -89,20 +85,36 @@ class SchedulerConfig:
             Configured SchedulerConfig instance.
         """
         return SchedulerConfig(
-            base_image_seq_len=getattr(scheduler_config, 'base_image_seq_len', 256),
-            base_shift=getattr(scheduler_config, 'base_shift', 0.5),
-            invert_sigmas=getattr(scheduler_config, 'invert_sigmas', False),
-            max_image_seq_len=getattr(scheduler_config, 'max_image_seq_len', 4096),
-            max_shift=getattr(scheduler_config, 'max_shift', 1.15),
-            num_train_timesteps=getattr(scheduler_config, 'num_train_timesteps', 1000),
-            shift=getattr(scheduler_config, 'shift', 1.0),
-            shift_terminal=getattr(scheduler_config, 'shift_terminal', None),
-            stochastic_sampling=getattr(scheduler_config, 'stochastic_sampling', False),
-            time_shift_type=getattr(scheduler_config, 'time_shift_type', "exponential"),
-            use_beta_sigmas=getattr(scheduler_config, 'use_beta_sigmas', False),
-            use_dynamic_shifting=getattr(scheduler_config, 'use_dynamic_shifting', False),
-            use_exponential_sigmas=getattr(scheduler_config, 'use_exponential_sigmas', False),
-            use_karras_sigmas=getattr(scheduler_config, 'use_karras_sigmas', False),
+            base_image_seq_len=getattr(
+                scheduler_config, "base_image_seq_len", 256
+            ),
+            base_shift=getattr(scheduler_config, "base_shift", 0.5),
+            invert_sigmas=getattr(scheduler_config, "invert_sigmas", False),
+            max_image_seq_len=getattr(
+                scheduler_config, "max_image_seq_len", 4096
+            ),
+            max_shift=getattr(scheduler_config, "max_shift", 1.15),
+            num_train_timesteps=getattr(
+                scheduler_config, "num_train_timesteps", 1000
+            ),
+            shift=getattr(scheduler_config, "shift", 1.0),
+            shift_terminal=getattr(scheduler_config, "shift_terminal", None),
+            stochastic_sampling=getattr(
+                scheduler_config, "stochastic_sampling", False
+            ),
+            time_shift_type=getattr(
+                scheduler_config, "time_shift_type", "exponential"
+            ),
+            use_beta_sigmas=getattr(scheduler_config, "use_beta_sigmas", False),
+            use_dynamic_shifting=getattr(
+                scheduler_config, "use_dynamic_shifting", False
+            ),
+            use_exponential_sigmas=getattr(
+                scheduler_config, "use_exponential_sigmas", False
+            ),
+            use_karras_sigmas=getattr(
+                scheduler_config, "use_karras_sigmas", False
+            ),
         )
 
 

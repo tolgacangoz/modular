@@ -47,8 +47,8 @@ from .lora_config import LoRAConfig
 from .lora_request_processor import LoRARequestProcessor
 from .memory_estimation import MemoryEstimator
 from .model_config import MAXModelConfig, MAXModelConfigBase
-from .pipeline_variants.text_generation import TextGenerationPipeline
 from .pipeline_variants.image_generation import ImageGenerationPipeline
+from .pipeline_variants.text_generation import TextGenerationPipeline
 from .profiling_config import ProfilingConfig
 from .registry import PIPELINE_REGISTRY, SupportedArchitecture
 from .sampling import (
@@ -83,6 +83,7 @@ __all__ = [
     "EmbeddingsPipelineType",
     "HuggingFaceRepo",
     "IdentityPipelineTokenizer",
+    "ImageGenerationPipeline",
     "KVCacheConfig",
     "KVCacheMixin",
     "LoRAConfig",
@@ -111,7 +112,6 @@ __all__ = [
     "TextAndVisionTokenizer",
     "TextGenerationPipeline",
     "TextTokenizer",
-    "ImageGenerationPipeline",
     "WeightPathParser",
     "convert_max_config_value",
     "deep_merge_max_configs",

@@ -25,11 +25,11 @@ import numpy.typing as npt
 from max.interfaces import (
     AudioGenerationOutput,
     AudioGenerationRequest,
-    ImageGenerationOutput,
-    ImageGenerationRequest,
     BaseContext,
     EmbeddingsGenerationOutput,
     GenerationStatus,
+    ImageGenerationOutput,
+    ImageGenerationRequest,
     LogProbabilities,
     PipelineOutput,
     PipelineTokenizer,

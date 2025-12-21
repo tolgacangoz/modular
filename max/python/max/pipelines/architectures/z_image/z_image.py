@@ -19,10 +19,13 @@ from dataclasses import asdict
 from max.nn.module_v3 import Module
 
 from .model_config import ZImageConfig
-from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .qwen3_encoder import Qwen3Encoder
+from .scheduling_flow_match_euler_discrete import (
+    FlowMatchEulerDiscreteScheduler,
+)
+
 
 class ZImage(Module):
     """The overall interface to the ZImage model."""
@@ -36,7 +39,9 @@ class ZImage(Module):
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""
-        return FlowMatchEulerDiscreteScheduler(**asdict(self.config.scheduler_config))
+        return FlowMatchEulerDiscreteScheduler(
+            **asdict(self.config.scheduler_config)
+        )
 
     def build_vae(self) -> AutoencoderKL:
         """Build the VAE component."""
@@ -48,7 +53,9 @@ class ZImage(Module):
 
     def build_transformer(self) -> ZImageTransformer2DModel:
         """Build the transformer component."""
-        return ZImageTransformer2DModel(**asdict(self.config.transformer_config))
+        return ZImageTransformer2DModel(
+            **asdict(self.config.transformer_config)
+        )
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""

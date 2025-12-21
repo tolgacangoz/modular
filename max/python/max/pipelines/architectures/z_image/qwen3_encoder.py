@@ -1,3 +1,15 @@
+# ===----------------------------------------------------------------------=== #
+# Copyright (c) 2025, Modular Inc. All rights reserved.
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions:
+# https://llvm.org/LICENSE.txt
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ===----------------------------------------------------------------------=== #
 
 # ===----------------------------------------------------------------------=== #
 # Copyright (c) 2025, Modular Inc. All rights reserved.
@@ -14,18 +26,19 @@
 
 from __future__ import annotations
 
+from max.dtype import DType
 from max.graph import DeviceRef, TensorValueLike, ops
 from max.nn.kv_cache import PagedCacheValues
-from max.dtype import DType
-
-from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 from max.pipelines.architectures.qwen3.model_config import Qwen3Config
+from max.pipelines.architectures.qwen3.qwen3 import Qwen3
+
 
 class Qwen3Encoder(Qwen3):
     """
     Qwen3 Encoder wrapper for Z-Image pipeline.
     Accesses the last hidden state of the Qwen3 model to use as text embeddings.
     """
+
     def __init__(self, config: Qwen3Config) -> None:
         super().__init__(config)
 

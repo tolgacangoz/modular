@@ -11,23 +11,25 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
+from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
 from max.nn.kv_cache import KVCacheStrategy
+from max.pipelines.architectures.llama3 import weight_adapters
+from max.pipelines.core import TextContext
 from max.pipelines.lib import (
     RopeType,
     SupportedArchitecture,
     SupportedEncoding,
     TextTokenizer,
 )
-from max.pipelines.core import TextContext
-from max.graph.weights import WeightsFormat
 
-from max.pipelines.architectures.llama3 import weight_adapters
 from .model import ZImageModel
-from .qwen3_encoder import Qwen3Encoder
-from .nn.transformer_z_image import ZImageTransformer2DModel
 from .nn.autoencoder_kl import AutoencoderKL
-from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+from .nn.transformer_z_image import ZImageTransformer2DModel
+from .qwen3_encoder import Qwen3Encoder
+from .scheduling_flow_match_euler_discrete import (
+    FlowMatchEulerDiscreteScheduler,
+)
 
 z_image_arch = SupportedArchitecture(
     name="ZImagePipeline",
@@ -44,5 +46,7 @@ z_image_arch = SupportedArchitecture(
     transformer=ZImageTransformer2DModel,
     context_type=TextContext,
     rope_type=RopeType.normal,
-    weight_adapters={WeightsFormat.safetensors: weight_adapters.convert_safetensor_state_dict},
+    weight_adapters={
+        WeightsFormat.safetensors: weight_adapters.convert_safetensor_state_dict
+    },
 )

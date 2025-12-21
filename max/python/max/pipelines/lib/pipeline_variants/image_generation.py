@@ -32,15 +32,15 @@ from max.engine import Model
 from max.graph.weights import WeightsAdapter, WeightsFormat
 from max.interfaces import (
     BatchLogitsProcessor,
+    ImageGenerationContextType,
+    ImageGenerationInputs,
+    ImageGenerationOutput,
+    ImageGenerationRequest,
     LogProbabilities,
     Pipeline,
     PipelineOutputsDict,
     PipelineTokenizer,
     RequestID,
-    ImageGenerationContextType,
-    ImageGenerationInputs,
-    ImageGenerationOutput,
-    ImageGenerationRequest,
 )
 from max.nn import ReturnLogits
 from max.nn.kv_cache import KVCacheInputsSequence
