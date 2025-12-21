@@ -605,16 +605,18 @@ class ZImageModel(
         # Strip 'decoder.' prefix from VAE weights for the Decoder module.
         # The safetensors file has keys like 'decoder.conv_in.weight' but the
         # Decoder module's parameters are named 'conv_in.weight'.
-        # Use max.driver.Tensor to create properly aligned copies that support
-        # bfloat16 (numpy doesn't support bfloat16 natively).
+        # Create aligned copies by converting through Tensor.to(CPU()) which
+        # forces a copy to properly aligned memory.
+        from max.driver import CPU as DriverCPU
         from max.driver import Tensor as DriverTensor
 
         decoder_weights: dict[str, DriverTensor] = {}
         for key, value in vae_state_dict.items():
             if key.startswith("decoder."):
                 new_key = key.removeprefix("decoder.")
-                # Create a properly aligned tensor copy
-                decoder_weights[new_key] = DriverTensor.from_dlpack(value)
+                # Create tensor and force copy to aligned memory via .to()
+                t = DriverTensor.from_dlpack(value)
+                decoder_weights[new_key] = t.to(DriverCPU())
 
         compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
