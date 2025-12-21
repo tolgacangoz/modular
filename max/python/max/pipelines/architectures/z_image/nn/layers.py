@@ -238,14 +238,17 @@ class Conv2d(nn.Module):
         self.groups = groups
         self.padding_mode = padding_mode
 
+        # Use provided dtype or default to bfloat16 to match checkpoint weights
+        weight_dtype = dtype if dtype is not None else DType.bfloat16
+
         # Weight shape: (out_channels, in_channels // groups, *kernel_size)
         weight_shape = [out_channels, in_channels // groups, *kernel_size]
         self.weight = random.normal(
-            weight_shape, dtype=DType.float32
-        )  # Initialize with random normal
+            weight_shape, dtype=weight_dtype
+        )
 
         if bias:
-            self.bias = Tensor.zeros([out_channels], dtype=DType.float32)
+            self.bias = Tensor.zeros([out_channels], dtype=weight_dtype)
         else:
             self.bias = None
 
@@ -341,8 +344,9 @@ class GroupNorm(nn.Module):
         self.affine = affine
 
         if affine:
-            self.weight = Tensor.ones([num_channels], dtype=DType.float32)
-            self.bias = Tensor.zeros([num_channels], dtype=DType.float32)
+            # Use bfloat16 to match checkpoint weights
+            self.weight = Tensor.ones([num_channels], dtype=DType.bfloat16)
+            self.bias = Tensor.zeros([num_channels], dtype=DType.bfloat16)
         else:
             self.weight = None
             self.bias = None
@@ -385,8 +389,9 @@ class LayerNorm(nn.Module):
         self.eps = eps
         self.elementwise_affine = elementwise_affine
         if elementwise_affine:
-            self.weight = Tensor.ones([normalized_shape], dtype=DType.float32)
-            self.bias = Tensor.zeros([normalized_shape], dtype=DType.float32)
+            # Use bfloat16 to match checkpoint weights
+            self.weight = Tensor.ones([normalized_shape], dtype=DType.bfloat16)
+            self.bias = Tensor.zeros([normalized_shape], dtype=DType.bfloat16)
         else:
             self.weight = None
             self.bias = None
