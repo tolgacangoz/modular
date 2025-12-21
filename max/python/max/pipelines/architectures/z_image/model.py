@@ -605,11 +605,15 @@ class ZImageModel(
         # Strip 'decoder.' prefix from VAE weights for the Decoder module.
         # The safetensors file has keys like 'decoder.conv_in.weight' but the
         # Decoder module's parameters are named 'conv_in.weight'.
-        decoder_weights: dict[str, WeightData] = {
-            key.removeprefix("decoder."): value
-            for key, value in vae_state_dict.items()
-            if key.startswith("decoder.")
-        }
+        # Also convert WeightData to contiguous numpy arrays to ensure
+        # proper memory alignment for MAX runtime.
+        decoder_weights: dict[str, np.ndarray] = {}
+        for key, value in vae_state_dict.items():
+            if key.startswith("decoder."):
+                new_key = key.removeprefix("decoder.")
+                # Convert to contiguous numpy array for proper alignment
+                arr = np.ascontiguousarray(np.asarray(value.data))
+                decoder_weights[new_key] = arr
 
         compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
