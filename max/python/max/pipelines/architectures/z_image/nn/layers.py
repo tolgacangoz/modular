@@ -518,7 +518,12 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
         self.to_k = nn.Linear(query_dim, self.inner_dim, bias=bias)
         self.to_v = nn.Linear(query_dim, self.inner_dim, bias=bias)
-        self.to_out = nn.Linear(self.inner_dim, query_dim, bias=bias)
+        # Use ModuleList to match checkpoint's indexing (from nn.Sequential in Diffusers)
+        # Parameter names will be to_out.0.weight, to_out.0.bias, etc.
+        self.to_out = nn.ModuleList(
+            nn.Linear(self.inner_dim, query_dim, bias=bias),
+            Dropout(p=0.0),  # Dropout is typically 0 for inference
+        )
 
     def __call__(
         self,
@@ -589,8 +594,9 @@ class Attention(nn.Module):
         )  # (B, seq_len, heads, head_dim)
         hidden_states = hidden_states.reshape([batch, seq_len, self.inner_dim])
 
-        # Output projection
-        hidden_states = self.to_out(hidden_states)
+        # Output projection (Linear + Dropout from to_out list)
+        hidden_states = self.to_out[0](hidden_states)
+        hidden_states = self.to_out[1](hidden_states)
 
         # Reshape back to image format: (B, H*W, C) -> (B, C, H, W)
         hidden_states = hidden_states.reshape([batch, height, width, channels])
