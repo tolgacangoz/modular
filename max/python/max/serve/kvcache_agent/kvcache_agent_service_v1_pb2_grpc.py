@@ -103,7 +103,7 @@ class KVCacheAgentService:
     def SubscribeToUpdates(
         request: max_dot_serve_dot_kvcache__agent_dot_kvcache__agent__service__v1__pb2.SubscriptionRequest,
         target: str,
-        options: Sequence[grpc.CallOption] = (),
+        options = (),
         channel_credentials: grpc.ChannelCredentials | None = None,
         call_credentials: grpc.CallCredentials | None = None,
         insecure: bool = False,
