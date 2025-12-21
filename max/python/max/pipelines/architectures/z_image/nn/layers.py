@@ -21,7 +21,6 @@ from max.driver import Device
 from max.dtype import DType
 from max.experimental import random
 from max.experimental.tensor import Tensor
-from max.graph.type import ConvInputLayout
 from typing_extensions import TypeVar
 
 # ===----------------------------------------------------------------------=== #
@@ -251,6 +250,9 @@ class Conv2d(nn.Module):
             self.bias = None
 
     def __call__(self, input: Tensor) -> Tensor:
+        # Input is NCHW, permute to NHWC for conv2d op
+        x = input.permute([0, 2, 3, 1])
+
         # Permute weight to RSCF (H, W, I, O) from (O, I, H, W)
         weight = self.weight.permute((2, 3, 1, 0))
 
@@ -259,14 +261,14 @@ class Conv2d(nn.Module):
         padding = (ph, ph, pw, pw)
 
         out = F.conv2d(
-            input,
+            x,
             weight,
             bias=self.bias,
             stride=self.stride,
             padding=padding,
             dilation=self.dilation,
             groups=self.groups,
-            input_layout=ConvInputLayout.NCHW,
+            # Default input_layout is NHWC
         )
         # F.conv2d returns NHWC, convert back to NCHW
         return out.permute([0, 3, 1, 2])
