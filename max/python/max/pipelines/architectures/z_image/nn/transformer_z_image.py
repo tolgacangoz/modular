@@ -716,7 +716,7 @@ class ZImageTransformer2DModel(nn.Module):
         x: Tensor,
         t: Tensor,
         cap_feats: Tensor,
-        return_dict: bool = True,
+        return_dict: bool = False,
     ):
         # Wrap single tensors into lists for internal batch processing
         # For now, we only support batch_size=1
@@ -884,6 +884,6 @@ class ZImageTransformer2DModel(nn.Module):
         x = x[0]
 
         if not return_dict:
-            return (x,)
+            return (x,)[0]
 
         return Transformer2DModelOutput(sample=x)
