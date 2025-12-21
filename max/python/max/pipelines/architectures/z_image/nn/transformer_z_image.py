@@ -497,11 +497,11 @@ class ZImageTransformer2DModel(nn.Module):
 
     def unpatchify(
         self,
-        x: List[Tensor],
-        size: List[Tuple],
+        x: list[Tensor],
+        size: list[Tuple],
         patch_size: int,
         f_patch_size: int,
-    ) -> List[Tensor]:
+    ) -> list[Tensor]:
         pH = pW = patch_size
         pF = f_patch_size
         bsz = len(x)
@@ -548,8 +548,8 @@ class ZImageTransformer2DModel(nn.Module):
 
     def patchify_and_embed(
         self,
-        all_image: List[Tensor],
-        all_cap_feats: List[Tensor],
+        all_image: list[Tensor],
+        all_cap_feats: list[Tensor],
         patch_size: int,
         f_patch_size: int,
     ) -> Tuple[
@@ -713,11 +713,16 @@ class ZImageTransformer2DModel(nn.Module):
 
     def __call__(
         self,
-        x: List[Tensor],
+        x: Tensor,
         t: Tensor,
-        cap_feats: List[Tensor],
+        cap_feats: Tensor,
         return_dict: bool = True,
     ):
+        # Wrap single tensors into lists for internal batch processing
+        # For now, we only support batch_size=1
+        x = [x]
+        cap_feats = [cap_feats]
+
         patch_size: int = 2
         f_patch_size: int = 1
         if patch_size not in self.all_patch_size:
@@ -725,7 +730,7 @@ class ZImageTransformer2DModel(nn.Module):
         if f_patch_size not in self.all_f_patch_size:
             raise ValueError(f"f_patch_size must be in {self.all_f_patch_size}")
 
-        bsz = len(x)
+        bsz = len(x)  # Will be 1 for now
         device = x[0].device
         t = t * self.t_scale
         t = self.t_embedder(t)
@@ -874,6 +879,9 @@ class ZImageTransformer2DModel(nn.Module):
             for t in F.split(unified, [1] * int(unified.shape[0]), axis=0)
         ]
         x = self.unpatchify(unified, x_size, patch_size, f_patch_size)
+
+        # Unwrap list for single tensor output (batch_size=1)
+        x = x[0]
 
         if not return_dict:
             return (x,)
