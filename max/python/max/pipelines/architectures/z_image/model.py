@@ -616,13 +616,13 @@ class ZImageModel(
             weights=decoder_weights,
         )
 
-        hidden_states_type = list[
+        hidden_states_type = [
             TensorType(
                 DType.bfloat16, shape=(16, 1, 128, 128), device=device_ref
             )
         ]
         t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
-        cap_feats_type = list[
+        cap_feats_type = [
             TensorType(DType.bfloat16, shape=(101, 2560), device=device_ref)
         ]
         return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
