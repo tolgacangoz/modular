@@ -601,11 +601,19 @@ class ZImageModel(
         sample_type = TensorType(
             DType.bfloat16, shape=(1, 16, 128, 128), device=device_ref
         )
-        return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
+
+        # Strip 'decoder.' prefix from VAE weights for the Decoder module.
+        # The safetensors file has keys like 'decoder.conv_in.weight' but the
+        # Decoder module's parameters are named 'conv_in.weight'.
+        decoder_weights: dict[str, WeightData] = {
+            key.removeprefix("decoder."): value
+            for key, value in vae_state_dict.items()
+            if key.startswith("decoder.")
+        }
+
         compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
-            return_dict_type,
-            weights=vae_state_dict,
+            weights=decoder_weights,
         )
 
         hidden_states_type = list[
@@ -622,7 +630,7 @@ class ZImageModel(
             hidden_states_type,
             t_type,
             cap_feats_type,
-            return_dict_type,
+            # return_dict_type,
             weights=transformer_state_dict,
         )
 
