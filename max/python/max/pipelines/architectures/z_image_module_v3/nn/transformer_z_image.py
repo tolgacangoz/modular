@@ -170,14 +170,14 @@ class ZImageSingleStreamAttention(nn.Module):
             key = apply_rotary_emb(key, freqs_cis)
 
         # Compute joint attention
+        # Note: For batch size 1 testing, we skip valid_length.
+        # TODO: Add valid_length support for batched inference with padding.
         attn_out = flash_attention_gpu(
            query,
            key,
            value,
            MHAMaskVariant.NULL_MASK,
            self.scale,
-           -1,  # local_window_size, -1 means no sliding window
-           attention_mask,  # valid_length
         )
 
         # attn_out: (B, S, H, D) -> (B, S, H*D)
@@ -234,7 +234,7 @@ class ZImageTransformerBlock(nn.Module):
     def __call__(
         self,
         x: Tensor,
-        valid_length: Tensor,
+        valid_length: Tensor | None,
         freqs_cis: Tensor,
         adaln_input: Tensor | None = None,
     ) -> Tensor:
