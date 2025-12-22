@@ -525,23 +525,23 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        compiled_vae_decode_model = self.model.vae.decoder.compile(
-            sample_type,
-            weights=decoder_weights,
-        )
+        # compiled_vae_decode_model = self.model.vae.decoder.compile(
+        #     sample_type,
+        #     weights=decoder_weights,
+        # )
 
         # TODO: Fix transformer bmm kernel rank mismatch before enabling
-        # hidden_states_type = TensorType(DType.bfloat16, shape=(16, 1, 128, 128), device=device_ref)
-        # t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
-        # cap_feats_type = TensorType(DType.bfloat16, shape=(101, 2560), device=device_ref)
-        # return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
-        # compiled_transformer_model = self.model.transformer.compile(
-        #     hidden_states_type,
-        #     t_type,
-        #     cap_feats_type,
-        #     # return_dict_type,
-        #     weights=transformer_state_dict,
-        # )
+        hidden_states_type = TensorType(DType.bfloat16, shape=(16, 1, 128, 128), device=device_ref)
+        t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
+        cap_feats_type = TensorType(DType.bfloat16, shape=(101, 2560), device=device_ref)
+        return_dict_type = TensorType(DType.bool, shape=[], device=device_ref)
+        compiled_transformer_model = self.model.transformer.compile(
+            hidden_states_type,
+            t_type,
+            cap_feats_type,
+            # return_dict_type,
+            weights=transformer_state_dict,
+        )
         compiled_transformer_model = None  # Placeholder for now
 
         logger.info("Building and compiling text encoder...")
