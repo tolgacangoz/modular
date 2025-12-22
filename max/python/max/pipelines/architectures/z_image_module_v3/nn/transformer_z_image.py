@@ -22,7 +22,10 @@ from max.driver import Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
+from max.nn.kernels import flash_attention_gpu
+from max.nn.attention.mask_config import MHAMaskVariant
 
+flash_attention_gpu = F.functional(flash_attention_gpu)
 from .layers import (
     LayerNorm,
     ModuleDict,
@@ -136,9 +139,9 @@ class ZImageSingleStreamAttention(nn.Module):
             hidden_states = hidden_states.reshape([B, S, C])
 
         B, S, _ = hidden_states.shape
-        query = query.reshape((B, S, self.heads, self.head_dim)).transpose(1, 2)
-        key = key.reshape((B, S, self.heads, self.head_dim)).transpose(1, 2)
-        value = value.reshape((B, S, self.heads, self.head_dim)).transpose(1, 2)
+        query = query.reshape((B, S, self.heads, self.head_dim))
+        key = key.reshape((B, S, self.heads, self.head_dim))
+        value = value.reshape((B, S, self.heads, self.head_dim))
 
         # Apply norms
         query = self.norm_q(query)
@@ -147,14 +150,14 @@ class ZImageSingleStreamAttention(nn.Module):
         # Apply RoPE
         # TODO: Verify this implementation
         def apply_rotary_emb(x_in: Tensor, freqs_cis: Tensor) -> Tensor:
-            # x_in shape: (B, H, S, D)
+            # x_in shape: (B, S, H, D)
             # Reshape for complex interpretation: [..., head_dim] -> [..., head_dim/2, 2]
             target_shape = list(x_in.shape[:-1]) + [-1, 2]
             x_complex = x_in.cast(DType.float32).reshape(target_shape)
             # x_reshaped is already [..., 2] so no need for as_interleaved_complex
             freqs_cis_expanded = F.unsqueeze(
-                freqs_cis, 1
-            )  # Expand at dim 1 (heads) to broadcast: (B, 1, S, D, 2)
+                freqs_cis, 2
+            )  # Expand at dim 2 (heads) to broadcast: (B, S, 1, D/2, 2)
 
             # Apply complex multiplication
             x_rotated = F.complex_mul(x_complex, freqs_cis_expanded)
@@ -166,56 +169,19 @@ class ZImageSingleStreamAttention(nn.Module):
             query = apply_rotary_emb(query, freqs_cis)
             key = apply_rotary_emb(key, freqs_cis)
 
-        # From [batch, seq_len] to [batch, 1, 1, seq_len] -> broadcast to [batch, heads, seq_len, seq_len]
-        if attention_mask is not None and attention_mask.rank == 2:
-            attention_mask = attention_mask[:, None, None, :]
-
         # Compute joint attention
-        # attn_out = flash_attention_gpu(
-        #    query,
-        #    key,
-        #    value,
-        #    attention_mask,
-        #    self.scale,
-        # )
-        # hidden_states = hidden_states.flatten(2, 3)
-        # Manual attention implementation for CPU compatibility
-        # query, key, value shape: (B, H, S, D) - permuted previously to be (B, H, S, D) for flash_attn
-        # But for matmul we want:
-        # Q: (B, H, S, D)
-        # K: (B, H, S, D) -> K.T (last 2 dims): (B, H, D, S)
-        # attn = (Q @ K.T) * scale
-
-        attn_scores = F.matmul(query, key.transpose(-1, -2)) * self.scale
-
-        if attention_mask is not None:
-            # Mask is (B, 1, 1, S) broadcasted to (B, H, S, S)
-            # Apply mask (assuming additive mask where False/0 means mask out?)
-            # Usually attention_mask in diffusers is 1 for keep, 0 for discard?
-            # Function create_attention_mask returns boolean.
-            # We need to fill -inf where mask is False.
-            # F.where(mask, attn_scores, -inf)
-
-            # Check mask type. `create_attention_mask` returns boolean tensor (True for valid).
-            # So we keep where True.
-            min_val = -1e9  # -inf proxy
-            if attention_mask.dtype == DType.bool:
-                attn_scores = F.where(attention_mask, attn_scores, min_val)
-            else:
-                # If float mask (additive), adds directly. But here we assume boolean based on usage.
-                pass
-
-        attn_probs = F.softmax(attn_scores, axis=-1)
-        attn_out = F.matmul(
-            attn_probs, value
-        )  # (B, H, S, S) @ (B, H, S, D) -> (B, H, S, D)
-
-        # attn_out is (B, H, S, D).
-        # We need to match the next steps which expect (B, H, S, D) and then flatten.
-        # attn_out: (B, H, S, D) -> (B, S, H, D) -> (B, S, H*D)
-        hidden_states = F.flatten(
-            attn_out.transpose(1, 2), start_dim=2, end_dim=3
+        attn_out = flash_attention_gpu(
+           query,
+           key,
+           value,
+           MHAMaskVariant.NULL_MASK,
+           self.scale,
+           -1,  # local_window_size, -1 means no sliding window
+           attention_mask,  # valid_length
         )
+
+        # attn_out: (B, S, H, D) -> (B, S, H*D)
+        hidden_states = F.reshape(attn_out, shape=[B, S, -1])
         hidden_states = hidden_states.cast(query.dtype)
 
         output = self.to_out(hidden_states)
@@ -268,7 +234,7 @@ class ZImageTransformerBlock(nn.Module):
     def __call__(
         self,
         x: Tensor,
-        attn_mask: Tensor,
+        valid_length: Tensor,
         freqs_cis: Tensor,
         adaln_input: Tensor | None = None,
     ) -> Tensor:
@@ -284,7 +250,7 @@ class ZImageTransformerBlock(nn.Module):
             # Attention block
             attn_out = self.attention(
                 self.attention_norm1(x) * scale_msa,
-                attention_mask=attn_mask,
+                attention_mask=valid_length,
                 freqs_cis=freqs_cis,
             )
             x = x + gate_msa * self.attention_norm2(attn_out)
@@ -297,7 +263,7 @@ class ZImageTransformerBlock(nn.Module):
             # Attention block
             attn_out = self.attention(
                 self.attention_norm1(x),
-                attention_mask=attn_mask,
+                attention_mask=valid_length,
                 freqs_cis=freqs_cis,
             )
             x = x + self.attention_norm2(attn_out)
@@ -781,16 +747,12 @@ class ZImageTransformer2DModel(nn.Module):
         # Clarify the length matches to satisfy Dynamo due to "Symbolic Shape Inference" to avoid compilation errors
         x_freqs_cis = x_freqs_cis[:, : x.shape[1]]
 
-        # x_attn_mask = Tensor.zeros((bsz, x_max_item_seqlen), dtype=DType.bool, device=device)
-        # for i, seq_len in enumerate(x_item_seqlens):
-        #    x_attn_mask[i, :seq_len] = 1
-        # Use functional attention mask construction (immutable tensor compatible)
-        x_attn_mask = create_attention_mask(
-            bsz, x_max_item_seqlen, x_item_seqlens
+        x_valid_length = Tensor.constant(
+            x_item_seqlens, dtype=DType.uint32, device=device
         )
 
         for layer in self.noise_refiner:
-            x = layer(x, x_attn_mask, x_freqs_cis, adaln_input)
+            x = layer(x, x_valid_length, x_freqs_cis, adaln_input)
 
         # cap embed & refine
         cap_item_seqlens = [int(_.shape[0]) for _ in cap_feats]
@@ -826,13 +788,12 @@ class ZImageTransformer2DModel(nn.Module):
         # cap_attn_mask = Tensor.zeros((bsz, cap_max_item_seqlen), dtype=DType.bool, device=device)
         # for i, seq_len in enumerate(cap_item_seqlens):
         #    cap_attn_mask[i, :seq_len] = 1
-        # Use functional attention mask construction (immutable tensor compatible)
-        cap_attn_mask = create_attention_mask(
-            bsz, cap_max_item_seqlen, cap_item_seqlens
+        cap_valid_length = Tensor.constant(
+            cap_item_seqlens, dtype=DType.uint32, device=device
         )
 
         for layer in self.context_refiner:
-            cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
+            cap_feats = layer(cap_feats, cap_valid_length, cap_freqs_cis)
 
         # unified
         unified = []
@@ -858,17 +819,16 @@ class ZImageTransformer2DModel(nn.Module):
         unified_freqs_cis = pad_sequence(
             unified_freqs_cis, batch_first=True, padding_value=0.0
         )
-        # unified_attn_mask = Tensor.zeros((bsz, unified_max_item_seqlen), dtype=DType.bool, device=device)
-        # for i, seq_len in enumerate(unified_item_seqlens):
-        #    unified_attn_mask[i, :seq_len] = 1
-        # Use functional attention mask construction (immutable tensor compatible)
-        unified_attn_mask = create_attention_mask(
-            bsz, unified_max_item_seqlen, unified_item_seqlens
+        unified_valid_length = Tensor.constant(
+            unified_item_seqlens, dtype=DType.uint32, device=device
         )
 
         for layer in self.layers:
             unified = layer(
-                unified, unified_attn_mask, unified_freqs_cis, adaln_input
+                unified,
+                unified_valid_length,
+                unified_freqs_cis,
+                adaln_input,
             )
 
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](
