@@ -306,7 +306,6 @@ class RopeEmbedder(nn.Module):
         theta: float = 256.0,
         axes_dims: Sequence[int] = (16, 56, 56),
         axes_lens: Sequence[int] = (64, 128, 128),
-        device: Device | None = None,
     ):
         self.theta = theta
         self.axes_dims = tuple(axes_dims)
@@ -319,13 +318,13 @@ class RopeEmbedder(nn.Module):
         # Pre-compute freqs_cis for each axis and store as module attributes
         # This avoids runtime list building and conditional state mutation
         self._freqs_cis_0 = self._precompute_single_axis(
-            axes_dims[0], axes_lens[0], theta, device
+            axes_dims[0], axes_lens[0], theta
         )
         self._freqs_cis_1 = self._precompute_single_axis(
-            axes_dims[1], axes_lens[1], theta, device
+            axes_dims[1], axes_lens[1], theta
         )
         self._freqs_cis_2 = self._precompute_single_axis(
-            axes_dims[2], axes_lens[2], theta, device
+            axes_dims[2], axes_lens[2], theta
         )
 
     @staticmethod
@@ -333,20 +332,20 @@ class RopeEmbedder(nn.Module):
         dim: int,
         end: int,
         theta: float,
-        device: Device | None,
     ) -> Tensor:
         """Precompute freqs_cis for a single axis."""
         freqs = 1.0 / (
             theta
-            ** (F.range(0, dim, 2, dtype=DType.float64, device=device) / dim)
+            ** (F.range(0, dim, 2, dtype=DType.float64) / dim)
         )
-        timestep = F.range(0, end, dtype=DType.float64, device=device)
+        timestep = F.range(0, end, dtype=DType.float64)
         angles = F.outer(timestep, freqs).cast(DType.float32)
         # Create complex representation [real, imag]
         freqs_cos = F.cos(angles)
         freqs_sin = F.sin(angles)
         freqs_cis = F.stack([freqs_cos, freqs_sin], axis=-1)
         return freqs_cis
+
 
     def __call__(self, ids: Tensor) -> Tensor:
         """Graph-compilable forward pass.
