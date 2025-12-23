@@ -307,6 +307,7 @@ class RopeEmbedder(nn.Module):
         theta: float = 256.0,
         axes_dims: Sequence[int] = (16, 56, 56),
         axes_lens: Sequence[int] = (64, 128, 128),
+        device: Device | None = None,
     ):
         self.theta = theta
         self.axes_dims = tuple(axes_dims)
@@ -316,16 +317,19 @@ class RopeEmbedder(nn.Module):
                 "axes_dims and axes_lens must have the same length"
             )
 
+        # Use provided device or default to CPU
+        target_device = device if device is not None else CPU()
+
         # Pre-compute freqs_cis for each axis and store as module attributes
         # This avoids runtime list building and conditional state mutation
         self._freqs_cis_0 = self._precompute_single_axis(
-            axes_dims[0], axes_lens[0], theta
+            axes_dims[0], axes_lens[0], theta, target_device
         )
         self._freqs_cis_1 = self._precompute_single_axis(
-            axes_dims[1], axes_lens[1], theta
+            axes_dims[1], axes_lens[1], theta, target_device
         )
         self._freqs_cis_2 = self._precompute_single_axis(
-            axes_dims[2], axes_lens[2], theta
+            axes_dims[2], axes_lens[2], theta, target_device
         )
 
     @staticmethod
@@ -333,15 +337,14 @@ class RopeEmbedder(nn.Module):
         dim: int,
         end: int,
         theta: float,
+        device: Device,
     ) -> Tensor:
-        """Precompute freqs_cis for a single axis."""
-        # Use CPU device for precomputation; tensors moved to GPU in __call__
-        cpu_device = CPU()
+        """Precompute freqs_cis for a single axis on the specified device."""
         freqs = 1.0 / (
             theta
-            ** (F.range(0, dim, 2, dtype=DType.float64, device=cpu_device) / dim)
+            ** (F.range(0, dim, 2, dtype=DType.float64, device=device) / dim)
         )
-        timestep = F.range(0, end, dtype=DType.float64, device=cpu_device)
+        timestep = F.range(0, end, dtype=DType.float64, device=device)
         angles = F.outer(timestep, freqs).cast(DType.float32)
         # Create complex representation [real, imag]
         freqs_cos = F.cos(angles)
@@ -395,6 +398,7 @@ class ZImageTransformer2DModel(nn.Module):
         t_scale: float = 1000.0,
         axes_dims: Sequence[int] = [32, 48, 48],
         axes_lens: Sequence[int] = [1024, 512, 512],
+        device: Device | None = None,
     ) -> None:
         self.in_channels = in_channels
         self.out_channels = in_channels
@@ -477,7 +481,7 @@ class ZImageTransformer2DModel(nn.Module):
         self.axes_dims = axes_dims
         self.axes_lens = axes_lens
 
-        self.rope_embedder = RopeEmbedder(rope_theta, axes_dims, axes_lens)
+        self.rope_embedder = RopeEmbedder(rope_theta, axes_dims, axes_lens, device)
 
         # Fixed shape parameters for graph compilation (batch_size=1, 1024x1024 output)
         # These avoid int(tensor.shape) during graph tracing

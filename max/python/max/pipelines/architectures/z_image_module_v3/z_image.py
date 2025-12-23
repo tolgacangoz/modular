@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from max.driver import Device
 from max.nn.module_v3 import Module
 
 from .model_config import ZImageConfig
@@ -30,8 +31,9 @@ from .scheduling_flow_match_euler_discrete import (
 class ZImage(Module):
     """The overall interface to the ZImage model."""
 
-    def __init__(self, config: ZImageConfig) -> None:
+    def __init__(self, config: ZImageConfig, device: Device | None = None) -> None:
         self.config = config
+        self.device = device
         self.scheduler = self.build_scheduler()
         self.vae = self.build_vae()
         self.text_encoder = self.build_text_encoder()
@@ -53,9 +55,11 @@ class ZImage(Module):
 
     def build_transformer(self) -> ZImageTransformer2DModel:
         """Build the transformer component."""
-        return ZImageTransformer2DModel(
-            **asdict(self.config.transformer_config)
-        )
+        # Pass device for RoPE precomputation on GPU
+        transformer_kwargs = asdict(self.config.transformer_config)
+        transformer_kwargs["device"] = self.device
+        return ZImageTransformer2DModel(**transformer_kwargs)
+
 
     def __call__(self, *args, **kwargs):
         """This class is not meant to be called directly. Use the component models instead."""

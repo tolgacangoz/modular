@@ -491,7 +491,9 @@ class ZImageModel(
             raise ValueError("Model config must be initialized")
 
         # Instantiate ZImage container to build sub-models
-        self.model: Module = ZImage(self.model_config)
+        # Pass device for RoPE embedding precomputation on GPU
+        device0 = list(self.devices.values())[0][0]
+        self.model: Module = ZImage(self.model_config, device=device0)
 
         graph_inputs = self.model.text_encoder.input_types(
             self.model.text_encoder.kv_params
