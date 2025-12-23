@@ -19,7 +19,7 @@ from typing import Tuple
 
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
-from max.driver import Device
+from max.driver import CPU, Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
@@ -334,11 +334,13 @@ class RopeEmbedder(nn.Module):
         theta: float,
     ) -> Tensor:
         """Precompute freqs_cis for a single axis."""
+        # Use CPU device for precomputation; tensors moved to GPU in __call__
+        cpu_device = CPU()
         freqs = 1.0 / (
             theta
-            ** (F.range(0, dim, 2, dtype=DType.float64) / dim)
+            ** (F.range(0, dim, 2, dtype=DType.float64, device=cpu_device) / dim)
         )
-        timestep = F.range(0, end, dtype=DType.float64)
+        timestep = F.range(0, end, dtype=DType.float64, device=cpu_device)
         angles = F.outer(timestep, freqs).cast(DType.float32)
         # Create complex representation [real, imag]
         freqs_cos = F.cos(angles)
