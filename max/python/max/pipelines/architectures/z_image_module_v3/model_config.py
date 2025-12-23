@@ -417,7 +417,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         )
 
         # Create Qwen3Config for the text encoder
-        # Use ReturnHiddenStates.ALL_LAYERS so we can extract hidden_states[-2]
+        # Use ReturnHiddenStates.SECOND_TO_LAST to get hidden_states[-2]
         # (second-to-last layer) for Z-Image conditioning - matching diffusers behavior
         from max.nn import ReturnHiddenStates
         text_encoder_config = Qwen3Config.generate(
@@ -429,7 +429,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
             cache_dtype,
             kv_cache_config,
             return_logits,
-            return_hidden_states=ReturnHiddenStates.ALL_LAYERS,
+            return_hidden_states=ReturnHiddenStates.SECOND_TO_LAST,
         )
 
         # Create TransformerConfig for the backbone of the pipeline

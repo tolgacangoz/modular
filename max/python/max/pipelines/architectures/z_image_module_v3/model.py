@@ -578,13 +578,9 @@ class ZImageModel(
     ) -> Graph:
         """Build the MAX graph for the text encoder.
 
-        Uses native Qwen3 with return_hidden_states=ALL_LAYERS configured in
-        model_config.py. The output tuple structure is:
-        - (last_logits, stacked_hidden_states) for ReturnLogits.LAST_TOKEN
-
-        stacked_hidden_states has shape (num_layers, seq_len, hidden_size).
-        We extract hidden_states[-2] for the second-to-last layer output,
-        matching diffusers' text encoder behavior.
+        Uses native Qwen3 with return_hidden_states=SECOND_TO_LAST configured in
+        model_config.py. SECOND_TO_LAST returns the second-to-last layer's hidden
+        states directly (matching diffusers' hidden_states[-2] pattern).
 
         Args:
             graph_inputs: Tuple of TensorType defining the graph inputs.
@@ -603,21 +599,18 @@ class ZImageModel(
                 lookup_table=kv_cache_inputs[2].tensor,
                 max_lengths=kv_cache_inputs[3].tensor,
             )
-            # Qwen3 with ReturnHiddenStates.ALL_LAYERS returns
-            # (logits, stacked_hidden_states) where stacked_hidden_states
-            # has shape (num_layers, seq_len, hidden_size)
+            # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST returns
+            # (logits, second_to_last_hidden_states) directly
             outputs = self.model.text_encoder(
                 tokens.tensor,
                 kv_collection,
                 return_n_logits.tensor,
                 input_row_offsets.tensor,
             )
-            # Extract stacked hidden states (last element of output tuple)
-            stacked_hidden_states = outputs[-1]
-            # Get second-to-last layer output: hidden_states[-2]
+            # Extract second-to-last hidden states (last element of output tuple)
             # Shape: (seq_len, hidden_size)
-            second_to_last = stacked_hidden_states[-2]
-            graph.output(second_to_last)
+            hidden_states = outputs[-1]
+            graph.output(hidden_states)
             return graph
 
     def encode_prompt(

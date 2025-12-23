@@ -86,9 +86,9 @@ class ReturnHiddenStates(str, Enum):
     ALL = "all"
     LAST_NORMALIZED = "last_normalized"
     ALL_NORMALIZED = "all_normalized"
-    # Returns hidden states from ALL layers stacked as (num_layers, seq_len, hidden_size)
-    # This enables indexing like hidden_states[-2] for diffusion model text encoders
-    ALL_LAYERS = "all_layers"
+    # Returns hidden states from the second-to-last layer
+    # This matches diffusers' hidden_states[-2] pattern for text encoders
+    SECOND_TO_LAST = "second_to_last"
 
 
 Block = TypeVar("Block", bound=Module, covariant=True)
@@ -135,11 +135,10 @@ class Transformer(Module):
     ) -> tuple[TensorValue, ...]:
         freqs_cis = self.rope.freqs_cis
 
-        # Collect per-layer hidden states if ALL_LAYERS is requested
-        collect_all_layers = (
-            self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS
-        )
-        all_layer_hidden_states: list[TensorValue] = []
+        # For SECOND_TO_LAST mode, we track the second-to-last layer output specifically
+        # This is more efficient than collecting all layers and stacking
+        second_to_last_layer_idx = len(self.layers) - 2
+        second_to_last_h: TensorValue | None = None
 
         for idx, layer in enumerate(self.layers):
             h = layer(
@@ -149,8 +148,10 @@ class Transformer(Module):
                 freqs_cis=freqs_cis,
                 input_row_offsets=input_row_offsets,
             )
-            if collect_all_layers:
-                all_layer_hidden_states.append(h)
+            # Capture second-to-last layer output
+            if (self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST
+                and idx == second_to_last_layer_idx):
+                second_to_last_h = h
 
         # Retrieve a variable number of tokens
         last_h = ops.gather(h, input_row_offsets[1:] - 1, axis=0)
@@ -205,11 +206,11 @@ class Transformer(Module):
             ret_val += (self.norm(h),)
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
-        elif self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS:
-            # Stack all layer hidden states: (num_layers, seq_len, hidden_size)
-            # This enables indexing like hidden_states[-2] for second-to-last layer
-            stacked_hidden_states = ops.stack(all_layer_hidden_states, axis=0)
-            ret_val += (stacked_hidden_states,)
+        elif self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST:
+            # Return second-to-last layer hidden states directly
+            # This matches diffusers' hidden_states[-2] pattern for text encoders
+            assert second_to_last_h is not None, "second_to_last_h should be set"
+            ret_val += (second_to_last_h,)
 
         return ret_val
 
