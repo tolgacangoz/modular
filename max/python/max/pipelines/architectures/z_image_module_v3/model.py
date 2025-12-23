@@ -530,7 +530,7 @@ class ZImageModel(
         #     weights=decoder_weights,
         # )
 
-        # Shape constants for compilation - must match input TensorTypes
+        # Shape constants for compilation - must match transformer._compile_* attributes
         C, F_dim, H_dim, W_dim = 16, 1, 128, 128
         cap_seq_len = 101
 
@@ -541,14 +541,10 @@ class ZImageModel(
             hidden_states_type,
             t_type,
             cap_feats_type,
-            C,          # Pass shape params to avoid int(tensor.shape) in forward
-            F_dim,
-            H_dim,
-            W_dim,
-            cap_seq_len,
             weights=transformer_state_dict,
         )
         # compiled_transformer_model = None  # Placeholder for now
+
 
 
         logger.info("Building and compiling text encoder...")

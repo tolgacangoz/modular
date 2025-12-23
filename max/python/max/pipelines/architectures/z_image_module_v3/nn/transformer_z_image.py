@@ -474,6 +474,14 @@ class ZImageTransformer2DModel(nn.Module):
 
         self.rope_embedder = RopeEmbedder(rope_theta, axes_dims, axes_lens)
 
+        # Fixed shape parameters for graph compilation (batch_size=1, 1024x1024 output)
+        # These avoid int(tensor.shape) during graph tracing
+        self._compile_C = 16
+        self._compile_F_dim = 1
+        self._compile_H_dim = 128
+        self._compile_W_dim = 128
+        self._compile_cap_seq_len = 101
+
     def unpatchify(
         self,
         x: list[Tensor],
@@ -714,25 +722,26 @@ class ZImageTransformer2DModel(nn.Module):
         x: Tensor,
         t: Tensor,
         cap_feats: Tensor,
-        # Shape parameters - provided at compile time to avoid int(tensor.shape)
-        # during graph tracing. For batch_size=1 compile with:
-        #   C=16, F_dim=1, H_dim=128, W_dim=128, cap_seq_len=101
-        C: int = 16,
-        F_dim: int = 1,
-        H_dim: int = 128,
-        W_dim: int = 128,
-        cap_seq_len: int = 101,
         return_dict: bool = False,
     ):
         """Graph-compilable forward pass for batch_size=1.
+
+        Uses fixed shape parameters stored in self._compile_* attributes
+        to avoid int(tensor.shape) during graph tracing.
 
         Args:
             x: Image latent tensor of shape (C, F_dim, H_dim, W_dim)
             t: Timestep tensor of shape (1,)
             cap_feats: Caption features tensor of shape (cap_seq_len, hidden_dim)
-            C, F_dim, H_dim, W_dim, cap_seq_len: Shape parameters passed at compile time
             return_dict: Whether to return a dict (default False for compilation)
         """
+        # Use fixed shape parameters from class attributes
+        C = self._compile_C
+        F_dim = self._compile_F_dim
+        H_dim = self._compile_H_dim
+        W_dim = self._compile_W_dim
+        cap_seq_len = self._compile_cap_seq_len
+
         patch_size: int = 2
         f_patch_size: int = 1
 
@@ -743,10 +752,11 @@ class ZImageTransformer2DModel(nn.Module):
         t = self.t_embedder(t)
         adaln_input = t.cast(x.dtype)
 
-        # Patchify image - using passed shape parameters (no int() on tensor.shape)
+        # Patchify image - using class shape parameters (no int() on tensor.shape)
         pF, pH, pW = f_patch_size, patch_size, patch_size
         x_size = (F_dim, H_dim, W_dim)
         F_tokens, H_tokens, W_tokens = F_dim // pF, H_dim // pH, W_dim // pW
+
 
         # Reshape to patches: (C, F, H, W) -> (F_tokens * H_tokens * W_tokens, pF * pH * pW * C)
         x = x.reshape((C, F_tokens, pF, H_tokens, pH, W_tokens, pW))
