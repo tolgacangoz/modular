@@ -55,7 +55,6 @@ from .model_config import ZImageConfig
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.image_processor import VaeImageProcessor
 from .nn.transformer_z_image import ZImageTransformer2DModel
-from .qwen3_encoder import Qwen3Encoder
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
@@ -254,7 +253,7 @@ class ZImageModel(
     vae: AutoencoderKL
     """The VAE to be used for image generation."""
 
-    text_encoder: Qwen3Encoder
+    text_encoder: ?
     """The text encoder to be used for image generation."""
 
     transformer: ZImageTransformer2DModel
@@ -452,7 +451,7 @@ class ZImageModel(
 
         # Apply the architecture weight adapter (if any) only to the text encoder
         # subset. For Z-Image this maps Qwen3-VL style names to the expected
-        # Qwen3Encoder format.
+        # ? format.
         if self.adapter:
             text_encoder_llm_state_dict: dict[str, WeightData] = self.adapter(
                 text_encoder_weights,

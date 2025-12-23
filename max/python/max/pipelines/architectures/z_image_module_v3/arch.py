@@ -26,7 +26,6 @@ from max.pipelines.lib import (
 from .model import ZImageModel
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.transformer_z_image import ZImageTransformer2DModel
-from .qwen3_encoder import Qwen3Encoder
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
@@ -41,7 +40,7 @@ z_image_arch = SupportedArchitecture(
     pipeline_model=ZImageModel,
     scheduler=FlowMatchEulerDiscreteScheduler,
     vae=AutoencoderKL,
-    text_encoder=Qwen3Encoder,
+    text_encoder=?,
     tokenizer=TextTokenizer,
     transformer=ZImageTransformer2DModel,
     context_type=TextContext,
