@@ -297,11 +297,17 @@ class FinalLayer(nn.Module):
 
 
 class RopeEmbedder(nn.Module):
-    """Graph-compilable RoPE embedder.
+    """Graph-compilable RoPE embedder following GPT-OSS pattern.
 
-    Uses @cached_property pattern for lazy computation during graph tracing.
-    This avoids synchronous tensor operations during module initialization.
+    Uses class-level `_freqs_cis_*: Tensor | None = None` with lazy
+    initialization in `*_base()` methods.
     """
+
+    # Class-level attributes for lazy-initialized freqs_cis tensors
+    _freqs_cis_0: Tensor | None = None
+    _freqs_cis_1: Tensor | None = None
+    _freqs_cis_2: Tensor | None = None
+
 
     def __init__(
         self,
@@ -337,28 +343,39 @@ class RopeEmbedder(nn.Module):
         freqs_cis = F.stack([freqs_cos, freqs_sin], axis=-1)
         return freqs_cis
 
-    @cached_property
-    def freqs_cis_0(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 0."""
-        return self._compute_single_axis_freqs(self.axes_dims[0], self.axes_lens[0])
+    def freqs_cis_0_base(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 0. Follows GPT-OSS pattern."""
+        if self._freqs_cis_0 is None:
+            self._freqs_cis_0 = self._compute_single_axis_freqs(
+                self.axes_dims[0], self.axes_lens[0]
+            )
+        assert isinstance(self._freqs_cis_0, Tensor)
+        return self._freqs_cis_0
 
-    @cached_property
-    def freqs_cis_1(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 1."""
-        return self._compute_single_axis_freqs(self.axes_dims[1], self.axes_lens[1])
+    def freqs_cis_1_base(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 1. Follows GPT-OSS pattern."""
+        if self._freqs_cis_1 is None:
+            self._freqs_cis_1 = self._compute_single_axis_freqs(
+                self.axes_dims[1], self.axes_lens[1]
+            )
+        assert isinstance(self._freqs_cis_1, Tensor)
+        return self._freqs_cis_1
 
-    @cached_property
-    def freqs_cis_2(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 2."""
-        return self._compute_single_axis_freqs(self.axes_dims[2], self.axes_lens[2])
+    def freqs_cis_2_base(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 2. Follows GPT-OSS pattern."""
+        if self._freqs_cis_2 is None:
+            self._freqs_cis_2 = self._compute_single_axis_freqs(
+                self.axes_dims[2], self.axes_lens[2]
+            )
+        assert isinstance(self._freqs_cis_2, Tensor)
+        return self._freqs_cis_2
 
     @property
     def local_parameters(self) -> list[tuple[str, Tensor]]:
         """Override to return empty list.
 
-        This excludes freqs_cis tensors from being treated as model parameters
-        that need to be loaded from weight files. They are computed lazily
-        during graph tracing instead.
+        This excludes freqs_cis tensors from being treated as model parameters.
+        Following GPT-OSS pattern.
         """
         return []
 
@@ -373,14 +390,19 @@ class RopeEmbedder(nn.Module):
             RoPE embeddings of shape (seq_len, total_dim, 2) where total_dim
             is sum of axes_dims // 2.
         """
-        # Access freqs_cis via @cached_property - triggers lazy computation
-        # during graph tracing, not during __init__
-        result_0 = F.gather(self.freqs_cis_0, ids[:, 0], axis=0)
-        result_1 = F.gather(self.freqs_cis_1, ids[:, 1], axis=0)
-        result_2 = F.gather(self.freqs_cis_2, ids[:, 2], axis=0)
+        # Access freqs_cis via *_base() methods - lazy init during graph tracing
+        freqs_0 = self.freqs_cis_0_base()
+        freqs_1 = self.freqs_cis_1_base()
+        freqs_2 = self.freqs_cis_2_base()
+
+        # Gather embeddings for each axis using position indices
+        result_0 = F.gather(freqs_0, ids[:, 0], axis=0)
+        result_1 = F.gather(freqs_1, ids[:, 1], axis=0)
+        result_2 = F.gather(freqs_2, ids[:, 2], axis=0)
 
         # Concatenate along the dimension axis
         return F.concat([result_0, result_1, result_2], axis=1)
+
 
 
 
