@@ -492,7 +492,7 @@ class ZImageModel(
 
         # Instantiate ZImage container to build sub-models
         # Pass device for RoPE embedding precomputation on GPU
-        device0 = list(self.devices.values())[0][0]
+        device0 = self.devices[0]
         self.model: Module = ZImage(self.model_config, device=device0)
 
         graph_inputs = self.model.text_encoder.input_types(
