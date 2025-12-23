@@ -24,10 +24,10 @@ from max.driver import CPU, Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
-from max.nn.kernels import flash_attention_gpu
+from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.nn.attention.mask_config import MHAMaskVariant
 
-flash_attention_gpu = F.functional(flash_attention_gpu)
+flash_attention_gpu = F.functional(_flash_attention_gpu)
 from .layers import (
     LayerNorm,
     ModuleDict,
@@ -297,17 +297,11 @@ class FinalLayer(nn.Module):
 
 
 class RopeEmbedder(nn.Module):
-    """Graph-compilable RoPE embedder following GPT-OSS pattern.
+    """Graph-compilable RoPE embedder.
 
-    Uses class-level `_freqs_cis_*: Tensor | None = None` with lazy
-    initialization in `*_base()` methods.
+    Computes RoPE embeddings directly from position IDs.
+    Avoids F.gather by computing cos/sin directly from positions.
     """
-
-    # Class-level attributes for lazy-initialized freqs_cis tensors
-    _freqs_cis_0: Tensor | None = None
-    _freqs_cis_1: Tensor | None = None
-    _freqs_cis_2: Tensor | None = None
-
 
     def __init__(
         self,
@@ -325,83 +319,51 @@ class RopeEmbedder(nn.Module):
                 "axes_dims and axes_lens must have the same length"
             )
 
-    def _compute_single_axis_freqs(
-        self,
-        dim: int,
-        end: int,
-    ) -> Tensor:
-        """Compute freqs_cis for a single axis. Called during graph tracing."""
-        freqs = 1.0 / (
-            self.theta
-            ** (F.range(0, dim, 2, dtype=DType.float64, device=self.device) / dim)
-        )
-        timestep = F.range(0, end, dtype=DType.float64, device=self.device)
-        angles = F.outer(timestep, freqs).cast(DType.float32)
-        # Create complex representation [real, imag]
-        freqs_cos = F.cos(angles)
-        freqs_sin = F.sin(angles)
-        freqs_cis = F.stack([freqs_cos, freqs_sin], axis=-1)
-        return freqs_cis
-
-    def freqs_cis_0_base(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 0. Follows GPT-OSS pattern."""
-        if self._freqs_cis_0 is None:
-            self._freqs_cis_0 = self._compute_single_axis_freqs(
-                self.axes_dims[0], self.axes_lens[0]
-            )
-        assert isinstance(self._freqs_cis_0, Tensor)
-        return self._freqs_cis_0
-
-    def freqs_cis_1_base(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 1. Follows GPT-OSS pattern."""
-        if self._freqs_cis_1 is None:
-            self._freqs_cis_1 = self._compute_single_axis_freqs(
-                self.axes_dims[1], self.axes_lens[1]
-            )
-        assert isinstance(self._freqs_cis_1, Tensor)
-        return self._freqs_cis_1
-
-    def freqs_cis_2_base(self) -> Tensor:
-        """Lazily compute freqs_cis for axis 2. Follows GPT-OSS pattern."""
-        if self._freqs_cis_2 is None:
-            self._freqs_cis_2 = self._compute_single_axis_freqs(
-                self.axes_dims[2], self.axes_lens[2]
-            )
-        assert isinstance(self._freqs_cis_2, Tensor)
-        return self._freqs_cis_2
-
     @property
     def local_parameters(self) -> list[tuple[str, Tensor]]:
-        """Override to return empty list.
-
-        This excludes freqs_cis tensors from being treated as model parameters.
-        Following GPT-OSS pattern.
-        """
+        """Override to return empty list - no loadable parameters."""
         return []
 
+    def _compute_axis_rope(self, positions: Tensor, dim: int) -> Tensor:
+        """Compute RoPE embeddings for a single axis from position indices.
+
+        Args:
+            positions: Position indices tensor of shape (seq_len,)
+            dim: Dimension for this axis
+
+        Returns:
+            Tensor of shape (seq_len, dim // 2, 2) containing [cos, sin]
+        """
+        # Compute inverse frequencies for this axis
+        iota = F.range(0, dim, step=2, dtype=DType.float64, device=self.device)
+        inv_freq = F.cast(1.0 / (self.theta ** (iota / dim)), DType.float32)
+
+        # Compute angles: positions * inv_freq using outer product
+        pos_float = F.cast(positions, DType.float32)
+        angles = F.outer(pos_float, inv_freq)  # (seq_len, dim // 2)
+
+        # Stack cos and sin
+        freqs_cis = F.stack([F.cos(angles), F.sin(angles)], axis=-1)
+        return freqs_cis
+
     def __call__(self, ids: Tensor) -> Tensor:
-        """Graph-compilable forward pass.
+        """Compute RoPE embeddings from position IDs.
 
         Args:
             ids: Position IDs tensor of shape (seq_len, 3) where each column
                  corresponds to one axis.
 
         Returns:
-            RoPE embeddings of shape (seq_len, total_dim, 2) where total_dim
-            is sum of axes_dims // 2.
+            RoPE embeddings of shape (seq_len, total_dim // 2, 2)
         """
-        # Access freqs_cis via *_base() methods - lazy init during graph tracing
-        freqs_0 = self.freqs_cis_0_base()
-        freqs_1 = self.freqs_cis_1_base()
-        freqs_2 = self.freqs_cis_2_base()
-
-        # Gather embeddings for each axis using position indices
-        result_0 = F.gather(freqs_0, ids[:, 0], axis=0)
-        result_1 = F.gather(freqs_1, ids[:, 1], axis=0)
-        result_2 = F.gather(freqs_2, ids[:, 2], axis=0)
+        # Compute RoPE for each axis directly from position IDs
+        result_0 = self._compute_axis_rope(ids[:, 0], self.axes_dims[0])
+        result_1 = self._compute_axis_rope(ids[:, 1], self.axes_dims[1])
+        result_2 = self._compute_axis_rope(ids[:, 2], self.axes_dims[2])
 
         # Concatenate along the dimension axis
         return F.concat([result_0, result_1, result_2], axis=1)
+
 
 
 
