@@ -237,9 +237,9 @@ class ZImageTransformerBlock(nn.Module):
     def __call__(
         self,
         x: Tensor,
-        valid_length: Tensor | None,
         freqs_cis: Tensor,
         adaln_input: Tensor | None = None,
+        valid_length: Tensor | None = None,  # Always None for batch size 1
     ) -> Tensor:
         if self.modulation:
             if adaln_input is None:
@@ -806,11 +806,11 @@ class ZImageTransformer2DModel(nn.Module):
 
         # Noise refiner layers (process image patches)
         for layer in self.noise_refiner:
-            x = layer(x, None, x_freqs_cis, adaln_input)
+            x = layer(x, x_freqs_cis, adaln_input)
 
         # Context refiner layers (process caption)
         for layer in self.context_refiner:
-            cap_feats = layer(cap_feats, None, cap_freqs_cis)
+            cap_feats = layer(cap_feats, cap_freqs_cis)
 
         # Unified: concatenate image and caption features along sequence dimension
         # Shape: (1, image_seq_len + cap_seq_len, hidden_dim)
@@ -819,7 +819,7 @@ class ZImageTransformer2DModel(nn.Module):
 
         # Main transformer layers
         for layer in self.layers:
-            unified = layer(unified, None, unified_freqs_cis, adaln_input)
+            unified = layer(unified, unified_freqs_cis, adaln_input)
 
         # Final layer
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](

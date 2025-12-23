@@ -155,11 +155,12 @@ def test_transformer_block():
     start = time.perf_counter()
 
     try:
-        # NOTE: compile() can't handle None args, so we only pass required args.
-        # The full transformer test is more meaningful for the complete flow.
+        # ZImageTransformerBlock.__call__ signature (updated):
+        # x, freqs_cis, adaln_input=None, valid_length=None
         compiled = block.compile(
             x_type,
-            # Skip optional args
+            freqs_cis_type,
+            adaln_type,
         )
         elapsed = time.perf_counter() - start
         print(f"  SUCCESS! Compilation took {elapsed:.2f}s")
