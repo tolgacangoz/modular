@@ -98,8 +98,12 @@ class Qwen3Encoder(Qwen3):
         """
         freqs_cis = self.rope.freqs_cis
 
-        # Process through transformer layers, but stop at second-to-last
-        for idx, layer in enumerate(self.layers):
+        # Process through transformer layers up to second-to-last only.
+        # We use static slicing instead of early return to maintain
+        # static control flow required for graph compilation.
+        encoder_layers = self.layers[: self._encoder_output_layer_idx + 1]
+
+        for idx, layer in enumerate(encoder_layers):
             h = layer(
                 ops.constant(idx, DType.uint32, device=DeviceRef.CPU()),
                 h,
@@ -108,11 +112,6 @@ class Qwen3Encoder(Qwen3):
                 input_row_offsets=input_row_offsets,
             )
 
-            # Return hidden states after the second-to-last layer
-            if idx == self._encoder_output_layer_idx:
-                # Return the hidden states directly (no lm_head, no norm)
-                # Shape: (total_seq_len, hidden_size)
-                return (h,)
-
-        # Fallback: if we somehow get here (shouldn't happen), return last hidden states
+        # Return the hidden states from the second-to-last layer
+        # Shape: (total_seq_len, hidden_size)
         return (h,)
