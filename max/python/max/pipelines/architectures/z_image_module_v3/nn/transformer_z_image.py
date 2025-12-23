@@ -130,19 +130,15 @@ class ZImageSingleStreamAttention(nn.Module):
         key = self.to_k(hidden_states)
         value = self.to_v(hidden_states)
 
-        if hidden_states.rank > 3:
-            # Flatten spatial/sequence dimensions: (B, D1, D2, ..., C) -> (B, S, C)
-            B = hidden_states.shape[0]
-            C = hidden_states.shape[-1]
-            S = 1
-            for d in hidden_states.shape[1:-1]:
-                S *= int(d)
-            hidden_states = hidden_states.reshape([B, S, C])
+        # Z-Image always uses rank-3 inputs: (B, S, C)
+        # Get shapes using symbolic dimensions (graph-safe)
+        B = hidden_states.shape[0]
+        S = hidden_states.shape[1]
 
-        B, S, _ = hidden_states.shape
         query = query.reshape((B, S, self.heads, self.head_dim))
         key = key.reshape((B, S, self.heads, self.head_dim))
         value = value.reshape((B, S, self.heads, self.head_dim))
+
 
         # Apply norms
         query = self.norm_q(query)
@@ -718,8 +714,25 @@ class ZImageTransformer2DModel(nn.Module):
         x: Tensor,
         t: Tensor,
         cap_feats: Tensor,
+        # Shape parameters - provided at compile time to avoid int(tensor.shape)
+        # during graph tracing. For batch_size=1 compile with:
+        #   C=16, F_dim=1, H_dim=128, W_dim=128, cap_seq_len=101
+        C: int = 16,
+        F_dim: int = 1,
+        H_dim: int = 128,
+        W_dim: int = 128,
+        cap_seq_len: int = 101,
         return_dict: bool = False,
     ):
+        """Graph-compilable forward pass for batch_size=1.
+
+        Args:
+            x: Image latent tensor of shape (C, F_dim, H_dim, W_dim)
+            t: Timestep tensor of shape (1,)
+            cap_feats: Caption features tensor of shape (cap_seq_len, hidden_dim)
+            C, F_dim, H_dim, W_dim, cap_seq_len: Shape parameters passed at compile time
+            return_dict: Whether to return a dict (default False for compilation)
+        """
         patch_size: int = 2
         f_patch_size: int = 1
 
@@ -730,10 +743,8 @@ class ZImageTransformer2DModel(nn.Module):
         t = self.t_embedder(t)
         adaln_input = t.cast(x.dtype)
 
-        # Patchify image - inline for single sample
+        # Patchify image - using passed shape parameters (no int() on tensor.shape)
         pF, pH, pW = f_patch_size, patch_size, patch_size
-        C, F_dim, H_dim, W_dim = x.shape
-        C, F_dim, H_dim, W_dim = int(C), int(F_dim), int(H_dim), int(W_dim)
         x_size = (F_dim, H_dim, W_dim)
         F_tokens, H_tokens, W_tokens = F_dim // pF, H_dim // pH, W_dim // pW
 
@@ -744,7 +755,7 @@ class ZImageTransformer2DModel(nn.Module):
         )
 
         image_seq_len = F_tokens * H_tokens * W_tokens
-        cap_seq_len = int(cap_feats.shape[0])
+
 
         # Embed image patches
         x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x)
