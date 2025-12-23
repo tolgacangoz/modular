@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from functools import cached_property
 from typing import Tuple
 
 import max.experimental.functional as F
@@ -298,8 +299,8 @@ class FinalLayer(nn.Module):
 class RopeEmbedder(nn.Module):
     """Graph-compilable RoPE embedder.
 
-    Pre-computes freqs_cis for all axes in __init__ and stores them as
-    module parameters. The __call__ method uses pure tensor operations.
+    Uses @cached_property pattern for lazy computation during graph tracing.
+    This avoids synchronous tensor operations during module initialization.
     """
 
     def __init__(
@@ -312,39 +313,23 @@ class RopeEmbedder(nn.Module):
         self.theta = theta
         self.axes_dims = tuple(axes_dims)
         self.axes_lens = tuple(axes_lens)
+        self.device = device if device is not None else CPU()
         if len(axes_dims) != len(axes_lens):
             raise ValueError(
                 "axes_dims and axes_lens must have the same length"
             )
 
-        # Use provided device or default to CPU
-        target_device = device if device is not None else CPU()
-
-        # Pre-compute freqs_cis for each axis and store as module attributes
-        # This avoids runtime list building and conditional state mutation
-        self._freqs_cis_0 = self._precompute_single_axis(
-            axes_dims[0], axes_lens[0], theta, target_device
-        )
-        self._freqs_cis_1 = self._precompute_single_axis(
-            axes_dims[1], axes_lens[1], theta, target_device
-        )
-        self._freqs_cis_2 = self._precompute_single_axis(
-            axes_dims[2], axes_lens[2], theta, target_device
-        )
-
-    @staticmethod
-    def _precompute_single_axis(
+    def _compute_single_axis_freqs(
+        self,
         dim: int,
         end: int,
-        theta: float,
-        device: Device,
     ) -> Tensor:
-        """Precompute freqs_cis for a single axis on the specified device."""
+        """Compute freqs_cis for a single axis. Called during graph tracing."""
         freqs = 1.0 / (
-            theta
-            ** (F.range(0, dim, 2, dtype=DType.float64, device=device) / dim)
+            self.theta
+            ** (F.range(0, dim, 2, dtype=DType.float64, device=self.device) / dim)
         )
-        timestep = F.range(0, end, dtype=DType.float64, device=device)
+        timestep = F.range(0, end, dtype=DType.float64, device=self.device)
         angles = F.outer(timestep, freqs).cast(DType.float32)
         # Create complex representation [real, imag]
         freqs_cos = F.cos(angles)
@@ -352,6 +337,20 @@ class RopeEmbedder(nn.Module):
         freqs_cis = F.stack([freqs_cos, freqs_sin], axis=-1)
         return freqs_cis
 
+    @cached_property
+    def freqs_cis_0(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 0."""
+        return self._compute_single_axis_freqs(self.axes_dims[0], self.axes_lens[0])
+
+    @cached_property
+    def freqs_cis_1(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 1."""
+        return self._compute_single_axis_freqs(self.axes_dims[1], self.axes_lens[1])
+
+    @cached_property
+    def freqs_cis_2(self) -> Tensor:
+        """Lazily compute freqs_cis for axis 2."""
+        return self._compute_single_axis_freqs(self.axes_dims[2], self.axes_lens[2])
 
     def __call__(self, ids: Tensor) -> Tensor:
         """Graph-compilable forward pass.
@@ -364,16 +363,11 @@ class RopeEmbedder(nn.Module):
             RoPE embeddings of shape (seq_len, total_dim, 2) where total_dim
             is sum of axes_dims // 2.
         """
-        # NOTE: We don't call .to(device) here because:
-        # 1. During graph tracing, .to() on concrete tensors is synchronous and deadlocks
-        # 2. The graph compiler will handle device placement appropriately
-        # 3. The freqs_cis tensors are used as lookup tables via F.gather
-
-        # Gather embeddings for each axis using the position indices
-        # ids[:, i] gives the positions for axis i
-        result_0 = F.gather(self._freqs_cis_0, ids[:, 0], axis=0)
-        result_1 = F.gather(self._freqs_cis_1, ids[:, 1], axis=0)
-        result_2 = F.gather(self._freqs_cis_2, ids[:, 2], axis=0)
+        # Access freqs_cis via @cached_property - triggers lazy computation
+        # during graph tracing, not during __init__
+        result_0 = F.gather(self.freqs_cis_0, ids[:, 0], axis=0)
+        result_1 = F.gather(self.freqs_cis_1, ids[:, 1], axis=0)
+        result_2 = F.gather(self.freqs_cis_2, ids[:, 2], axis=0)
 
         # Concatenate along the dimension axis
         return F.concat([result_0, result_1, result_2], axis=1)
