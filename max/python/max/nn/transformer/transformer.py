@@ -135,12 +135,13 @@ class Transformer(Module):
     ) -> tuple[TensorValue, ...]:
         freqs_cis = self.rope.freqs_cis
 
-        # For SECOND_TO_LAST mode, we track the second-to-last layer output specifically
-        # This is more efficient than collecting all layers and stacking
-        second_to_last_layer_idx = len(self.layers) - 2
-        second_to_last_h: TensorValue | None = None
+        # For SECOND_TO_LAST mode, we unconditionally track prev_h.
+        # After the loop completes, prev_h will be the output of the
+        # second-to-last layer (i.e., the input to the last layer).
+        prev_h = h
 
         for idx, layer in enumerate(self.layers):
+            prev_h = h  # Always track the input to current layer
             h = layer(
                 ops.constant(idx, DType.uint32, device=DeviceRef.CPU()),
                 h,
@@ -148,12 +149,7 @@ class Transformer(Module):
                 freqs_cis=freqs_cis,
                 input_row_offsets=input_row_offsets,
             )
-            # Capture second-to-last layer output
-            if (self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST
-                and idx == second_to_last_layer_idx):
-                second_to_last_h = h
-
-        # Retrieve a variable number of tokens
+        # After loop: prev_h = output of layer n-2 (second-to-last)
         last_h = ops.gather(h, input_row_offsets[1:] - 1, axis=0)
         last_logits = ops.cast(self.lm_head(self.norm(last_h)), DType.float32)
         logits = None
@@ -207,10 +203,9 @@ class Transformer(Module):
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
         elif self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST:
-            # Return second-to-last layer hidden states directly
+            # Return second-to-last layer hidden states (prev_h after loop)
             # This matches diffusers' hidden_states[-2] pattern for text encoders
-            assert second_to_last_h is not None, "second_to_last_h should be set"
-            ret_val += (second_to_last_h,)
+            ret_val += (prev_h,)
 
         return ret_val
 
