@@ -54,7 +54,6 @@ from transformers import AutoConfig
 from .model_config import ZImageConfig
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.image_processor import VaeImageProcessor
-from .nn.qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
@@ -579,21 +578,22 @@ class ZImageModel(
     ) -> Graph:
         """Build the MAX graph for the text encoder.
 
-        The text encoder uses Qwen3Encoder which returns hidden states from
-        the second-to-last layer directly (equivalent to diffusers'
-        `hidden_states[-2]`). This provides text embeddings suitable for
-        conditioning the Z-Image transformer.
+        Uses native Qwen3 with return_hidden_states=ALL_LAYERS configured in
+        model_config.py. The output tuple structure is:
+        - (last_logits, stacked_hidden_states) for ReturnLogits.LAST_TOKEN
+
+        stacked_hidden_states has shape (num_layers, seq_len, hidden_size).
+        We extract hidden_states[-2] for the second-to-last layer output,
+        matching diffusers' text encoder behavior.
 
         Args:
             graph_inputs: Tuple of TensorType defining the graph inputs.
-                Expected inputs: tokens, input_row_offsets, return_n_logits,
-                and KV cache inputs.
 
         Returns:
             Compiled MAX graph that outputs hidden states of shape
-            (total_seq_len, hidden_size).
+            (seq_len, hidden_size) from the second-to-last layer.
         """
-        with Graph("qwen3_encoder", input_types=graph_inputs) as graph:
+        with Graph("qwen3_text_encoder", input_types=graph_inputs) as graph:
             tokens, input_row_offsets, return_n_logits, *kv_cache_inputs = (
                 graph.inputs
             )
@@ -603,15 +603,21 @@ class ZImageModel(
                 lookup_table=kv_cache_inputs[2].tensor,
                 max_lengths=kv_cache_inputs[3].tensor,
             )
-            # Qwen3Encoder returns hidden states from second-to-last layer
-            # directly (no need to index [-2])
+            # Qwen3 with ReturnHiddenStates.ALL_LAYERS returns
+            # (logits, stacked_hidden_states) where stacked_hidden_states
+            # has shape (num_layers, seq_len, hidden_size)
             outputs = self.model.text_encoder(
                 tokens.tensor,
                 kv_collection,
                 return_n_logits.tensor,
                 input_row_offsets.tensor,
             )
-            graph.output(*outputs)
+            # Extract stacked hidden states (last element of output tuple)
+            stacked_hidden_states = outputs[-1]
+            # Get second-to-last layer output: hidden_states[-2]
+            # Shape: (seq_len, hidden_size)
+            second_to_last = stacked_hidden_states[-2]
+            graph.output(second_to_last)
             return graph
 
     def encode_prompt(

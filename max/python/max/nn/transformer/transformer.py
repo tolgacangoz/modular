@@ -86,6 +86,9 @@ class ReturnHiddenStates(str, Enum):
     ALL = "all"
     LAST_NORMALIZED = "last_normalized"
     ALL_NORMALIZED = "all_normalized"
+    # Returns hidden states from ALL layers stacked as (num_layers, seq_len, hidden_size)
+    # This enables indexing like hidden_states[-2] for diffusion model text encoders
+    ALL_LAYERS = "all_layers"
 
 
 Block = TypeVar("Block", bound=Module, covariant=True)
@@ -131,6 +134,13 @@ class Transformer(Module):
         input_row_offsets: TensorValue,
     ) -> tuple[TensorValue, ...]:
         freqs_cis = self.rope.freqs_cis
+
+        # Collect per-layer hidden states if ALL_LAYERS is requested
+        collect_all_layers = (
+            self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS
+        )
+        all_layer_hidden_states: list[TensorValue] = []
+
         for idx, layer in enumerate(self.layers):
             h = layer(
                 ops.constant(idx, DType.uint32, device=DeviceRef.CPU()),
@@ -139,6 +149,8 @@ class Transformer(Module):
                 freqs_cis=freqs_cis,
                 input_row_offsets=input_row_offsets,
             )
+            if collect_all_layers:
+                all_layer_hidden_states.append(h)
 
         # Retrieve a variable number of tokens
         last_h = ops.gather(h, input_row_offsets[1:] - 1, axis=0)
@@ -193,6 +205,11 @@ class Transformer(Module):
             ret_val += (self.norm(h),)
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
+        elif self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS:
+            # Stack all layer hidden states: (num_layers, seq_len, hidden_size)
+            # This enables indexing like hidden_states[-2] for second-to-last layer
+            stacked_hidden_states = ops.stack(all_layer_hidden_states, axis=0)
+            ret_val += (stacked_hidden_states,)
 
         return ret_val
 
