@@ -145,26 +145,31 @@ class ZImageSingleStreamAttention(nn.Module):
         key = self.norm_k(key)
 
         # Apply RoPE
-        # TODO: Verify this implementation
-        def apply_rotary_emb(x_in: Tensor, freqs_cis: Tensor) -> Tensor:
+        # Note: This implementation avoids list(tensor.shape) which causes sync issues
+        def apply_rotary_emb(x_in: Tensor, freqs_cis: Tensor, b: int, s: int, h: int, d: int) -> Tensor:
             # x_in shape: (B, S, H, D)
-            # Reshape for complex interpretation: [..., head_dim] -> [..., head_dim/2, 2]
-            target_shape = list(x_in.shape[:-1]) + [-1, 2]
-            x_complex = x_in.cast(DType.float32).reshape(target_shape)
-            # x_reshaped is already [..., 2] so no need for as_interleaved_complex
-            freqs_cis_expanded = F.unsqueeze(
-                freqs_cis, 2
-            )  # Expand at dim 2 (heads) to broadcast: (B, S, 1, D/2, 2)
+            # Reshape for complex interpretation: (B, S, H, D) -> (B, S, H, D/2, 2)
+            half_d = d // 2
+            x_complex = x_in.cast(DType.float32).reshape((b, s, h, half_d, 2))
+
+            # Expand freqs_cis at dim 2 (heads) to broadcast: (B, S, 1, D/2, 2)
+            freqs_cis_expanded = F.unsqueeze(freqs_cis, 2)
 
             # Apply complex multiplication
             x_rotated = F.complex_mul(x_complex, freqs_cis_expanded)
-            # Reshape back to real: flatten the last 2 dims
-            x_out = x_rotated.reshape(x_in.shape)
+
+            # Reshape back to (B, S, H, D)
+            x_out = x_rotated.reshape((b, s, h, d))
             return x_out.cast(x_in.dtype)
 
+
         if freqs_cis is not None:
-            query = apply_rotary_emb(query, freqs_cis)
-            key = apply_rotary_emb(key, freqs_cis)
+            # For graph compilation, use fixed batch_size=1 and known heads/head_dim
+            # S (sequence length) comes from the reshaped query which has shape (B, S, H, D)
+            # We use symbolic S from reshape, but H and D are known Python ints
+            query = apply_rotary_emb(query, freqs_cis, 1, query.shape[1], self.heads, self.head_dim)
+            key = apply_rotary_emb(key, freqs_cis, 1, key.shape[1], self.heads, self.head_dim)
+
 
         # Compute joint attention
         # Note: For batch size 1 testing, we skip valid_length.
@@ -356,20 +361,20 @@ class RopeEmbedder(nn.Module):
             RoPE embeddings of shape (seq_len, total_dim, 2) where total_dim
             is sum of axes_dims // 2.
         """
-        # Ensure freqs_cis are on the same device as ids
-        device = ids.device
-        freqs_0 = self._freqs_cis_0.to(device)
-        freqs_1 = self._freqs_cis_1.to(device)
-        freqs_2 = self._freqs_cis_2.to(device)
+        # NOTE: We don't call .to(device) here because:
+        # 1. During graph tracing, .to() on concrete tensors is synchronous and deadlocks
+        # 2. The graph compiler will handle device placement appropriately
+        # 3. The freqs_cis tensors are used as lookup tables via F.gather
 
         # Gather embeddings for each axis using the position indices
         # ids[:, i] gives the positions for axis i
-        result_0 = F.gather(freqs_0, ids[:, 0], axis=0)
-        result_1 = F.gather(freqs_1, ids[:, 1], axis=0)
-        result_2 = F.gather(freqs_2, ids[:, 2], axis=0)
+        result_0 = F.gather(self._freqs_cis_0, ids[:, 0], axis=0)
+        result_1 = F.gather(self._freqs_cis_1, ids[:, 1], axis=0)
+        result_2 = F.gather(self._freqs_cis_2, ids[:, 2], axis=0)
 
         # Concatenate along the dimension axis
         return F.concat([result_0, result_1, result_2], axis=1)
+
 
 
 class ZImageTransformer2DModel(nn.Module):
