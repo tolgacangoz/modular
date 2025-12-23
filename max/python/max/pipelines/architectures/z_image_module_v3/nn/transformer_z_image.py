@@ -352,6 +352,16 @@ class RopeEmbedder(nn.Module):
         """Lazily compute freqs_cis for axis 2."""
         return self._compute_single_axis_freqs(self.axes_dims[2], self.axes_lens[2])
 
+    @property
+    def local_parameters(self) -> list[tuple[str, Tensor]]:
+        """Override to return empty list.
+
+        This excludes freqs_cis tensors from being treated as model parameters
+        that need to be loaded from weight files. They are computed lazily
+        during graph tracing instead.
+        """
+        return []
+
     def __call__(self, ids: Tensor) -> Tensor:
         """Graph-compilable forward pass.
 
