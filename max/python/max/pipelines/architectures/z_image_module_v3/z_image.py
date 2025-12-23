@@ -21,6 +21,7 @@ from max.nn.module_v3 import Module
 
 from .model_config import ZImageConfig
 from .nn.autoencoder_kl import AutoencoderKL
+from .nn.qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
@@ -48,9 +49,14 @@ class ZImage(Module):
         """Build the VAE component."""
         return AutoencoderKL(**asdict(self.config.vae_config))
 
-    def build_text_encoder(self) -> ?:
-        """Build the text encoder component."""
-        return ?(self.config.text_encoder_config)
+    def build_text_encoder(self) -> Qwen3Encoder:
+        """Build the text encoder component.
+
+        Returns:
+            Qwen3Encoder that extracts hidden states from the second-to-last
+            layer (equivalent to diffusers' `hidden_states[-2]`).
+        """
+        return Qwen3Encoder(self.config.text_encoder_config)
 
     def build_transformer(self) -> ZImageTransformer2DModel:
         """Build the transformer component."""

@@ -54,6 +54,7 @@ from transformers import AutoConfig
 from .model_config import ZImageConfig
 from .nn.autoencoder_kl import AutoencoderKL
 from .nn.image_processor import VaeImageProcessor
+from .nn.qwen3_encoder import Qwen3Encoder
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
@@ -253,7 +254,7 @@ class ZImageModel(
     vae: AutoencoderKL
     """The VAE to be used for image generation."""
 
-    text_encoder: ?
+    text_encoder: Qwen3Encoder
     """The text encoder to be used for image generation."""
 
     transformer: ZImageTransformer2DModel
@@ -538,15 +539,12 @@ class ZImageModel(
         hidden_states_type = TensorType(DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref)
         t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
         cap_feats_type = TensorType(DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref)
-        compiled_transformer_model = self.model.transformer.compile(
-            hidden_states_type,
-            t_type,
-            cap_feats_type,
-            weights=transformer_state_dict,
-        )
-        # compiled_transformer_model = None  # Placeholder for now
-
-
+        # compiled_transformer_model = self.model.transformer.compile(
+        #     hidden_states_type,
+        #     t_type,
+        #     cap_feats_type,
+        #     weights=transformer_state_dict,
+        # )
 
         logger.info("Building and compiling text encoder...")
         before_text_encoder_build = time.perf_counter()
@@ -579,7 +577,23 @@ class ZImageModel(
     def _build_text_encoder_graph(
         self, graph_inputs: tuple[TensorType, ...]
     ) -> Graph:
-        with Graph("qwen3", input_types=graph_inputs) as graph:
+        """Build the MAX graph for the text encoder.
+
+        The text encoder uses Qwen3Encoder which returns hidden states from
+        the second-to-last layer directly (equivalent to diffusers'
+        `hidden_states[-2]`). This provides text embeddings suitable for
+        conditioning the Z-Image transformer.
+
+        Args:
+            graph_inputs: Tuple of TensorType defining the graph inputs.
+                Expected inputs: tokens, input_row_offsets, return_n_logits,
+                and KV cache inputs.
+
+        Returns:
+            Compiled MAX graph that outputs hidden states of shape
+            (total_seq_len, hidden_size).
+        """
+        with Graph("qwen3_encoder", input_types=graph_inputs) as graph:
             tokens, input_row_offsets, return_n_logits, *kv_cache_inputs = (
                 graph.inputs
             )
@@ -589,6 +603,8 @@ class ZImageModel(
                 lookup_table=kv_cache_inputs[2].tensor,
                 max_lengths=kv_cache_inputs[3].tensor,
             )
+            # Qwen3Encoder returns hidden states from second-to-last layer
+            # directly (no need to index [-2])
             outputs = self.model.text_encoder(
                 tokens.tensor,
                 kv_collection,
