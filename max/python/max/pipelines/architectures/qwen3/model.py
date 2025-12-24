@@ -80,6 +80,43 @@ class Qwen3Model(LlamaModelBase):
         """Get the number of layers using Qwen3Config."""
         return Qwen3Config.get_num_layers(huggingface_config)
 
+    def load_kv_manager(
+        self,
+        session: InferenceSession,
+        available_cache_memory: int | None,
+    ):
+        """Override to use Qwen3Config.get_kv_params instead of Llama3Config."""
+        from max.kv_cache import (
+            NullKVCacheManager,
+            PagedKVCacheManager,
+            load_kv_manager,
+        )
+
+        num_layers_for_cache = Qwen3Config.get_num_layers(
+            huggingface_config=self.huggingface_config
+        )
+
+        n_devices_for_cache = len(self.devices)
+
+        return load_kv_manager(
+            params=Qwen3Config.get_kv_params(
+                huggingface_config=self.huggingface_config,
+                n_devices=n_devices_for_cache,
+                kv_cache_config=self.kv_cache_config,
+                cache_dtype=self.encoding.cache_dtype,
+                data_parallel_degree=self.pipeline_config.model_config.data_parallel_degree,
+            ),
+            max_batch_size=self.pipeline_config.max_batch_size,
+            max_seq_len=self.calculate_max_seq_len(
+                self.pipeline_config, huggingface_config=self.huggingface_config
+            ),
+            num_layers=num_layers_for_cache,
+            devices=self.devices,
+            available_cache_memory=available_cache_memory,
+            page_size=self.kv_cache_config.kv_cache_page_size,
+            session=session,
+        )
+
     def _build_graph(
         self,
         weights: Weights,
