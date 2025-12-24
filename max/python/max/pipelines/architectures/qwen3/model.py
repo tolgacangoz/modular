@@ -18,9 +18,9 @@ from typing import Any, Literal
 
 from max._core.engine import Model
 from max.dtype import DType
-from max.driver import DeviceRef, Tensor
+from max.driver import Tensor
 from max.engine import InferenceSession
-from max.graph import Graph
+from max.graph import DeviceRef, Graph
 from max.graph.weights import Weights, WeightsAdapter
 from max.nn.kv_cache import KVCacheParams, PagedCacheValues
 from max.nn.layer import Module
