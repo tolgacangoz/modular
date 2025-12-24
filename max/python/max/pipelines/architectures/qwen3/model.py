@@ -20,11 +20,11 @@ from max._core.engine import Model
 from max.dtype import DType
 from max.driver import Tensor
 from max.engine import InferenceSession
-from max.graph import DeviceRef, Graph
+from max.graph import Graph
 from max.graph.weights import Weights, WeightsAdapter
 from max.nn.kv_cache import KVCacheParams, PagedCacheValues
 from max.nn.layer import Module
-from max.pipelines.lib import KVCacheConfig, PipelineConfig
+from max.pipelines.lib import KVCacheConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
 from ..llama3.model import LlamaModelBase
@@ -57,8 +57,7 @@ class Qwen3Model(LlamaModelBase):
     def get_kv_params(
         cls,
         huggingface_config: AutoConfig,
-        pipeline_config: PipelineConfig,
-        devices: list[DeviceRef],
+        n_devices: int,
         kv_cache_config: KVCacheConfig,
         cache_dtype: DType,
     ) -> KVCacheParams:
@@ -71,7 +70,7 @@ class Qwen3Model(LlamaModelBase):
         """
         return Qwen3Config.get_kv_params(
             huggingface_config,
-            len(devices),
+            n_devices,
             kv_cache_config,
             cache_dtype,
         )
