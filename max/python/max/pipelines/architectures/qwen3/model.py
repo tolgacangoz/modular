@@ -17,12 +17,15 @@ import logging
 from typing import Any, Literal
 
 from max._core.engine import Model
+from max.dtype import DType
 from max.driver import Tensor
 from max.engine import InferenceSession
-from max.graph import Graph
+from max.graph import DeviceRef, Graph
 from max.graph.weights import Weights, WeightsAdapter
-from max.nn.kv_cache import PagedCacheValues
+from max.nn.kv_cache import KVCacheParams, PagedCacheValues
 from max.nn.layer import Module
+from max.pipelines.lib import KVCacheConfig, PipelineConfig
+from transformers.models.auto.configuration_auto import AutoConfig
 
 from ..llama3.model import LlamaModelBase
 from .model_config import Qwen3Config
@@ -48,6 +51,36 @@ class Qwen3Model(LlamaModelBase):
 
     state_dict: dict[str, Any]
     """Weights to load into the model."""
+
+    # Override to use Qwen3Config instead of Llama3Config
+    @classmethod
+    def get_kv_params(
+        cls,
+        huggingface_config: AutoConfig,
+        pipeline_config: PipelineConfig,
+        devices: list[DeviceRef],
+        kv_cache_config: KVCacheConfig,
+        cache_dtype: DType,
+    ) -> KVCacheParams:
+        """Get KV cache parameters using Qwen3Config.
+
+        Qwen3 models have an explicit head_dim field in their configuration,
+        so we must use Qwen3Config.get_kv_params instead of the base
+        Llama3Config.get_kv_params which would incorrectly calculate
+        head_dim as hidden_size // num_attention_heads.
+        """
+        return Qwen3Config.get_kv_params(
+            huggingface_config,
+            pipeline_config,
+            devices,
+            kv_cache_config,
+            cache_dtype,
+        )
+
+    @classmethod
+    def get_num_layers(cls, huggingface_config: AutoConfig) -> int:
+        """Get the number of layers using Qwen3Config."""
+        return Qwen3Config.get_num_layers(huggingface_config)
 
     def _build_graph(
         self,
