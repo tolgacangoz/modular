@@ -71,8 +71,7 @@ class Qwen3Model(LlamaModelBase):
         """
         return Qwen3Config.get_kv_params(
             huggingface_config,
-            pipeline_config,
-            devices,
+            len(devices),
             kv_cache_config,
             cache_dtype,
         )
