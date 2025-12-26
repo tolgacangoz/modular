@@ -56,6 +56,25 @@ class ImageGenerationRequest(Request):
     streaming: bool = True
     """Whether to stream the image generation."""
 
+    # Diffusion-specific parameters
+    guidance_scale: float = 5.0
+    """Guidance scale for classifier-free guidance. Set to 0 to disable CFG."""
+
+    height: int | None = 1024
+    """Height of generated image in pixels. Defaults to model's default (typically 1024)."""
+
+    width: int | None = 1024
+    """Width of generated image in pixels. Defaults to model's default (typically 1024)."""
+
+    num_inference_steps: int = 50
+    """Number of denoising steps. More steps = higher quality but slower."""
+
+    negative_prompt: str | None = None
+    """Negative prompt to guide what NOT to generate."""
+
+    num_images_per_prompt: int = 1
+    """Number of images to generate per prompt."""
+
     def __post_init__(self) -> None:
         if self.prompt is None and self.input is None:
             raise RuntimeError("either token_ids or input must be provided.")

@@ -1519,18 +1519,25 @@ async def create_image_generation(
                 pass  # Use defaults if parsing fails
 
         logger.debug(
-            "Path: %s, Request: %s, Model: %s",
+            "Path: %s, Request: %s, Model: %s, Size: %dx%d",
             request.url.path,
             request_id,
             image_generation_request.model,
+            width,
+            height,
         )
 
-        # Create the image generation request
+        # Create the image generation request with diffusion parameters
         image_request = ImageGenerationRequest(
             request_id=RequestID(request_id),
             model=image_generation_request.model or "default",
             input=image_generation_request.prompt,
-            # Additional parameters could be passed via sampling_params or extensions
+            height=height,
+            width=width,
+            num_images_per_prompt=image_generation_request.n or 1,
+            guidance_scale=image_generation_request.guidance_scale if image_generation_request.guidance_scale is not None else 5.0,
+            negative_prompt=image_generation_request.negative_prompt,
+            num_inference_steps=image_generation_request.num_inference_steps if image_generation_request.num_inference_steps is not None else 50,
         )
 
         response_generator = OpenAIImageResponseGenerator(pipeline)
