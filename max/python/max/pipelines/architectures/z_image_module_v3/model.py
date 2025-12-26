@@ -528,6 +528,7 @@ class ZImageModel(
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
+        self.vae = self.model.vae
         compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
             weights=decoder_weights,
