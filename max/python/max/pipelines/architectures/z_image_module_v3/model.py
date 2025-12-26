@@ -351,7 +351,6 @@ class ZImageModel(
             session
         )
 
-        # self.vae_scale_factor = 2 ** (len(self.vae.block_out_channels) - 1)
         # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (
             len(self.model_config.vae_config.block_out_channels) - 1
@@ -404,7 +403,7 @@ class ZImageModel(
             device=self.devices[0],
         )
 
-        logger.info("Building and compiling model...")
+        logger.info("Building and compiling the whole pipeline...")
         before = time.perf_counter()
 
         if not isinstance(self.weights, SafetensorWeights):
@@ -526,12 +525,17 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        # compiled_vae_decode_model = self.model.vae.decoder.compile(
-        #     sample_type,
-        #     weights=decoder_weights,
-        # )
+        logger.info("Building and compiling VAE's decoder...")
+        before_vae_decode_build = time.perf_counter()
+        compiled_vae_decode_model = self.model.vae.decoder.compile(
+            sample_type,
+            weights=decoder_weights,
+        )
+        after_vae_decode_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
+        )
 
-        # Shape constants for compilation - must match transformer._compile_* attributes
         C, F_dim, H_dim, W_dim = 16, 1, 128, 128
         cap_seq_len = 101
 
@@ -542,38 +546,46 @@ class ZImageModel(
         cap_feats_type = TensorType(
             DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
         )
-        # compiled_transformer_model = self.model.transformer.compile(
-        #     hidden_states_type,
-        #     t_type,
-        #     cap_feats_type,
-        #     weights=transformer_state_dict,
+
+        logger.info("Building and compiling the backbone transformer...")
+        before_transformer_build = time.perf_counter()
+        compiled_transformer_model = self.model.transformer.compile(
+            hidden_states_type,
+            t_type,
+            cap_feats_type,
+            weights=transformer_state_dict,
+        )
+        after_transformer_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
+        )
+
+        # logger.info("Building and compiling text encoder...")
+        # before_text_encoder_build = time.perf_counter()
+        # text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
+        # after_text_encoder_build = time.perf_counter()
+
+        # logger.info(
+        #     f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
         # )
 
-        logger.info("Building and compiling text encoder...")
-        before_text_encoder_build = time.perf_counter()
-        text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
-        after_text_encoder_build = time.perf_counter()
-
-        logger.info(
-            f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
-        )
-
-        before_text_encoder_compile = time.perf_counter()
-        compiled_text_encoder_model = session.load(
-            text_encoder_graph,
-            weights_registry=text_encoder_llm_state_dict,
-        )
+        # before_text_encoder_compile = time.perf_counter()
+        # compiled_text_encoder_model = session.load(
+        #     text_encoder_graph,
+        #     weights_registry=text_encoder_llm_state_dict,
+        # )
         after = time.perf_counter()
 
+        # logger.info(
+        #     f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
+        # )
         logger.info(
-            f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
-        )
-        logger.info(
-            f"Building and compiling the whole model took {after - before:.6f} seconds"
+            f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
             compiled_vae_decode_model,
-            compiled_text_encoder_model,
+            # compiled_text_encoder_model,
+            None,
             compiled_transformer_model,
         )
 
@@ -605,7 +617,7 @@ class ZImageModel(
             )
             # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST returns
             # (logits, second_to_last_hidden_states) directly
-            outputs = self.model.text_encoder(
+            outputs = self.text_encoder(
                 tokens.tensor,
                 kv_collection,
                 return_n_logits.tensor,
@@ -696,7 +708,7 @@ class ZImageModel(
             text_input_ids = text_inputs.input_ids.to(device)
             prompt_masks = text_inputs.attention_mask.to(device).bool()
 
-        prompt_embeds = self.model.text_encoder(
+        prompt_embeds = self.text_encoder(
             input_ids=text_input_ids,
             attention_mask=prompt_masks,
             output_hidden_states=True,
