@@ -48,6 +48,7 @@ from max.pipelines.lib import (
     PipelineModel,
     SupportedEncoding,
 )
+from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 from tqdm.auto import tqdm
 from transformers import AutoConfig
 
@@ -253,7 +254,7 @@ class ZImageModel(
     vae: AutoencoderKL
     """The VAE to be used for image generation."""
 
-    text_encoder: Qwen3Encoder
+    text_encoder: Qwen3
     """The text encoder to be used for image generation."""
 
     transformer: ZImageTransformer2DModel
