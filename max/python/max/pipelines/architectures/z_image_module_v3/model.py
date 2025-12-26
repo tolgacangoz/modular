@@ -951,19 +951,29 @@ class ZImageModel(
                     "When `prompt_embeds` is provided without `prompt`, "
                     "`negative_prompt_embeds` must also be provided for classifier-free guidance."
                 )
-        else:
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-            ) = self.encode_prompt(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                do_classifier_free_guidance=self.do_classifier_free_guidance,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                device=device,
-                max_sequence_length=max_sequence_length,
-            )
+        # else:
+        #     (
+        #         prompt_embeds,
+        #         negative_prompt_embeds,
+        #     ) = self.encode_prompt(
+        #         prompt=prompt,
+        #         negative_prompt=negative_prompt,
+        #         do_classifier_free_guidance=self.do_classifier_free_guidance,
+        #         prompt_embeds=prompt_embeds,
+        #         negative_prompt_embeds=negative_prompt_embeds,
+        #         device=device,
+        #         max_sequence_length=max_sequence_length,
+        #     )
+
+        from max.graph.weights import SafetensorWeights
+        from pathlib import Path
+
+        # Load the safetensors file
+        weights = SafetensorWeights([Path("/root/prompt_embeds.safetensors")])
+
+        # Access a specific tensor (e.g., "prompt_embeds")
+        if weights.prompt_embeds.exists():
+            prompt_embeds = weights.prompt_embeds.allocate()
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
