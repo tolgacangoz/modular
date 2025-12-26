@@ -104,6 +104,10 @@ class ZImageInputs(ModelInputs):
     their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
     will be used."""
 
+    guidance_scale: float = 5.0
+    """ Guidance scale as defined in Classifier-Free Diffusion Guidance.
+    Higher values encourage images closely linked to the prompt, usually at the expense of lower image quality."""
+
     cfg_normalization: bool = False
     """ Whether to apply configuration normalization."""
 
@@ -153,6 +157,9 @@ class ZImageInputs(ModelInputs):
 
     max_sequence_length: int = 512
     """ The maximum sequence length for the input sequence."""
+
+    return_dict: bool = False
+    """ Whether to return a ZImagePipelineOutput object or a plain tuple."""
 
     # signal_buffers: list[Tensor]
     """Device buffers used for synchronization in communication collectives."""
@@ -781,152 +788,45 @@ class ZImageModel(
 
     def execute(
         self,
-        prompt: str | list[str] | None = None,
-        height: int | None = 1024,
-        width: int | None = 1024,
-        num_inference_steps: int = 9,
-        sigmas: list[float] | None = None,
-        guidance_scale: float = 5.0,
-        cfg_normalization: bool = False,
-        cfg_truncation: float = 1.0,
-        negative_prompt: str | list[str] | None = None,
-        num_images_per_prompt: int | None = 1,
-        # generator: Generator | list[Generator] | None = None,
-        latents: Tensor | None = None,
-        prompt_embeds: list[Tensor] | None = None,
-        negative_prompt_embeds: list[Tensor] | None = None,
-        output_type: str | None = "pil",
-        return_dict: bool = True,
-        joint_attention_kwargs: dict[str, Any] | None = None,
-        callback_on_step_end: Callable[[int, int, dict], None] | None = None,
-        callback_on_step_end_tensor_inputs: tuple[str] = ("latents"),
-        max_sequence_length: int = 512,
-        # signal_buffers: list[Tensor] | None = None,
-        cu_seqlens: list[Tensor] | None = None,
-        max_seqlen: list[Tensor] | None = None,
-    ) -> Tensor | tuple[Tensor]:
+        model_inputs: ModelInputs,
+    ) -> ZImagePipelineOutput:
         r"""
-        Function invoked when calling the pipeline for generation.
-
-        Args:
-            prompt (`str` or `list[str]`, *optional*):
-                The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
-                instead.
-            height (`int`, *optional*, defaults to 1024):
-                The height in pixels of the generated image.
-            width (`int`, *optional*, defaults to 1024):
-                The width in pixels of the generated image.
-            num_inference_steps (`int`, *optional*, defaults to 9):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            sigmas (`list[float]`, *optional*):
-                Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
-                their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
-                will be used.
-            guidance_scale (`float`, *optional*, defaults to 5.0):
-                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-                `guidance_scale` is defined as `w` of equation 2. of [Imagen
-                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-                usually at the expense of lower image quality.
-            cfg_normalization (`bool`, *optional*, defaults to False):
-                Whether to apply configuration normalization.
-            cfg_truncation (`float`, *optional*, defaults to 1.0):
-                The truncation value for configuration.
-            negative_prompt (`str` or `list[str]`, *optional*):
-                The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-                less than `1`).
-            num_images_per_prompt (`int`, *optional*, defaults to 1):
-                The number of images to generate per prompt.
-            generator (`F.Generator` or `list[F.Generator]`, *optional*):
-                One or a list of [max generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
-                to make generation deterministic.
-            latents (`Tensor`, *optional*):
-                Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
-                generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
-                tensor will be generated by sampling using the supplied random `generator`.
-            prompt_embeds (`list[Tensor]`, *optional*):
-                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-                provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`list[Tensor]`, *optional*):
-                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-                argument.
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generate image. Choose between
-                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion.ZImagePipelineOutput`] instead of a plain
-                tuple.
-            joint_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            callback_on_step_end (`Callable`, *optional*):
-                A function that calls at the end of each denoising steps during the inference. The function is called
-                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
-                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
-                `callback_on_step_end_tensor_inputs`.
-            callback_on_step_end_tensor_inputs (`tuple`, *optional*):
-                The tuple of tensor inputs for the `callback_on_step_end` function. The tensors specified in the tuple
-                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
-                `._callback_tensor_inputs` attribute of your pipeline class.
-            max_sequence_length (`int`, *optional*, defaults to 512):
-                Maximum sequence length to use with the `prompt`.
-
-        Examples:
-
-        Returns:
-            [`~pipelines.z_image.ZImagePipelineOutput`] or `tuple`: [`~pipelines.z_image.ZImagePipelineOutput`] if
-            `return_dict` is True, otherwise a `tuple`. When returning a tuple, the first element is a list with the
-            generated images.
-        """
-
-        """
-    def execute(self, model_inputs: ModelInputs) -> ModelOutputs:
         Executes the Z-Image model with the prepared inputs.
 
         Args:
-            model_inputs: The prepared inputs for the model execution, typically including
-                token IDs, attention masks/offsets, and KV cache inputs.
+            model_inputs: A ZImageInputs instance containing all image generation parameters
+                including prompt, dimensions, guidance scale, etc.
 
         Returns:
-            An object containing the output logits from the model execution.
-
-        model_inputs = cast(ZImageInputs, model_inputs)
-        curr_kv_cache_inputs = model_inputs.kv_cache_inputs or ()
-
-        # For backward compatibility, distribute the single tensor to all devices
-        if isinstance(model_inputs.input_row_offsets, np.ndarray):
-            # Convert numpy array to tensor first
-            tensor = Tensor.from_numpy(model_inputs.input_row_offsets)
-            input_row_offsets = tensor.to(self.devices[0])
-        else:
-            # Already a tensor
-            input_row_offsets = model_inputs.input_row_offsets
-
-        model_outputs = self.model(
-            model_inputs.tokens,
-            model_inputs.return_n_logits,
-            input_row_offsets,
-            *curr_kv_cache_inputs,
-        )
-        if len(model_outputs) == 3:
-            return ModelOutputs(
-                logits=cast(Tensor, model_outputs[1].driver_tensor),
-                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
-                logit_offsets=cast(Tensor, model_outputs[2].driver_tensor),
-            )
-        else:
-            return ModelOutputs(
-                logits=cast(Tensor, model_outputs[0].driver_tensor),
-                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
-            )
+            ZImagePipelineOutput containing the generated images.
         """
+        # Cast to ZImageInputs for type safety
+        assert isinstance(model_inputs, ZImageInputs), (
+            f"Expected ZImageInputs, got {type(model_inputs)}"
+        )
 
-        height = height or 1024
-        width = width or 1024
+        # Extract parameters from model_inputs
+        prompt = model_inputs.prompt
+        height = model_inputs.height or 1024
+        width = model_inputs.width or 1024
+        num_inference_steps = model_inputs.num_inference_steps
+        sigmas = model_inputs.sigmas
+        guidance_scale = model_inputs.guidance_scale
+        cfg_normalization = model_inputs.cfg_normalization
+        cfg_truncation = model_inputs.cfg_truncation
+        negative_prompt = model_inputs.negative_prompt
+        num_images_per_prompt = model_inputs.num_images_per_prompt or 1
+        latents = model_inputs.latents
+        prompt_embeds = model_inputs.prompt_embeds
+        negative_prompt_embeds = model_inputs.negative_prompt_embeds
+        output_type = model_inputs.output_type
+        return_dict = model_inputs.return_dict
+        joint_attention_kwargs = model_inputs.joint_attention_kwargs
+        callback_on_step_end = model_inputs.callback_on_step_end
+        callback_on_step_end_tensor_inputs = model_inputs.callback_on_step_end_tensor_inputs
+        max_sequence_length = model_inputs.max_sequence_length
+        cu_seqlens = model_inputs.cu_seqlens
+        max_seqlen = model_inputs.max_seqlen
 
         vae_scale = self.vae_scale_factor * 2
         if height % vae_scale != 0:

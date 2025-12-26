@@ -43,6 +43,7 @@ from httpx import AsyncClient
 from max.interfaces import (
     AudioGenerationRequest,
     GenerationStatus,
+    ImageGenerationRequest,
     LoRAOperation,
     LoRARequest,
     LoRAStatus,
@@ -63,6 +64,7 @@ from max.serve.config import Settings
 from max.serve.parser import LlamaToolParser, parse_json_from_text
 from max.serve.pipelines.llm import (
     AudioGeneratorPipeline,
+    ImageGeneratorPipeline,
     TokenGeneratorOutput,
     TokenGeneratorPipeline,
 )
@@ -85,10 +87,13 @@ from max.serve.schemas.openai import (
     CreateCompletionResponse,
     CreateEmbeddingRequest,
     CreateEmbeddingResponse,
+    CreateImageRequest,
     Embedding,
     Error,
     ErrorResponse,
     Function1,
+    Image,
+    ImagesResponse,
     InputItem,
     ListModelsResponse,
     LoadLoraRequest,
@@ -176,15 +181,15 @@ class OpenAIResponseGenerator(ABC, Generic[_T]):
 
 def get_pipeline(
     request: Request, model_name: str
-) -> TokenGeneratorPipeline | AudioGeneratorPipeline:
+) -> TokenGeneratorPipeline | AudioGeneratorPipeline | ImageGeneratorPipeline:
     app_state: State = request.app.state
-    pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline = (
+    pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | ImageGeneratorPipeline = (
         app_state.pipeline
     )
 
     models = [pipeline.model_name]
 
-    if lora_queue := app_state.pipeline.lora_queue:
+    if lora_queue := getattr(app_state.pipeline, 'lora_queue', None):
         models += lora_queue.list_loras()
 
     if not model_name:
@@ -194,10 +199,12 @@ def get_pipeline(
         raise ValueError(
             f"Unknown model '{model_name}', currently serving '{models}'."
         )
-    if not isinstance(pipeline.tokenizer, PipelineTokenizer):
-        raise ValueError(
-            f"Tokenizer for '{model_name}' pipelines does not implement the PipelineTokenizer protocol."
-        )
+    # Skip tokenizer check for ImageGeneratorPipeline since image models may not have tokenizers
+    if not isinstance(pipeline, ImageGeneratorPipeline):
+        if not isinstance(pipeline.tokenizer, PipelineTokenizer):
+            raise ValueError(
+                f"Tokenizer for '{model_name}' pipelines does not implement the PipelineTokenizer protocol."
+            )
     return pipeline
 
 
@@ -553,6 +560,62 @@ class OpenAISpeechResponseGenerator:
         )
         return response
 
+
+class OpenAIImageResponseGenerator:
+    """Generator for OpenAI-compatible image generation responses."""
+
+    def __init__(self, pipeline: ImageGeneratorPipeline) -> None:
+        self.logger = logging.getLogger(
+            "max.serve.router.OpenAIImageResponseGenerator"
+        )
+        self.pipeline = pipeline
+
+    async def generate_image(
+        self, request: ImageGenerationRequest
+    ) -> ImagesResponse:
+        """Generate an image and return OpenAI-compatible response."""
+        self.logger.debug("Image Generation: Start: %s", request)
+        output = await self.pipeline.generate_full_image(request)
+
+        # Convert image data to base64 if available
+        images = []
+        if output.image_data is not None and output.image_data.size > 0:
+            import io
+            from PIL import Image as PILImage
+
+            # Handle different output formats
+            image_array = output.image_data
+            if hasattr(image_array, 'numpy'):
+                image_array = image_array.numpy()
+
+            # Convert to PIL Image and then to base64
+            if len(image_array.shape) == 3:
+                # Single image: (H, W, C)
+                pil_image = PILImage.fromarray(
+                    (image_array * 255).astype('uint8') if image_array.max() <= 1.0 else image_array.astype('uint8')
+                )
+                buffer = io.BytesIO()
+                pil_image.save(buffer, format='PNG')
+                b64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                images.append(Image(b64_json=b64_data))
+            elif len(image_array.shape) == 4:
+                # Batch of images: (N, H, W, C)
+                for i in range(image_array.shape[0]):
+                    img = image_array[i]
+                    pil_image = PILImage.fromarray(
+                        (img * 255).astype('uint8') if img.max() <= 1.0 else img.astype('uint8')
+                    )
+                    buffer = io.BytesIO()
+                    pil_image.save(buffer, format='PNG')
+                    b64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                    images.append(Image(b64_json=b64_data))
+
+        response = ImagesResponse(
+            created=int(datetime.now().timestamp()),
+            data=images,
+        )
+        self.logger.debug("Image Generation: Done: %s images", len(images))
+        return response
 
 async def openai_parse_chat_completion_request(
     completion_request: CreateChatCompletionRequest,
@@ -1422,6 +1485,71 @@ async def create_streaming_audio_speech(
         # NOTE(SI-722): These errors need to return more helpful details,
         # but we don't necessarily want to expose the full error description
         # to the user. There are many different ValueErrors that can be raised.
+        raise HTTPException(status_code=400, detail="Value error.") from e
+
+
+@router.post("/images/generations", response_model=None)
+async def create_image_generation(
+    request: Request,
+) -> ImagesResponse:
+    """Image generation endpoint following OpenAI Images API.
+
+    Generates images based on a text prompt using diffusion models like Z-Image.
+    """
+    request_id = request.state.request_id
+    try:
+        image_generation_request = CreateImageRequest.model_validate_json(
+            await request.body()
+        )
+
+        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | ImageGeneratorPipeline = (
+            get_pipeline(request, image_generation_request.model or "default")
+        )
+        assert isinstance(pipeline, ImageGeneratorPipeline), (
+            f"Expected ImageGeneratorPipeline, got {type(pipeline)}"
+        )
+
+        # Parse size string to width/height (e.g., "1024x1024" -> 1024, 1024)
+        width, height = 1024, 1024
+        if image_generation_request.size:
+            try:
+                w_str, h_str = image_generation_request.size.split("x")
+                width, height = int(w_str), int(h_str)
+            except ValueError:
+                pass  # Use defaults if parsing fails
+
+        logger.debug(
+            "Path: %s, Request: %s, Model: %s",
+            request.url.path,
+            request_id,
+            image_generation_request.model,
+        )
+
+        # Create the image generation request
+        image_request = ImageGenerationRequest(
+            request_id=RequestID(request_id),
+            model=image_generation_request.model or "default",
+            input=image_generation_request.prompt,
+            # Additional parameters could be passed via sampling_params or extensions
+        )
+
+        response_generator = OpenAIImageResponseGenerator(pipeline)
+        response = await response_generator.generate_image(image_request)
+        return response
+
+    except JSONDecodeError as e:
+        logger.exception("JSONDecodeError in request %s", request_id)
+        raise HTTPException(status_code=400, detail="Missing JSON.") from e
+    except (TypeError, ValidationError) as e:
+        logger.exception("TypeError in request %s", request_id)
+        raise HTTPException(status_code=400, detail="Invalid JSON.") from e
+    except InputError as e:
+        logger.warning(
+            "Input validation error in request %s: %s", request_id, str(e)
+        )
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ValueError as e:
+        logger.exception("ValueError in request %s", request_id)
         raise HTTPException(status_code=400, detail="Value error.") from e
 
 
