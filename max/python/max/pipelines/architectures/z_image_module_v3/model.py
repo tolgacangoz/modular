@@ -20,7 +20,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import PIL.Image
@@ -44,10 +44,12 @@ from max.nn.module_v3 import Module
 from max.pipelines.core import TextContext
 from max.pipelines.lib import (
     ModelInputs,
+    ModelOutputs,
     PipelineConfig,
     PipelineModel,
     SupportedEncoding,
 )
+from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 from tqdm.auto import tqdm
 from transformers import AutoConfig
 
@@ -61,20 +63,6 @@ from .scheduling_flow_match_euler_discrete import (
 from .z_image import ZImage
 
 logger = logging.getLogger("max.pipelines")
-
-
-@dataclass(frozen=True)
-class ZImagePipelineOutput:
-    """
-    Output class for Z-Image pipelines.
-
-    Args:
-        images (`list[PIL.Image.Image]` or `Tensor`)
-            List of denoised PIL images of length `batch_size` or max tensor of shape `(batch_size, height, width,
-            num_channels)`. PIL images or max tensor present the denoised images of the diffusion pipeline.
-    """
-
-    images: list[PIL.Image.Image] | Tensor
 
 
 @dataclass(eq=False)
@@ -102,6 +90,10 @@ class ZImageInputs(ModelInputs):
     """ Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
     their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
     will be used."""
+
+    guidance_scale: float = 0.0
+    """ Guidance scale as defined in Classifier-Free Diffusion Guidance.
+    Higher values encourage images closely linked to the prompt, usually at the expense of lower image quality."""
 
     cfg_normalization: bool = False
     """ Whether to apply configuration normalization."""
@@ -253,7 +245,7 @@ class ZImageModel(
     vae: AutoencoderKL
     """The VAE to be used for image generation."""
 
-    text_encoder: Qwen3Encoder
+    text_encoder: Qwen3
     """The text encoder to be used for image generation."""
 
     transformer: ZImageTransformer2DModel
@@ -351,7 +343,6 @@ class ZImageModel(
             session
         )
 
-        # self.vae_scale_factor = 2 ** (len(self.vae.block_out_channels) - 1)
         # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (
             len(self.model_config.vae_config.block_out_channels) - 1
@@ -404,7 +395,7 @@ class ZImageModel(
             device=self.devices[0],
         )
 
-        logger.info("Building and compiling model...")
+        logger.info("Building and compiling the whole pipeline...")
         before = time.perf_counter()
 
         if not isinstance(self.weights, SafetensorWeights):
@@ -526,12 +517,18 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        # compiled_vae_decode_model = self.model.vae.decoder.compile(
-        #     sample_type,
-        #     weights=decoder_weights,
-        # )
+        logger.info("Building and compiling VAE's decoder...")
+        before_vae_decode_build = time.perf_counter()
+        self.vae = self.model.vae
+        compiled_vae_decode_model = self.model.vae.decoder.compile(
+            sample_type,
+            weights=decoder_weights,
+        )
+        after_vae_decode_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
+        )
 
-        # Shape constants for compilation - must match transformer._compile_* attributes
         C, F_dim, H_dim, W_dim = 16, 1, 128, 128
         cap_seq_len = 101
 
@@ -542,38 +539,46 @@ class ZImageModel(
         cap_feats_type = TensorType(
             DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
         )
-        # compiled_transformer_model = self.model.transformer.compile(
-        #     hidden_states_type,
-        #     t_type,
-        #     cap_feats_type,
-        #     weights=transformer_state_dict,
+
+        logger.info("Building and compiling the backbone transformer...")
+        before_transformer_build = time.perf_counter()
+        compiled_transformer_model = self.model.transformer.compile(
+            hidden_states_type,
+            t_type,
+            cap_feats_type,
+            weights=transformer_state_dict,
+        )
+        after_transformer_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
+        )
+
+        # logger.info("Building and compiling text encoder...")
+        # before_text_encoder_build = time.perf_counter()
+        # text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
+        # after_text_encoder_build = time.perf_counter()
+
+        # logger.info(
+        #     f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
         # )
 
-        logger.info("Building and compiling text encoder...")
-        before_text_encoder_build = time.perf_counter()
-        text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
-        after_text_encoder_build = time.perf_counter()
-
-        logger.info(
-            f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
-        )
-
-        before_text_encoder_compile = time.perf_counter()
-        compiled_text_encoder_model = session.load(
-            text_encoder_graph,
-            weights_registry=text_encoder_llm_state_dict,
-        )
+        # before_text_encoder_compile = time.perf_counter()
+        # compiled_text_encoder_model = session.load(
+        #     text_encoder_graph,
+        #     weights_registry=text_encoder_llm_state_dict,
+        # )
         after = time.perf_counter()
 
+        # logger.info(
+        #     f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
+        # )
         logger.info(
-            f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
-        )
-        logger.info(
-            f"Building and compiling the whole model took {after - before:.6f} seconds"
+            f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
             compiled_vae_decode_model,
-            compiled_text_encoder_model,
+            # compiled_text_encoder_model,
+            None,
             compiled_transformer_model,
         )
 
@@ -605,7 +610,7 @@ class ZImageModel(
             )
             # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST returns
             # (logits, second_to_last_hidden_states) directly
-            outputs = self.model.text_encoder(
+            outputs = self.text_encoder(
                 tokens.tensor,
                 kv_collection,
                 return_n_logits.tensor,
@@ -696,7 +701,7 @@ class ZImageModel(
             text_input_ids = text_inputs.input_ids.to(device)
             prompt_masks = text_inputs.attention_mask.to(device).bool()
 
-        prompt_embeds = self.model.text_encoder(
+        prompt_embeds = self.text_encoder(
             input_ids=text_input_ids,
             attention_mask=prompt_masks,
             output_hidden_states=True,
@@ -767,152 +772,44 @@ class ZImageModel(
 
     def execute(
         self,
-        prompt: str | list[str] | None = None,
-        height: int | None = 1024,
-        width: int | None = 1024,
-        num_inference_steps: int = 9,
-        sigmas: list[float] | None = None,
-        guidance_scale: float = 5.0,
-        cfg_normalization: bool = False,
-        cfg_truncation: float = 1.0,
-        negative_prompt: str | list[str] | None = None,
-        num_images_per_prompt: int | None = 1,
-        # generator: Generator | list[Generator] | None = None,
-        latents: Tensor | None = None,
-        prompt_embeds: list[Tensor] | None = None,
-        negative_prompt_embeds: list[Tensor] | None = None,
-        output_type: str | None = "pil",
-        return_dict: bool = True,
-        joint_attention_kwargs: dict[str, Any] | None = None,
-        callback_on_step_end: Callable[[int, int, dict], None] | None = None,
-        callback_on_step_end_tensor_inputs: tuple[str] = ("latents"),
-        max_sequence_length: int = 512,
-        # signal_buffers: list[Tensor] | None = None,
-        cu_seqlens: list[Tensor] | None = None,
-        max_seqlen: list[Tensor] | None = None,
-    ) -> Tensor | tuple[Tensor]:
+        model_inputs: ModelInputs,
+    ) -> ModelOutputs:
         r"""
-        Function invoked when calling the pipeline for generation.
-
-        Args:
-            prompt (`str` or `list[str]`, *optional*):
-                The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
-                instead.
-            height (`int`, *optional*, defaults to 1024):
-                The height in pixels of the generated image.
-            width (`int`, *optional*, defaults to 1024):
-                The width in pixels of the generated image.
-            num_inference_steps (`int`, *optional*, defaults to 9):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            sigmas (`list[float]`, *optional*):
-                Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
-                their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
-                will be used.
-            guidance_scale (`float`, *optional*, defaults to 5.0):
-                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-                `guidance_scale` is defined as `w` of equation 2. of [Imagen
-                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-                usually at the expense of lower image quality.
-            cfg_normalization (`bool`, *optional*, defaults to False):
-                Whether to apply configuration normalization.
-            cfg_truncation (`float`, *optional*, defaults to 1.0):
-                The truncation value for configuration.
-            negative_prompt (`str` or `list[str]`, *optional*):
-                The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-                less than `1`).
-            num_images_per_prompt (`int`, *optional*, defaults to 1):
-                The number of images to generate per prompt.
-            generator (`F.Generator` or `list[F.Generator]`, *optional*):
-                One or a list of [max generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
-                to make generation deterministic.
-            latents (`Tensor`, *optional*):
-                Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
-                generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
-                tensor will be generated by sampling using the supplied random `generator`.
-            prompt_embeds (`list[Tensor]`, *optional*):
-                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-                provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`list[Tensor]`, *optional*):
-                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-                argument.
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generate image. Choose between
-                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion.ZImagePipelineOutput`] instead of a plain
-                tuple.
-            joint_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            callback_on_step_end (`Callable`, *optional*):
-                A function that calls at the end of each denoising steps during the inference. The function is called
-                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
-                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
-                `callback_on_step_end_tensor_inputs`.
-            callback_on_step_end_tensor_inputs (`tuple`, *optional*):
-                The tuple of tensor inputs for the `callback_on_step_end` function. The tensors specified in the tuple
-                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
-                `._callback_tensor_inputs` attribute of your pipeline class.
-            max_sequence_length (`int`, *optional*, defaults to 512):
-                Maximum sequence length to use with the `prompt`.
-
-        Examples:
-
-        Returns:
-            [`~pipelines.z_image.ZImagePipelineOutput`] or `tuple`: [`~pipelines.z_image.ZImagePipelineOutput`] if
-            `return_dict` is True, otherwise a `tuple`. When returning a tuple, the first element is a list with the
-            generated images.
-        """
-
-        """
-    def execute(self, model_inputs: ModelInputs) -> ModelOutputs:
         Executes the Z-Image model with the prepared inputs.
 
         Args:
-            model_inputs: The prepared inputs for the model execution, typically including
-                token IDs, attention masks/offsets, and KV cache inputs.
+            model_inputs: A ZImageInputs instance containing all image generation parameters
+                including prompt, dimensions, guidance scale, etc.
 
         Returns:
-            An object containing the output logits from the model execution.
-
-        model_inputs = cast(ZImageInputs, model_inputs)
-        curr_kv_cache_inputs = model_inputs.kv_cache_inputs or ()
-
-        # For backward compatibility, distribute the single tensor to all devices
-        if isinstance(model_inputs.input_row_offsets, np.ndarray):
-            # Convert numpy array to tensor first
-            tensor = Tensor.from_numpy(model_inputs.input_row_offsets)
-            input_row_offsets = tensor.to(self.devices[0])
-        else:
-            # Already a tensor
-            input_row_offsets = model_inputs.input_row_offsets
-
-        model_outputs = self.model(
-            model_inputs.tokens,
-            model_inputs.return_n_logits,
-            input_row_offsets,
-            *curr_kv_cache_inputs,
-        )
-        if len(model_outputs) == 3:
-            return ModelOutputs(
-                logits=cast(Tensor, model_outputs[1].driver_tensor),
-                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
-                logit_offsets=cast(Tensor, model_outputs[2].driver_tensor),
-            )
-        else:
-            return ModelOutputs(
-                logits=cast(Tensor, model_outputs[0].driver_tensor),
-                next_token_logits=cast(Tensor, model_outputs[0].driver_tensor),
-            )
+            ModelOutputs containing the generated images.
         """
+        # Cast to ZImageInputs for type safety
+        assert isinstance(model_inputs, ZImageInputs), (
+            f"Expected ZImageInputs, got {type(model_inputs)}"
+        )
 
-        height = height or 1024
-        width = width or 1024
+        # Extract parameters from model_inputs
+        prompt = model_inputs.prompt
+        height = model_inputs.height or 1024
+        width = model_inputs.width or 1024
+        num_inference_steps = model_inputs.num_inference_steps
+        sigmas = model_inputs.sigmas
+        guidance_scale = model_inputs.guidance_scale
+        cfg_normalization = model_inputs.cfg_normalization
+        cfg_truncation = model_inputs.cfg_truncation
+        negative_prompt = model_inputs.negative_prompt
+        num_images_per_prompt = model_inputs.num_images_per_prompt or 1
+        latents = model_inputs.latents
+        prompt_embeds = model_inputs.prompt_embeds
+        negative_prompt_embeds = model_inputs.negative_prompt_embeds
+        output_type = model_inputs.output_type
+        joint_attention_kwargs = model_inputs.joint_attention_kwargs
+        callback_on_step_end = model_inputs.callback_on_step_end
+        callback_on_step_end_tensor_inputs = model_inputs.callback_on_step_end_tensor_inputs
+        max_sequence_length = model_inputs.max_sequence_length
+        cu_seqlens = model_inputs.cu_seqlens
+        max_seqlen = model_inputs.max_seqlen
 
         vae_scale = self.vae_scale_factor * 2
         if height % vae_scale != 0:
@@ -951,19 +848,29 @@ class ZImageModel(
                     "When `prompt_embeds` is provided without `prompt`, "
                     "`negative_prompt_embeds` must also be provided for classifier-free guidance."
                 )
-        else:
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-            ) = self.encode_prompt(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                do_classifier_free_guidance=self.do_classifier_free_guidance,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                device=device,
-                max_sequence_length=max_sequence_length,
-            )
+        # else:
+        #     (
+        #         prompt_embeds,
+        #         negative_prompt_embeds,
+        #     ) = self.encode_prompt(
+        #         prompt=prompt,
+        #         negative_prompt=negative_prompt,
+        #         do_classifier_free_guidance=self.do_classifier_free_guidance,
+        #         prompt_embeds=prompt_embeds,
+        #         negative_prompt_embeds=negative_prompt_embeds,
+        #         device=device,
+        #         max_sequence_length=max_sequence_length,
+        #     )
+
+        from max.graph.weights import SafetensorWeights
+        from pathlib import Path
+
+        # Load the safetensors file
+        weights = SafetensorWeights([Path("/root/prompt_embeds.safetensors")])
+
+        # Access a specific tensor (e.g., "prompt_embeds")
+        if weights.prompt_embeds.exists():
+            prompt_embeds = weights.prompt_embeds.allocate()
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
@@ -1152,15 +1059,12 @@ class ZImageModel(
             ) + self.vae.config.shift_factor
 
             image = self.vae.decode(latents, return_dict=False)[0]
-            image = self.image_processor.postprocess(image, output_type)
+            #image = self.image_processor.postprocess(image, output_type)
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        if not return_dict:
-            return (image,)
-
-        return ZImagePipelineOutput(images=image)
+        return ModelOutputs(hidden_states=cast(Tensor, image.driver_tensor))
 
     def prepare_initial_token_inputs(
         self,

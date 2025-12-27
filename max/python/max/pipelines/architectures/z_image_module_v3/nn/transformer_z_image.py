@@ -110,7 +110,8 @@ class ZImageSingleStreamAttention(nn.Module):
         self.to_q = nn.Linear(dim, self.inner_dim, bias=False)
         self.to_k = nn.Linear(dim, self.kv_inner_dim, bias=False)
         self.to_v = nn.Linear(dim, self.kv_inner_dim, bias=False)
-        self.to_out = nn.Linear(self.inner_dim, dim, bias=False)
+        # Use ModuleList to match Diffusers checkpoint naming: `to_out.0.weight`
+        self.to_out = ModuleList([nn.Linear(self.inner_dim, dim, bias=False)])
 
         self.norm_q = RMSNorm(dim // heads, eps)
         self.norm_k = RMSNorm(dim // heads, eps)
@@ -185,7 +186,7 @@ class ZImageSingleStreamAttention(nn.Module):
         hidden_states = F.reshape(attn_out, shape=[B, S, -1])
         hidden_states = hidden_states.cast(query.dtype)
 
-        output = self.to_out(hidden_states)
+        output = self.to_out[0](hidden_states)
 
         return output
 
