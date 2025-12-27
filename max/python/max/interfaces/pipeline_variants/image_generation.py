@@ -189,6 +189,11 @@ class ImageGenerationContext:
         """Current length for batch constructor compatibility."""
         return 1
 
+    @property
+    def processed_length(self) -> int:
+        """Processed length for batch constructor compatibility."""
+        return 0
+
     def compute_num_available_steps(self, max_seq_len: int) -> int:
         """Compute number of available steps for scheduler compatibility.
 
