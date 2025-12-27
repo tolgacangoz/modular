@@ -932,6 +932,7 @@ class ZImageModel(
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i in range(self._num_timesteps):
+                print(f"DEBUG: Step {i} started")
                 t = timesteps[i]
                 if self.interrupt:
                     continue
@@ -940,7 +941,9 @@ class ZImageModel(
                 timestep = F.broadcast_to(t, (int(latents.shape[0]),))
                 timestep = (1000 - timestep) / 1000
                 # Normalized time for time-aware config (0 at start, 1 at end)
+                print(f"DEBUG: Step {i} - getting t_norm")
                 t_norm = timestep[0].item()
+                print(f"DEBUG: Step {i} - t_norm = {t_norm}")
 
                 # Handle cfg truncation
                 current_guidance_scale = self.guidance_scale
@@ -957,6 +960,7 @@ class ZImageModel(
                     self.do_classifier_free_guidance
                     and current_guidance_scale > 0
                 )
+                print(f"DEBUG: Step {i} - apply_cfg = {apply_cfg}")
 
                 if apply_cfg:
                     latents_typed = latents.cast(self.transformer.dtype)
@@ -970,17 +974,20 @@ class ZImageModel(
                     prompt_embeds_model_input = prompt_embeds
                     timestep_model_input = timestep
 
+                print(f"DEBUG: Step {i} - preparing latent inputs")
                 latent_model_input = F.unsqueeze(latent_model_input, 2)
                 latent_model_input_list = [
                     latent_model_input[i]
                     for i in range(int(latent_model_input.shape[0]))
                 ]
 
+                print(f"DEBUG: Step {i} - calling transformer")
                 model_out_list = self.transformer(
                     latent_model_input_list,
                     timestep_model_input,
                     prompt_embeds_model_input,
                 )[0]
+                print(f"DEBUG: Step {i} - transformer done")
 
                 if apply_cfg:
                     # Perform CFG
