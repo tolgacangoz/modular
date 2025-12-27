@@ -927,6 +927,8 @@ class ZImageModel(
         )
         self._num_timesteps = int(timesteps.shape[0])
 
+        print("DEBUG: Starting denoising loop")
+
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i in range(self._num_timesteps):
