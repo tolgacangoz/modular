@@ -30,6 +30,7 @@ from max.driver import load_devices
 from max.graph.weights import WeightsAdapter, WeightsFormat
 from max.interfaces import (
     EmbeddingsContext,
+    ImageGenerationContext,
     Pipeline,
     PipelineTask,
     PipelineTokenizer,
@@ -177,11 +178,11 @@ class SupportedArchitecture:
     default_weights_format: WeightsFormat
     """The weights format expected by the `pipeline_model`."""
 
-    context_type: type[TextGenerationContext] | type[EmbeddingsContext]
+    context_type: type[TextGenerationContext] | type[EmbeddingsContext] | type[ImageGenerationContext]
     """The context class type that this architecture uses for managing request state and inputs.
 
-    This should be a class (not an instance) that implements either the `TextGenerationContext`
-    or `EmbeddingsContext` protocol, defining how the pipeline processes and tracks requests.
+    This should be a class (not an instance) that implements either the `TextGenerationContext`,
+    `EmbeddingsContext`, or `ImageGenerationContext` protocol, defining how the pipeline processes and tracks requests.
     """
 
     rope_type: RopeType = RopeType.none
@@ -588,19 +589,19 @@ class PipelineRegistry:
 
     def retrieve_context_type(
         self, pipeline_config: PipelineConfig
-    ) -> type[TextGenerationContext] | type[EmbeddingsContext]:
+    ) -> type[TextGenerationContext] | type[EmbeddingsContext] | type[ImageGenerationContext]:
         """Retrieve the context class type associated with the architecture for the given pipeline configuration.
 
         The context type defines how the pipeline manages request state and inputs during
         model execution. Different architectures may use different context implementations
-        that adhere to either the TextGenerationContext or EmbeddingsContext protocol.
+        that adhere to either the TextGenerationContext, EmbeddingsContext, or ImageGenerationContext protocol.
 
         Args:
             pipeline_config: The configuration for the pipeline.
 
         Returns:
             The context class type associated with the architecture, which implements
-            either the TextGenerationContext or EmbeddingsContext protocol.
+            either the TextGenerationContext, EmbeddingsContext, or ImageGenerationContext protocol.
 
         Raises:
             ValueError: If no supported architecture is found for the given model repository.
