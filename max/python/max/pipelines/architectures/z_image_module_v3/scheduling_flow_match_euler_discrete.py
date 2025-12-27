@@ -455,8 +455,7 @@ class FlowMatchEulerDiscreteScheduler:
         s_noise: float = 1.0,
         # generator: Generator | None = None,
         per_token_timesteps: Tensor | None = None,
-        return_dict: bool = True,
-    ) -> FlowMatchEulerDiscreteSchedulerOutput | tuple:
+    ) -> FlowMatchEulerDiscreteSchedulerOutput:
         """
         Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
         process from the learned model outputs (most often the predicted noise).
@@ -477,15 +476,10 @@ class FlowMatchEulerDiscreteScheduler:
                 A random number generator.
             per_token_timesteps (`Tensor`, *optional*):
                 The timesteps for each token in the sample.
-            return_dict (`bool`):
-                Whether or not to return a
-                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] or tuple.
 
         Returns:
-            [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] or `tuple`:
-                If return_dict is `True`,
-                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] is returned,
-                otherwise a tuple is returned where the first element is the sample tensor.
+            [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`]:
+                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] is returned.
         """
 
         if self.step_index is None:
@@ -526,9 +520,6 @@ class FlowMatchEulerDiscreteScheduler:
         if per_token_timesteps is None:
             # Cast sample back to model compatible dtype
             prev_sample = prev_sample.cast(model_output.dtype)
-
-        if not return_dict:
-            return (prev_sample,)
 
         return FlowMatchEulerDiscreteSchedulerOutput(prev_sample=prev_sample)
 
