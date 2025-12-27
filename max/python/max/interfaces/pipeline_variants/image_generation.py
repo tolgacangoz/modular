@@ -40,8 +40,7 @@ class ImageGenerationRequest(Request):
     """
 
     input: str | None = None
-    """The text to generate images for. The maximum length is 4096 characters.
-    """
+    """The text to generate images for. The maximum length is 4096 characters."""
 
     image_prompt_tokens: list[int] = field(default_factory=list)
     """The prompt image IDs to use for image generation."""
@@ -53,8 +52,26 @@ class ImageGenerationRequest(Request):
     """Optionally provide a preprocessed list of token ids or a prompt string to pass as input directly into the model.
     This replaces automatically generating TokenGeneratorRequestMessages given the input, image prompt tokens fields."""
 
-    streaming: bool = True
+    streaming: bool = False
     """Whether to stream the image generation."""
+
+    guidance_scale: float = 0.0
+    """Guidance scale for classifier-free guidance. Set to 0 to disable CFG."""
+
+    height: int | None = 1024
+    """Height of generated image in pixels. Defaults to model's default (typically 1024)."""
+
+    width: int | None = 1024
+    """Width of generated image in pixels. Defaults to model's default (typically 1024)."""
+
+    num_inference_steps: int = 50
+    """Number of denoising steps. More steps = higher quality but slower."""
+
+    negative_prompt: str | None = None
+    """Negative prompt to guide what NOT to generate."""
+
+    num_images_per_prompt: int = 1
+    """Number of images to generate per prompt."""
 
     def __post_init__(self) -> None:
         if self.prompt is None and self.input is None:
@@ -103,6 +120,51 @@ type used in image generation pipelines. It allows for type-safe generic
 programming while ensuring that all context types inherit from BaseContext
 and maintain the required interface for image generation operations.
 """
+
+
+@dataclass
+class ImageGenerationContext:
+    """Context for image generation requests.
+
+    This is a simple context that implements BaseContext protocol for diffusion
+    model pipelines. Unlike text generation, image generation doesn't require
+    tokenization - it just needs the prompt and generation parameters.
+
+    Attributes:
+        request_id: Unique identifier for this request.
+        prompt: Text prompt for image generation.
+        height: Height of generated image in pixels.
+        width: Width of generated image in pixels.
+        num_inference_steps: Number of denoising steps.
+        guidance_scale: Classifier-free guidance scale (0 to disable CFG).
+        negative_prompt: Negative prompt for what NOT to generate.
+        num_images_per_prompt: Number of images to generate.
+        status: Current generation status.
+    """
+    request_id: RequestID
+    prompt: str
+    height: int = 1024
+    width: int = 1024
+    num_inference_steps: int = 50
+    guidance_scale: float = 0.0
+    negative_prompt: str | None = None
+    num_images_per_prompt: int = 1
+    _status: GenerationStatus = field(default=GenerationStatus.ACTIVE)
+
+    @property
+    def status(self) -> GenerationStatus:
+        """Current generation status of the request."""
+        return self._status
+
+    @status.setter
+    def status(self, value: GenerationStatus) -> None:
+        """Update the generation status."""
+        self._status = value
+
+    @property
+    def is_done(self) -> bool:
+        """Whether the request has completed generation."""
+        return self._status.is_done
 
 
 @dataclass(frozen=True)
