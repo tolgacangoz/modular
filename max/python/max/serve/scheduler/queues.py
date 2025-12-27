@@ -44,7 +44,9 @@ class SchedulerZmqConfigs:
     def __init__(
         self,
         pipeline_task: PipelineTask,
-        context_type: type[TextGenerationContext] | type[EmbeddingsContext] | type[ImageGenerationContext],
+        context_type: type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[ImageGenerationContext],
     ) -> None:
         response_type = pipeline_task.output_type
 
