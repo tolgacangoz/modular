@@ -128,19 +128,19 @@ class ImageGenerationContext:
 
     This is a simple context that implements BaseContext protocol for diffusion
     model pipelines. It includes fields for both image generation parameters
-    and tokenization support for the text encoder.
+    and compatibility with the text generation scheduler.
 
     Attributes:
         request_id: Unique identifier for this request.
         prompt: Text prompt for image generation.
         max_length: Maximum sequence length for tokenization (required for msgspec).
-        tokens: Optional tokenized prompt array.
         height: Height of generated image in pixels.
         width: Width of generated image in pixels.
         num_inference_steps: Number of denoising steps.
         guidance_scale: Classifier-free guidance scale (0 to disable CFG).
         negative_prompt: Negative prompt for what NOT to generate.
         num_images_per_prompt: Number of images to generate.
+        model_name: Name of the model (for scheduler compatibility).
         status: Current generation status.
     """
     request_id: RequestID
@@ -152,6 +152,7 @@ class ImageGenerationContext:
     guidance_scale: float = 0.0
     negative_prompt: str | None = None
     num_images_per_prompt: int = 1
+    model_name: str = ""  # For scheduler compatibility
     _status: GenerationStatus = field(default=GenerationStatus.ACTIVE)
 
     @property
@@ -168,6 +169,32 @@ class ImageGenerationContext:
     def is_done(self) -> bool:
         """Whether the request has completed generation."""
         return self._status.is_done
+
+    @property
+    def needs_ce(self) -> bool:
+        """Whether this context needs context encoding.
+
+        For image generation, we never need context encoding since
+        we process the full prompt at once through the text encoder.
+        """
+        return False
+
+    @property
+    def active_length(self) -> int:
+        """Current sequence length for batch constructor compatibility."""
+        return 1
+
+    @property
+    def current_length(self) -> int:
+        """Current length for batch constructor compatibility."""
+        return 1
+
+    def compute_num_available_steps(self, max_seq_len: int) -> int:
+        """Compute number of available steps for scheduler compatibility.
+
+        For image generation, this returns the number of inference steps.
+        """
+        return self.num_inference_steps
 
 
 @dataclass(frozen=True)
