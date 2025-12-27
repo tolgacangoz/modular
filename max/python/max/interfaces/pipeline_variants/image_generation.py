@@ -127,12 +127,14 @@ class ImageGenerationContext:
     """Context for image generation requests.
 
     This is a simple context that implements BaseContext protocol for diffusion
-    model pipelines. Unlike text generation, image generation doesn't require
-    tokenization - it just needs the prompt and generation parameters.
+    model pipelines. It includes fields for both image generation parameters
+    and tokenization support for the text encoder.
 
     Attributes:
         request_id: Unique identifier for this request.
         prompt: Text prompt for image generation.
+        max_length: Maximum sequence length for tokenization (required for msgspec).
+        tokens: Optional tokenized prompt array.
         height: Height of generated image in pixels.
         width: Width of generated image in pixels.
         num_inference_steps: Number of denoising steps.
@@ -143,6 +145,7 @@ class ImageGenerationContext:
     """
     request_id: RequestID
     prompt: str
+    max_length: int = 4096  # Default max sequence length for text encoder
     height: int = 1024
     width: int = 1024
     num_inference_steps: int = 50
