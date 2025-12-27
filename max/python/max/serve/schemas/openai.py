@@ -522,6 +522,21 @@ class CreateImageRequest(BaseModel):
         description='A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](/docs/guides/safety-best-practices/end-user-ids).\n',
         examples=['user-1234'],
     )
+    guidance_scale: Optional[float] = Field(
+        None,
+        description='Guidance scale for classifier-free guidance. Set to 0 to disable CFG. Typical values: 5.0-7.5. If not set, uses model default.',
+        examples=[5.0, 0.0],
+    )
+    negative_prompt: Optional[str] = Field(
+        None,
+        description='Negative prompt to guide what NOT to generate.',
+        examples=['blurry, low quality'],
+    )
+    num_inference_steps: Optional[int] = Field(
+        None,
+        description='Number of denoising steps. More steps = higher quality but slower. If not set, uses model default.',
+        examples=[9, 50],
+    )
 
 
 class Image(BaseModel):
