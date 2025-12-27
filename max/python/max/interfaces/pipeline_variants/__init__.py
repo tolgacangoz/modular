@@ -25,6 +25,7 @@ from .embeddings_generation import (
     EmbeddingsGenerationOutput,
 )
 from .image_generation import (
+    ImageGenerationContext,
     ImageGenerationContextType,
     ImageGenerationInputs,
     ImageGenerationMetadata,
@@ -57,6 +58,7 @@ __all__ = [
     "EmbeddingsGenerationContextType",
     "EmbeddingsGenerationInputs",
     "EmbeddingsGenerationOutput",
+    "ImageGenerationContext",
     "ImageGenerationContextType",
     "ImageGenerationInputs",
     "ImageGenerationMetadata",
