@@ -43,6 +43,7 @@ from httpx import AsyncClient
 from max.interfaces import (
     AudioGenerationRequest,
     GenerationStatus,
+    ImageGenerationRequest,
     LoRAOperation,
     LoRARequest,
     LoRAStatus,
@@ -63,6 +64,7 @@ from max.serve.config import Settings
 from max.serve.parser import LlamaToolParser, parse_json_from_text
 from max.serve.pipelines.llm import (
     AudioGeneratorPipeline,
+    ImageGeneratorPipeline,
     TokenGeneratorOutput,
     TokenGeneratorPipeline,
 )
@@ -85,10 +87,13 @@ from max.serve.schemas.openai import (
     CreateCompletionResponse,
     CreateEmbeddingRequest,
     CreateEmbeddingResponse,
+    CreateImageRequest,
     Embedding,
     Error,
     ErrorResponse,
     Function1,
+    Image,
+    ImagesResponse,
     InputItem,
     ListModelsResponse,
     LoadLoraRequest,
@@ -552,6 +557,76 @@ class OpenAISpeechResponseGenerator:
             metadata=output.metadata.to_dict(),
         )
         return response
+
+
+class OpenAIImageResponseGenerator:
+    """Response generator for OpenAI-compatible image generation endpoints."""
+
+    def __init__(self, pipeline: ImageGeneratorPipeline) -> None:
+        self.logger = logging.getLogger(
+            "max.serve.router.OpenAIImageResponseGenerator"
+        )
+        self.pipeline = pipeline
+
+    async def generate_images(
+        self, request: ImageGenerationRequest
+    ) -> ImagesResponse:
+        """Generate images and return OpenAI-compatible response."""
+        self.logger.debug("Image generation: Start: %s", request)
+        output = await self.pipeline.generate_full_image(request)
+
+        # Convert numpy image data to base64-encoded PNG
+        images_data: list[Image] = []
+
+        if output.image_data.size > 0:
+            # Import PIL for image encoding
+            from io import BytesIO
+
+            from PIL import Image as PILImage
+
+            # The image_data is expected to be in HWC format with values in [0, 1] or [0, 255]
+            import numpy as np
+
+            image_array = output.image_data
+
+            # Handle different number of images (batch dimension)
+            if len(image_array.shape) == 4:
+                # Batch of images: (N, H, W, C)
+                for i in range(image_array.shape[0]):
+                    img_data = image_array[i]
+                    img_b64 = self._encode_image_to_base64(img_data)
+                    images_data.append(Image(b64_json=img_b64))
+            else:
+                # Single image: (H, W, C)
+                img_b64 = self._encode_image_to_base64(image_array)
+                images_data.append(Image(b64_json=img_b64))
+
+        response = ImagesResponse(
+            created=int(datetime.now().timestamp()),
+            data=images_data,
+        )
+        return response
+
+    def _encode_image_to_base64(self, image_array: "np.ndarray") -> str:
+        """Encode a numpy image array to base64 PNG string."""
+        from io import BytesIO
+
+        import numpy as np
+        from PIL import Image as PILImage
+
+        # Normalize to [0, 255] if needed
+        if image_array.max() <= 1.0:
+            image_array = (image_array * 255).astype(np.uint8)
+        else:
+            image_array = image_array.astype(np.uint8)
+
+        # Create PIL Image and encode to PNG
+        pil_image = PILImage.fromarray(image_array)
+        buffer = BytesIO()
+        pil_image.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        return base64.b64encode(buffer.read()).decode("utf-8")
 
 
 async def openai_parse_chat_completion_request(
@@ -1422,6 +1497,88 @@ async def create_streaming_audio_speech(
         # NOTE(SI-722): These errors need to return more helpful details,
         # but we don't necessarily want to expose the full error description
         # to the user. There are many different ValueErrors that can be raised.
+        raise HTTPException(status_code=400, detail="Value error.") from e
+
+
+def _parse_image_size(size: str | None) -> tuple[int, int]:
+    """Parse size string like '1024x1024' into (width, height) tuple."""
+    if size is None:
+        return (1024, 1024)
+    try:
+        parts = size.lower().split("x")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid size format: {size}")
+        return (int(parts[0]), int(parts[1]))
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"Invalid size format: {size}") from e
+
+
+@router.post("/images/generations", response_model=None)
+async def openai_create_image(
+    request: Request,
+) -> ImagesResponse:
+    """OpenAI-compatible image generation endpoint.
+
+    Generates images based on a text prompt using diffusion models.
+    https://platform.openai.com/docs/api-reference/images/create
+    """
+    request_id = request.state.request_id
+    try:
+        image_request = CreateImageRequest.model_validate_json(
+            await request.body()
+        )
+
+        app_state: State = request.app.state
+        pipeline = app_state.pipeline
+
+        if not isinstance(pipeline, ImageGeneratorPipeline):
+            raise HTTPException(
+                status_code=400,
+                detail="This endpoint requires an image generation model. "
+                "Please start the server with --task image_generation.",
+            )
+
+        logger.debug(
+            "Processing path, %s, req-id, %s, for model, %s.",
+            request.url.path,
+            request_id,
+            image_request.model,
+        )
+
+        # Parse size string to width/height
+        width, height = _parse_image_size(image_request.size)
+
+        # Create the ImageGenerationRequest
+        image_gen_request = ImageGenerationRequest(
+            request_id=RequestID(request_id),
+            model=image_request.model or pipeline.model_name,
+            input=image_request.prompt,
+            prompt=image_request.prompt,
+            height=height,
+            width=width,
+            num_images_per_prompt=image_request.n or 1,
+            guidance_scale=image_request.guidance_scale or 0.0,
+            negative_prompt=image_request.negative_prompt,
+            num_inference_steps=image_request.num_inference_steps or 50,
+        )
+
+        response_generator = OpenAIImageResponseGenerator(pipeline)
+        response = await response_generator.generate_images(image_gen_request)
+        return response
+
+    except JSONDecodeError as e:
+        logger.exception("JSONDecodeError in request %s", request_id)
+        raise HTTPException(status_code=400, detail="Missing JSON.") from e
+    except (TypeError, ValidationError) as e:
+        logger.exception("TypeError in request %s", request_id)
+        raise HTTPException(status_code=400, detail="Invalid JSON.") from e
+    except InputError as e:
+        logger.warning(
+            "Input validation error in request %s: %s", request_id, str(e)
+        )
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ValueError as e:
+        logger.exception("ValueError in request %s", request_id)
         raise HTTPException(status_code=400, detail="Value error.") from e
 
 
