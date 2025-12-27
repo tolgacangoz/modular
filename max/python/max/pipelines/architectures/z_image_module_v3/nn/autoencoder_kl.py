@@ -97,6 +97,25 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         use_post_quant_conv: bool = True,
         mid_block_add_attention: bool = True,
     ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.down_block_types = down_block_types
+        self.up_block_types = up_block_types
+        self.block_out_channels = block_out_channels
+        self.layers_per_block = layers_per_block
+        self.act_fn = act_fn
+        self.latent_channels = latent_channels
+        self.norm_num_groups = norm_num_groups
+        self.sample_size = sample_size
+        self.scaling_factor = scaling_factor
+        self.shift_factor = shift_factor
+        self.latents_mean = latents_mean
+        self.latents_std = latents_std
+        self.force_upcast = force_upcast
+        self.use_quant_conv = use_quant_conv
+        self.use_post_quant_conv = use_post_quant_conv
+        self.mid_block_add_attention = mid_block_add_attention
         # pass init params to Encoder
         self.encoder = Encoder(
             in_channels=in_channels,
