@@ -400,6 +400,8 @@ class ImageGeneratorPipeline(
         self, request: ImageGenerationRequest
     ) -> AsyncGenerator[ImageGenerationOutput, None]:
         """Generates and streams images for the provided request."""
+        from max.interfaces import ImageGenerationContext
+
         total_sw = StopWatch()
         self.logger.debug(
             "%s: Started: Elapsed: %0.2f ms",
@@ -409,7 +411,19 @@ class ImageGeneratorPipeline(
 
         try:
             with record_ms(METRICS.input_time):
-                context = await self.tokenizer.new_context(request)
+                # context = await self.tokenizer.new_context(request)
+                # For image generation, create context directly from request
+                # (no tokenization needed - just the prompt and generation params)
+                context = ImageGenerationContext(
+                    request_id=request.request_id,
+                    prompt=request.prompt if isinstance(request.prompt, str) else (request.input or ""),
+                    height=request.height or 1024,
+                    width=request.width or 1024,
+                    num_inference_steps=request.num_inference_steps,
+                    guidance_scale=request.guidance_scale,
+                    negative_prompt=request.negative_prompt,
+                    num_images_per_prompt=request.num_images_per_prompt,
+                )
 
             with record_ms(METRICS.output_time):
                 async for response in self.engine_queue.stream(
@@ -423,6 +437,7 @@ class ImageGeneratorPipeline(
                     request.request_id,
                     total_sw.elapsed_ms,
                 )
+
 
     async def generate_full_image(
         self, request: ImageGenerationRequest
