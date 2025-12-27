@@ -169,8 +169,10 @@ class ImageGenerationPipeline(
         Returns:
             Dictionary mapping request IDs to their generated images.
         """
-        from max.pipelines.architectures.z_image_module_v3.model import ZImageInputs
         from max.interfaces import GenerationStatus
+        from max.pipelines.architectures.z_image_module_v3.model import (
+            ZImageInputs,
+        )
 
         results: dict[RequestID, ImageGenerationOutput] = {}
 

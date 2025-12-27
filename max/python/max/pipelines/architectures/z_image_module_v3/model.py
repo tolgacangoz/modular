@@ -23,7 +23,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
-import PIL.Image
 from max._core.engine import Model
 from max.driver import Device
 from max.dtype import DType
@@ -41,6 +40,7 @@ from max.graph.weights import (
 from max.nn import ReturnLogits
 from max.nn.kv_cache import KVCacheInputs, PagedCacheValues
 from max.nn.module_v3 import Module
+from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 from max.pipelines.core import TextContext
 from max.pipelines.lib import (
     ModelInputs,
@@ -49,7 +49,6 @@ from max.pipelines.lib import (
     PipelineModel,
     SupportedEncoding,
 )
-from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 from tqdm.auto import tqdm
 from transformers import AutoConfig
 
@@ -806,7 +805,9 @@ class ZImageModel(
         output_type = model_inputs.output_type
         joint_attention_kwargs = model_inputs.joint_attention_kwargs
         callback_on_step_end = model_inputs.callback_on_step_end
-        callback_on_step_end_tensor_inputs = model_inputs.callback_on_step_end_tensor_inputs
+        callback_on_step_end_tensor_inputs = (
+            model_inputs.callback_on_step_end_tensor_inputs
+        )
         max_sequence_length = model_inputs.max_sequence_length
         cu_seqlens = model_inputs.cu_seqlens
         max_seqlen = model_inputs.max_seqlen
@@ -862,8 +863,9 @@ class ZImageModel(
         #         max_sequence_length=max_sequence_length,
         #     )
 
-        from max.graph.weights import SafetensorWeights
         from pathlib import Path
+
+        from max.graph.weights import SafetensorWeights
 
         # Load the safetensors file
         weights = SafetensorWeights([Path("/root/prompt_embeds.safetensors")])
@@ -932,7 +934,6 @@ class ZImageModel(
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i in range(self._num_timesteps):
-                print(f"DEBUG: Step {i} started")
                 t = timesteps[i]
                 if self.interrupt:
                     continue
@@ -941,9 +942,7 @@ class ZImageModel(
                 timestep = F.broadcast_to(t, (int(latents.shape[0]),))
                 timestep = (1000 - timestep) / 1000
                 # Normalized time for time-aware config (0 at start, 1 at end)
-                print(f"DEBUG: Step {i} - getting t_norm")
                 t_norm = timestep[0].item()
-                print(f"DEBUG: Step {i} - t_norm = {t_norm}")
 
                 # Handle cfg truncation
                 current_guidance_scale = self.guidance_scale
@@ -960,7 +959,6 @@ class ZImageModel(
                     self.do_classifier_free_guidance
                     and current_guidance_scale > 0
                 )
-                print(f"DEBUG: Step {i} - apply_cfg = {apply_cfg}")
 
                 if apply_cfg:
                     latents_typed = latents.cast(self.transformer.dtype)
@@ -974,20 +972,13 @@ class ZImageModel(
                     prompt_embeds_model_input = prompt_embeds
                     timestep_model_input = timestep
 
-                print(f"DEBUG: Step {i} - preparing latent inputs")
                 latent_model_input = F.unsqueeze(latent_model_input, 2)
-                latent_model_input_list = [
-                    latent_model_input[i]
-                    for i in range(int(latent_model_input.shape[0]))
-                ]
 
-                print(f"DEBUG: Step {i} - calling transformer")
-                model_out_list = self.transformer(
-                    latent_model_input_list,
+                model_out = self.transformer(
+                    F.squeeze(latent_model_input, 0),
                     timestep_model_input,
                     prompt_embeds_model_input,
-                )[0]
-                print(f"DEBUG: Step {i} - transformer done")
+                ).sample
 
                 if apply_cfg:
                     # Perform CFG
@@ -1021,19 +1012,17 @@ class ZImageModel(
                     noise_pred = F.stack(noise_pred, axis=0)
                 else:
                     noise_pred = F.stack(
-                        [t.cast(DType.float32) for t in model_out_list], axis=0
+                        [t.cast(DType.float32) for t in model_out], axis=0
                     )
 
-                noise_pred = F.squeeze(noise_pred, 2)
-                noise_pred = -noise_pred
+                noise_pred = -F.squeeze(noise_pred, 2)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred.cast(DType.float32),
                     t,
                     latents,
-                    return_dict=False,
-                )[0]
+                ).prev_sample
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -1067,8 +1056,8 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            image = self.vae.decode(latents, return_dict=False)[0]
-            #image = self.image_processor.postprocess(image, output_type)
+            image = self.vae.decode(latents).sample
+            # image = self.image_processor.postprocess(image, output_type)
 
         # Offload all models
         # self.maybe_free_model_hooks()

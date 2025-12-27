@@ -143,6 +143,7 @@ class ImageGenerationContext:
         model_name: Name of the model (for scheduler compatibility).
         status: Current generation status.
     """
+
     request_id: RequestID
     prompt: str
     max_length: int = 4096  # Default max sequence length for text encoder
