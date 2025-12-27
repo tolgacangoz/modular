@@ -118,14 +118,14 @@ class ImageGenerationPipeline(
         from max.graph.weights import load_weights as _load_weights
         from max.graph.weights import weights_format as _weights_format
 
-        # For image generation, we don't need KV cache
+        # For image generation, we still need kv_cache_config for the text encoder
         self._pipeline_model = pipeline_model(
             pipeline_config=self._pipeline_config,
             session=session,
             huggingface_config=self._pipeline_config.model_config.huggingface_config,
             encoding=self._pipeline_config.model_config.quantization_encoding,
             devices=self._devices,
-            kv_cache_config=None,  # No KV cache for image generation
+            kv_cache_config=self._pipeline_config.model_config.kv_cache_config,
             weights=_load_weights(weight_paths),
             adapter=self._weight_adapters.get(
                 _weights_format(weight_paths), None
