@@ -906,10 +906,10 @@ class ZImageModel(
         # 5. Prepare timesteps
         mu = calculate_shift(
             image_seq_len,
-            self.scheduler.get("base_image_seq_len", 256),
-            self.scheduler.get("max_image_seq_len", 4096),
-            self.scheduler.get("base_shift", 0.5),
-            self.scheduler.get("max_shift", 1.15),
+            self.scheduler.base_image_seq_len,
+            self.scheduler.max_image_seq_len,
+            self.scheduler.base_shift,
+            self.scheduler.max_shift,
         )
         self.scheduler.sigma_min = 0.0
         scheduler_kwargs = {"mu": mu}
