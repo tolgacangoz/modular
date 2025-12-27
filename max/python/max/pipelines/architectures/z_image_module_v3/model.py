@@ -339,6 +339,7 @@ class ZImageModel(
         self.model_config = None
         self._session = session  # reuse for on-device casts
 
+        self.scheduler = None
         self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
             session
         )
@@ -520,6 +521,7 @@ class ZImageModel(
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
         self.vae = self.model.vae
+        self.scheduler = self.model.scheduler
         compiled_vae_decode_model = self.model.vae.decoder.compile(
             sample_type,
             weights=decoder_weights,
