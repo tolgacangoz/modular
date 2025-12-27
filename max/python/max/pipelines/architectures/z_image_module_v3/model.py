@@ -906,10 +906,10 @@ class ZImageModel(
         # 5. Prepare timesteps
         mu = calculate_shift(
             image_seq_len,
-            self.scheduler.config.get("base_image_seq_len", 256),
-            self.scheduler.config.get("max_image_seq_len", 4096),
-            self.scheduler.config.get("base_shift", 0.5),
-            self.scheduler.config.get("max_shift", 1.15),
+            self.scheduler.get("base_image_seq_len", 256),
+            self.scheduler.get("max_image_seq_len", 4096),
+            self.scheduler.get("base_shift", 0.5),
+            self.scheduler.get("max_shift", 1.15),
         )
         self.scheduler.sigma_min = 0.0
         scheduler_kwargs = {"mu": mu}
@@ -1055,8 +1055,8 @@ class ZImageModel(
         else:
             latents = latents.cast(self.vae.dtype)
             latents = (
-                latents / self.vae.config.scaling_factor
-            ) + self.vae.config.shift_factor
+                latents / self.vae.scaling_factor
+            ) + self.vae.shift_factor
 
             image = self.vae.decode(latents, return_dict=False)[0]
             #image = self.image_processor.postprocess(image, output_type)
