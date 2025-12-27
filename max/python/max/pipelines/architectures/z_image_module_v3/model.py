@@ -784,10 +784,8 @@ class ZImageModel(
         Returns:
             ModelOutputs containing the generated images.
         """
-        # Cast to ZImageInputs for type safety
-        assert isinstance(model_inputs, ZImageInputs), (
-            f"Expected ZImageInputs, got {type(model_inputs)}"
-        )
+        # Use cast for type safety (same pattern as GptOssModel)
+        model_inputs = cast(ZImageInputs, model_inputs)
 
         # Extract parameters from model_inputs
         prompt = model_inputs.prompt
