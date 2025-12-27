@@ -37,6 +37,7 @@ from typing import (
 from urllib.parse import unquote, urlparse
 
 import aiofiles
+import numpy as np
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from httpx import AsyncClient
@@ -579,14 +580,6 @@ class OpenAIImageResponseGenerator:
         images_data: list[Image] = []
 
         if output.image_data.size > 0:
-            # Import PIL for image encoding
-            from io import BytesIO
-
-            from PIL import Image as PILImage
-
-            # The image_data is expected to be in HWC format with values in [0, 1] or [0, 255]
-            import numpy as np
-
             image_array = output.image_data
 
             # Handle different number of images (batch dimension)
@@ -607,11 +600,10 @@ class OpenAIImageResponseGenerator:
         )
         return response
 
-    def _encode_image_to_base64(self, image_array: "np.ndarray") -> str:
+    def _encode_image_to_base64(self, image_array: np.ndarray) -> str:
         """Encode a numpy image array to base64 PNG string."""
         from io import BytesIO
 
-        import numpy as np
         from PIL import Image as PILImage
 
         # Normalize to [0, 255] if needed

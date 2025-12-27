@@ -416,7 +416,9 @@ class ImageGeneratorPipeline(
                 # (no tokenization needed - just the prompt and generation params)
                 context = ImageGenerationContext(
                     request_id=request.request_id,
-                    prompt=request.prompt if isinstance(request.prompt, str) else (request.input or ""),
+                    prompt=request.prompt
+                    if isinstance(request.prompt, str)
+                    else (request.input or ""),
                     height=request.height or 1024,
                     width=request.width or 1024,
                     num_inference_steps=request.num_inference_steps,
@@ -437,7 +439,6 @@ class ImageGeneratorPipeline(
                     request.request_id,
                     total_sw.elapsed_ms,
                 )
-
 
     async def generate_full_image(
         self, request: ImageGenerationRequest

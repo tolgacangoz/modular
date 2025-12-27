@@ -722,7 +722,6 @@ class ZImageTransformer2DModel(nn.Module):
         x: Tensor,
         t: Tensor,
         cap_feats: Tensor,
-        return_dict: bool = False,
     ):
         """Graph-compilable forward pass for batch_size=1.
 
@@ -733,7 +732,6 @@ class ZImageTransformer2DModel(nn.Module):
             x: Image latent tensor of shape (C, F_dim, H_dim, W_dim)
             t: Timestep tensor of shape (1,)
             cap_feats: Caption features tensor of shape (cap_seq_len, hidden_dim)
-            return_dict: Whether to return a dict (default False for compilation)
         """
         # Use fixed shape parameters from class attributes
         C = self._compile_C
@@ -839,8 +837,5 @@ class ZImageTransformer2DModel(nn.Module):
             (6, 0, 3, 1, 4, 2, 5)
         )  # (out_channels, F_tokens, pF, H_tokens, pH, W_tokens, pW)
         x = x.reshape((out_channels, F_dim, H_dim, W_dim))
-
-        if not return_dict:
-            return x
 
         return Transformer2DModelOutput(sample=x)

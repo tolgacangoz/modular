@@ -178,7 +178,11 @@ class SupportedArchitecture:
     default_weights_format: WeightsFormat
     """The weights format expected by the `pipeline_model`."""
 
-    context_type: type[TextGenerationContext] | type[EmbeddingsContext] | type[ImageGenerationContext]
+    context_type: (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[ImageGenerationContext]
+    )
     """The context class type that this architecture uses for managing request state and inputs.
 
     This should be a class (not an instance) that implements either the `TextGenerationContext`,
@@ -589,7 +593,11 @@ class PipelineRegistry:
 
     def retrieve_context_type(
         self, pipeline_config: PipelineConfig
-    ) -> type[TextGenerationContext] | type[EmbeddingsContext] | type[ImageGenerationContext]:
+    ) -> (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[ImageGenerationContext]
+    ):
         """Retrieve the context class type associated with the architecture for the given pipeline configuration.
 
         The context type defines how the pipeline manages request state and inputs during
