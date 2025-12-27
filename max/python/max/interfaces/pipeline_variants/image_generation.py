@@ -124,6 +124,53 @@ and maintain the required interface for image generation operations.
 """
 
 
+@dataclass
+class ImageGenerationContext:
+    """Context for image generation requests.
+
+    This is a simple context that implements BaseContext protocol for diffusion
+    model pipelines. Unlike text generation, image generation doesn't require
+    tokenization - it just needs the prompt and generation parameters.
+
+    Attributes:
+        request_id: Unique identifier for this request.
+        prompt: Text prompt for image generation.
+        height: Height of generated image in pixels.
+        width: Width of generated image in pixels.
+        num_inference_steps: Number of denoising steps.
+        guidance_scale: Classifier-free guidance scale (0 to disable CFG).
+        negative_prompt: Negative prompt for what NOT to generate.
+        num_images_per_prompt: Number of images to generate.
+        status: Current generation status.
+    """
+    request_id: RequestID
+    prompt: str
+    height: int = 1024
+    width: int = 1024
+    num_inference_steps: int = 50
+    guidance_scale: float = 5.0
+    negative_prompt: str | None = None
+    num_images_per_prompt: int = 1
+    _status: GenerationStatus = field(default=GenerationStatus.ACTIVE)
+
+    @property
+    def status(self) -> GenerationStatus:
+        """Current generation status of the request."""
+        return self._status
+
+    @status.setter
+    def status(self, value: GenerationStatus) -> None:
+        """Update the generation status."""
+        self._status = value
+
+    @property
+    def is_done(self) -> bool:
+        """Whether the request has completed generation."""
+        return self._status.is_done
+
+
+
+
 @dataclass(frozen=True)
 class ImageGenerationInputs(
     PipelineInputs, Generic[ImageGenerationContextType]

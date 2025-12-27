@@ -409,7 +409,21 @@ class ImageGeneratorPipeline(
 
         try:
             with record_ms(METRICS.input_time):
-                context = await self.tokenizer.new_context(request)
+                # For image generation, create context directly from request
+                # without going through text tokenization
+                from max.interfaces.pipeline_variants.image_generation import (
+                    ImageGenerationContext,
+                )
+                context = ImageGenerationContext(
+                    request_id=request.request_id,
+                    prompt=request.input or "",
+                    height=request.height or 1024,
+                    width=request.width or 1024,
+                    num_inference_steps=request.num_inference_steps,
+                    guidance_scale=request.guidance_scale,
+                    negative_prompt=request.negative_prompt,
+                    num_images_per_prompt=request.num_images_per_prompt,
+                )
 
             with record_ms(METRICS.output_time):
                 async for response in self.engine_queue.stream(
