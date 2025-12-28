@@ -1005,9 +1005,8 @@ class ZImageModel(
 
                     noise_pred = F.stack(noise_pred, axis=0)
                 else:
-                    noise_pred = F.stack(
-                        [t.cast(DType.float32) for t in model_out], axis=0
-                    )
+                    # model_out is a single tensor [C, F, H, W], add batch dim
+                    noise_pred = F.unsqueeze(model_out.cast(DType.float32), 0)
 
                 noise_pred = -F.squeeze(noise_pred, 2)
 
