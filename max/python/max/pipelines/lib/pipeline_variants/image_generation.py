@@ -232,8 +232,8 @@ class ImageGenerationPipeline(
                     raise
 
                 # Debug: print shape and value range
-                print(f"DEBUG: Image shape: {image_np.shape}, dtype: {image_np.dtype}")
-                print(f"DEBUG: Value range: min={np.nanmin(image_np)}, max={np.nanmax(image_np)}, has_nan={np.isnan(image_np).any()}")
+                # print(f"DEBUG: Image shape: {image_np.shape}, dtype: {image_np.dtype}")
+                # print(f"DEBUG: Value range: min={np.nanmin(image_np)}, max={np.nanmax(image_np)}, has_nan={np.isnan(image_np).any()}")
 
                 # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
                 # VAE output is in (B, C, H, W) format
