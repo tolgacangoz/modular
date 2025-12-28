@@ -218,10 +218,8 @@ class ImageGenerationPipeline(
                     # Try DLPack protocol first (for experimental.tensor.Tensor)
                     if hasattr(image_casted, '__dlpack__'):
                         # Transfer GPU → CPU (DLPack doesn't support GPU memory for NumPy)
+                        # Note: np.from_dlpack() internally calls __dlpack__() which triggers realization
                         image_cpu = image_casted.to(CPU())
-                        # Sync realization if needed
-                        if hasattr(image_cpu, '_sync_realize'):
-                            image_cpu._sync_realize()
                         image_np = np.from_dlpack(image_cpu).astype(np.float32)
                     elif hasattr(image_casted, 'driver_tensor'):
                         # Access underlying driver tensor
