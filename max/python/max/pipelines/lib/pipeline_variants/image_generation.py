@@ -205,10 +205,9 @@ class ImageGenerationPipeline(
 
                 # Check if bfloat16 - need special handling
                 if image_tensor.dtype == DType.bfloat16:
-                    # bfloat16 not supported by DLPack, convert via bytes
-                    # Get raw bytes and interpret as uint16, then convert to float32
-                    raw_bytes = image_tensor.copy().data
-                    bf16_array = np.frombuffer(raw_bytes, dtype=np.uint16).reshape(image_tensor.shape)
+                    # bfloat16 not supported by DLPack, view as uint16 first
+                    uint16_tensor = image_tensor.view(DType.uint16, image_tensor.shape)
+                    bf16_array = uint16_tensor.to_numpy()
                     # Convert bfloat16 to float32: shift left by 16 bits
                     float32_bits = bf16_array.astype(np.uint32) << 16
                     image_np = float32_bits.view(np.float32)
