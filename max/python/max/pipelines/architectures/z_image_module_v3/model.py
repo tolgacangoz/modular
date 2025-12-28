@@ -592,9 +592,10 @@ class ZImageModel(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
-            None,  # compiled_vae_decode_model - SKIPPED
-            None,  # compiled_text_encoder_model
-            None,  # compiled_transformer_model - SKIPPED
+            self.model.vae.decoder, # Return uncompiled decoder!
+            # compiled_text_encoder_model,
+            None,
+            self.model.transformer, # Return uncompiled transformer!
         )
 
     def _build_text_encoder_graph(
