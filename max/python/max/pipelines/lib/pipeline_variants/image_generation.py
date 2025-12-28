@@ -205,14 +205,21 @@ class ImageGenerationPipeline(
 
                 # Check if bfloat16 - need special handling
                 if image_tensor.dtype == DType.bfloat16:
-                    # bfloat16 not supported by DLPack, view as uint16 first
+                    # bfloat16 not supported by DLPack/numpy directly
+                    # Use torch as intermediate for reliable conversion
+                    import torch
+                    # View as uint16 for DLPack transfer
                     uint16_tensor = image_tensor.view(DType.uint16, image_tensor.shape)
-                    bf16_array = uint16_tensor.to_numpy()
-                    # Convert bfloat16 to float32: shift left by 16 bits
-                    float32_bits = bf16_array.astype(np.uint32) << 16
-                    image_np = float32_bits.view(np.float32)
+                    uint16_np = uint16_tensor.to_numpy()
+                    # Convert to torch, then to bfloat16, then to float32
+                    torch_tensor = torch.from_numpy(uint16_np.copy()).view(torch.bfloat16)
+                    image_np = torch_tensor.float().numpy()
                 else:
                     image_np = image_tensor.to_numpy().astype(np.float32)
+
+                # Debug: print shape and value range
+                print(f"DEBUG: Image shape: {image_np.shape}, dtype: {image_np.dtype}")
+                print(f"DEBUG: Value range: min={np.nanmin(image_np)}, max={np.nanmax(image_np)}, has_nan={np.isnan(image_np).any()}")
 
                 # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
                 # VAE output is in (B, C, H, W) format
