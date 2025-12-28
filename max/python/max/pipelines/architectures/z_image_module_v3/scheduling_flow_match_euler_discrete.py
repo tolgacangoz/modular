@@ -427,7 +427,7 @@ class FlowMatchEulerDiscreteScheduler:
             schedule_timesteps = self.timesteps
 
         # Get timestep value as scalar
-        timestep_val = float(timestep) if isinstance(timestep, Tensor) else timestep
+        timestep_val = timestep.item() if isinstance(timestep, Tensor) else float(timestep)
 
         # Create boolean mask where timesteps match (within tolerance)
         mask = F.abs(schedule_timesteps - timestep_val) < 1e-5
