@@ -24,7 +24,7 @@ from typing import Any, cast
 
 import numpy as np
 from max._core.engine import Model
-from max.driver import Device
+from max.driver import CPU, Device
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.experimental import functional as F
@@ -152,6 +152,53 @@ class ZImageInputs(ModelInputs):
 
     max_seqlen: list[Tensor] | None = None
     """Maximum sequence length for full attention for vision inputs."""
+
+
+def debug_tensor_to_numpy(t, name="tensor"):
+    """Convert MAX tensor to numpy for debugging.
+
+    Handles:
+    - Lazy/symbolic tensors (forces realization)
+    - GPU tensors (transfers to CPU for DLPack)
+    - Different tensor types (experimental.Tensor vs driver.Tensor)
+
+    Returns numpy array or None if conversion fails.
+    """
+    try:
+        import numpy as np
+
+        # Check if symbolic (lazy) and force realization
+        if hasattr(t, 'real') and not t.real:
+            print(f"DEBUG {name}: Tensor is lazy, forcing realization...")
+            t._sync_realize()
+
+        # Transfer from GPU to CPU for DLPack compatibility
+        if hasattr(t, 'to'):
+            t_cpu = t.to(CPU())
+        else:
+            t_cpu = t
+
+        # Convert to numpy via DLPack or driver_tensor
+        if hasattr(t_cpu, '__dlpack__'):
+            return np.from_dlpack(t_cpu)
+        elif hasattr(t_cpu, 'driver_tensor'):
+            return t_cpu.driver_tensor.to_numpy()
+        elif hasattr(t_cpu, 'to_numpy'):
+            return t_cpu.to_numpy()
+        else:
+            raise AttributeError(f"Unknown tensor type: {type(t_cpu)}")
+    except Exception as e:
+        print(f"DEBUG {name}: Cannot convert to numpy - {e}")
+        return None
+
+
+def is_symbolic(t) -> bool:
+    """Check if a MAX tensor is symbolic (not yet realized)."""
+    if hasattr(t, 'real'):
+        return not t.real
+    if hasattr(t, 'storage'):
+        return t.storage is None
+    return False
 
 
 def calculate_shift(
@@ -906,20 +953,9 @@ class ZImageModel(
         )
 
         # DEBUG: Check initial latents
-        try:
-            import numpy as np
-            # Sync if experimental Tensor, then use DLPack
-            if hasattr(latents, '_sync_realize'):
-                latents._sync_realize()
-            if hasattr(latents, '__dlpack__'):
-                lat_np = np.from_dlpack(latents)
-            elif hasattr(latents, 'driver_tensor'):
-                lat_np = latents.driver_tensor.to_numpy()
-            else:
-                lat_np = latents.to_numpy() if hasattr(latents, 'to_numpy') else np.array(latents)
+        lat_np = debug_tensor_to_numpy(latents, "Initial latents")
+        if lat_np is not None:
             print(f"DEBUG: Initial latents - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
-        except Exception as e:
-            print(f"DEBUG: Initial latents - Cannot access values (Symbolic?): {e}")
 
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
@@ -1019,18 +1055,9 @@ class ZImageModel(
 
                 # DEBUG: Check transformer output at first step
                 if i == 0:
-                    try:
-                        if hasattr(model_out, '_sync_realize'):
-                            model_out._sync_realize()
-                        if hasattr(model_out, '__dlpack__'):
-                            mo_np = np.from_dlpack(model_out)
-                        elif hasattr(model_out, 'driver_tensor'):
-                            mo_np = model_out.driver_tensor.to_numpy()
-                        else:
-                            mo_np = model_out.to_numpy()
+                    mo_np = debug_tensor_to_numpy(model_out, f"step {i} transformer out")
+                    if mo_np is not None:
                         print(f"DEBUG step {i}: transformer out - shape: {mo_np.shape}, min: {np.nanmin(mo_np):.4f}, max: {np.nanmax(mo_np):.4f}, nan: {np.isnan(mo_np).any()}")
-                    except Exception as e:
-                        print(f"DEBUG step {i}: transformer out - Cannot access values: {e}")
 
                 if apply_cfg:
                     # Perform CFG
@@ -1077,18 +1104,9 @@ class ZImageModel(
 
                 # DEBUG: Check latents after scheduler at first step
                 if i == 0:
-                    try:
-                        if hasattr(latents, '_sync_realize'):
-                            latents._sync_realize()
-                        if hasattr(latents, '__dlpack__'):
-                            lat_after = np.from_dlpack(latents)
-                        elif hasattr(latents, 'driver_tensor'):
-                            lat_after = latents.driver_tensor.to_numpy()
-                        else:
-                            lat_after = latents.to_numpy()
-                        print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_after.shape}, min: {np.nanmin(lat_after):.4f}, max: {np.nanmax(lat_after):.4f}, nan: {np.isnan(lat_after).any()}")
-                    except Exception as e:
-                        print(f"DEBUG step {i}: latents AFTER scheduler - Cannot access values: {e}")
+                    lat_np = debug_tensor_to_numpy(latents, f"step {i} latents AFTER scheduler")
+                    if lat_np is not None:
+                        print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -1123,35 +1141,17 @@ class ZImageModel(
             ) + self.vae.shift_factor
 
             # DEBUG: Check latents before VAE
-            try:
-                if hasattr(latents, '_sync_realize'):
-                    latents._sync_realize()
-                if hasattr(latents, '__dlpack__'):
-                    lat_vae = np.from_dlpack(latents)
-                elif hasattr(latents, 'driver_tensor'):
-                    lat_vae = latents.driver_tensor.to_numpy()
-                else:
-                    lat_vae = latents.to_numpy()
-                print(f"DEBUG: Latents BEFORE VAE - shape: {lat_vae.shape}, min: {np.nanmin(lat_vae):.4f}, max: {np.nanmax(lat_vae):.4f}, nan: {np.isnan(lat_vae).any()}")
-            except Exception as e:
-                print(f"DEBUG: Latents BEFORE VAE - Cannot access values: {e}")
+            lat_vae_np = debug_tensor_to_numpy(latents, "Latents BEFORE VAE")
+            if lat_vae_np is not None:
+                print(f"DEBUG: Latents BEFORE VAE - shape: {lat_vae_np.shape}, min: {np.nanmin(lat_vae_np):.4f}, max: {np.nanmax(lat_vae_np):.4f}, nan: {np.isnan(lat_vae_np).any()}")
 
             # Use uncompiled VAE decode for debugging
             image = self.vae.decode(latents).sample
 
             # DEBUG: Check image after VAE
-            try:
-                if hasattr(image, '_sync_realize'):
-                    image._sync_realize()
-                if hasattr(image, '__dlpack__'):
-                    img_np = np.from_dlpack(image)
-                elif hasattr(image, 'driver_tensor'):
-                    img_np = image.driver_tensor.to_numpy()
-                else:
-                    img_np = image.to_numpy()
+            img_np = debug_tensor_to_numpy(image, "Image AFTER VAE")
+            if img_np is not None:
                 print(f"DEBUG: Image AFTER VAE - shape: {img_np.shape}, min: {np.nanmin(img_np):.4f}, max: {np.nanmax(img_np):.4f}, nan: {np.isnan(img_np).any()}")
-            except Exception as e:
-                print(f"DEBUG: Image AFTER VAE - Cannot access values: {e}")
 
             # Get tensor
             try:
