@@ -890,6 +890,14 @@ class ZImageModel(
             latents,
         )
 
+        # DEBUG: Check initial latents
+        import numpy as np
+        import torch
+        lat_np = latents.to_numpy() if hasattr(latents, 'to_numpy') else torch.from_numpy(
+            latents.driver_tensor.view(DType.uint16, latents.shape).to_numpy().copy()
+        ).view(torch.bfloat16).float().numpy()
+        print(f"DEBUG: Initial latents - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
+
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
             prompt_embeds = [
@@ -986,6 +994,11 @@ class ZImageModel(
                     prompt_embeds_model_input,
                 )
 
+                # DEBUG: Check transformer output at first step
+                if i == 0:
+                    mo_np = model_out.to_numpy() if hasattr(model_out, 'to_numpy') else model_out.driver_tensor.to_numpy()
+                    print(f"DEBUG step {i}: transformer out - shape: {mo_np.shape}, min: {np.nanmin(mo_np):.4f}, max: {np.nanmax(mo_np):.4f}, nan: {np.isnan(mo_np).any()}")
+
                 if apply_cfg:
                     # Perform CFG
                     pos_out = model_out_list[:actual_batch_size]
@@ -1029,6 +1042,11 @@ class ZImageModel(
                     latents,
                 ).prev_sample
 
+                # DEBUG: Check latents after scheduler at first step
+                if i == 0:
+                    lat_after = latents.to_numpy() if hasattr(latents, 'to_numpy') else latents.driver_tensor.to_numpy()
+                    print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_after.shape}, min: {np.nanmin(lat_after):.4f}, max: {np.nanmax(lat_after):.4f}, nan: {np.isnan(lat_after).any()}")
+
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -1061,8 +1079,16 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
+            # DEBUG: Check latents before VAE
+            lat_vae = latents.to_numpy() if hasattr(latents, 'to_numpy') else latents.driver_tensor.to_numpy()
+            print(f"DEBUG: Latents BEFORE VAE - shape: {lat_vae.shape}, min: {np.nanmin(lat_vae):.4f}, max: {np.nanmax(lat_vae):.4f}, nan: {np.isnan(lat_vae).any()}")
+
             # Use uncompiled VAE decode for debugging
             image = self.vae.decode(latents).sample
+
+            # DEBUG: Check image after VAE
+            img_np = image.to_numpy() if hasattr(image, 'to_numpy') else image.driver_tensor.to_numpy()
+            print(f"DEBUG: Image AFTER VAE - shape: {img_np.shape}, min: {np.nanmin(img_np):.4f}, max: {np.nanmax(img_np):.4f}, nan: {np.isnan(img_np).any()}")
 
             # Get tensor
             if hasattr(image, 'driver_tensor'):
