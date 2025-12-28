@@ -925,6 +925,9 @@ class ZImageModel(
 
         print("DEBUG: Starting denoising loop")
 
+        # Pre-set step index to avoid expensive lookup on each step
+        self.scheduler._step_index = 0
+
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i in range(self._num_timesteps):
@@ -936,7 +939,8 @@ class ZImageModel(
                 timestep = F.broadcast_to(t, (int(latents.shape[0]),))
                 timestep = (1000 - timestep) / 1000
                 # Normalized time for time-aware config (0 at start, 1 at end)
-                t_norm = timestep[0].item()
+                # Use loop index to avoid GPU sync from .item()
+                t_norm = i / max(1, self._num_timesteps - 1)
 
                 # Handle cfg truncation
                 current_guidance_scale = self.guidance_scale
@@ -1055,7 +1059,7 @@ class ZImageModel(
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        return ModelOutputs(hidden_states=cast(Tensor, image.driver_tensor))
+        return ModelOutputs(hidden_states=cast(Tensor, image.driver_tensor), logits=None)
 
     def prepare_initial_token_inputs(
         self,
