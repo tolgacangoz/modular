@@ -475,7 +475,7 @@ class ZImageTransformer2DModel(nn.Module):
         self._compile_F_dim = 1
         self._compile_H_dim = 128
         self._compile_W_dim = 128
-        self._compile_cap_seq_len = 101
+        self._compile_cap_seq_len = 75
 
     def unpatchify(
         self,
