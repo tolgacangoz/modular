@@ -197,9 +197,14 @@ class ImageGenerationPipeline(
                 context.status = GenerationStatus.END_OF_SEQUENCE
 
                 # Create output with the generated image
+                import numpy as np
+                # Convert tensor to numpy array for the output
+                image_tensor = model_outputs.hidden_states
+                image_np = np.asarray(image_tensor)
                 results[request_id] = ImageGenerationOutput(
-                    request_id=request_id,
-                    image=model_outputs.hidden_states,
+                    final_status=GenerationStatus.END_OF_SEQUENCE,
+                    steps_executed=context.num_inference_steps,
+                    image_data=image_np.astype(np.float32),
                 )
 
         return results
