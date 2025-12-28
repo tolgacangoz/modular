@@ -862,18 +862,11 @@ class ZImageModel(
         #         device=device,
         #         max_sequence_length=max_sequence_length,
         #     )
-        from pathlib import Path
+        from safetensors.torch import load_file
 
-        from max.graph.weights import SafetensorWeights
-
-        # Load the safetensors file
-        weights = SafetensorWeights([Path("/root/prompt_embeds.safetensors")])
-
-        # Access a specific tensor and convert Weight to Tensor
-        if weights.prompt_embeds.exists():
-            weight_data = weights.prompt_embeds.data()
-            # Convert WeightData to Tensor and move to device
-            prompt_embeds = Tensor.from_numpy(weight_data.as_numpy()).to(device)
+        # Load prompt embeddings from safetensors file
+        data = load_file("/root/prompt_embeds.safetensors")
+        prompt_embeds = Tensor.from_dlpack(data["prompt_embeds"]).to(device)
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
