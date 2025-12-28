@@ -1054,7 +1054,8 @@ class ZImageModel(
             ) + self.vae.shift_factor
 
             image = self.vae.decode(latents).sample
-            # image = self.image_processor.postprocess(image, output_type)
+            # Cast to float32 for numpy compatibility (bfloat16 not supported by DLPack)
+        image = image.cast(DType.float32)
 
         # Offload all models
         # self.maybe_free_model_hooks()
