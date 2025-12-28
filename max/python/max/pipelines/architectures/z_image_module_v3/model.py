@@ -528,6 +528,10 @@ class ZImageModel(
         self.model.transformer.load_state_dict(transformer_state_dict)
         self.model.vae.decoder.load_state_dict(decoder_weights)
 
+        # Move to device for uncompiled execution
+        self.model.transformer.to(self.devices[0])
+        self.model.vae.decoder.to(self.devices[0])
+
         # logger.info("Building and compiling VAE's decoder...")
         # before_vae_decode_build = time.perf_counter()
         # compiled_vae_decode_model = self.model.vae.decoder.compile(
