@@ -198,13 +198,13 @@ class ImageGenerationPipeline(
 
                 # Create output with the generated image
                 import numpy as np
-                # Convert tensor to numpy array for the output
+                # Convert driver tensor to numpy array
                 image_tensor = model_outputs.hidden_states
-                image_np = np.asarray(image_tensor)
+                image_np = image_tensor.to_numpy().astype(np.float32)
                 results[request_id] = ImageGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
                     steps_executed=context.num_inference_steps,
-                    image_data=image_np.astype(np.float32),
+                    image_data=image_np,
                 )
 
         return results
