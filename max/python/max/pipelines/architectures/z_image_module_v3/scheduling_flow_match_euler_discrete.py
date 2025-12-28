@@ -426,15 +426,27 @@ class FlowMatchEulerDiscreteScheduler:
         if schedule_timesteps is None:
             schedule_timesteps = self.timesteps
 
-        indices = (schedule_timesteps == timestep).nonzero()
+        # Get timestep value as scalar
+        timestep_val = float(timestep) if isinstance(timestep, Tensor) else timestep
 
-        # The sigma index that is taken for the **very** first `step`
-        # is always the second index (or the last index if there is only 1)
-        # This way we can ensure we don't accidentally skip a sigma in
-        # case we start in the middle of the denoising schedule (e.g. for image-to-image)
-        pos = 1 if len(indices) > 1 else 0
+        # Create boolean mask where timesteps match (within tolerance)
+        mask = F.abs(schedule_timesteps - timestep_val) < 1e-5
+        mask_int = mask.cast(DType.int32)
 
-        return indices[pos].item()
+        # Count number of matches
+        num_matches = int(F.sum(mask_int))
+
+        # Use cumsum to find the nth match
+        # cumsum gives [0,0,1,1,2,2,...] where values increase at each True
+        cumsum = F.cumsum(mask_int, axis=0)
+
+        # We want the second match (pos=1) if num_matches > 1, else first (pos=0)
+        target_pos = 2 if num_matches > 1 else 1  # cumsum value we're looking for
+
+        # Find first index where cumsum equals target_pos
+        # This is where the target_pos'th True occurs
+        diff = F.abs(cumsum - target_pos)
+        return int(F.argmin(diff))
 
     def _init_step_index(self, timestep: Tensor) -> None:
         if self.begin_index is None:
