@@ -1053,14 +1053,22 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            image = self.vae.decode(latents).sample
-            # Cast to float32 for numpy compatibility (bfloat16 not supported by DLPack)
-        image = image.cast(DType.float32)
+            # Use compiled VAE decoder for materialized output
+            image = self.vae.decoder(latents)
+            # Cast to float32 for numpy compatibility
+            # Note: if compiled output, it's already materialized
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        return ModelOutputs(hidden_states=cast(Tensor, image.driver_tensor), logits=None)
+        # Get driver tensor from output (should be materialized from compiled model)
+        if hasattr(image, 'driver_tensor'):
+            output_tensor = cast(Tensor, image.driver_tensor)
+        else:
+            # If it's already a driver tensor
+            output_tensor = cast(Tensor, image)
+
+        return ModelOutputs(hidden_states=output_tensor, logits=None)
 
     def prepare_initial_token_inputs(
         self,
