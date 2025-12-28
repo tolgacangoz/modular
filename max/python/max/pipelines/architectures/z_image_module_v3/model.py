@@ -531,7 +531,7 @@ class ZImageModel(
         )
 
         C, F_dim, H_dim, W_dim = 16, 1, 128, 128
-        cap_seq_len = 101
+        cap_seq_len = 75
 
         hidden_states_type = TensorType(
             DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref
