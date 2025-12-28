@@ -838,4 +838,4 @@ class ZImageTransformer2DModel(nn.Module):
         )  # (out_channels, F_tokens, pF, H_tokens, pH, W_tokens, pW)
         x = x.reshape((out_channels, F_dim, H_dim, W_dim))
 
-        return Transformer2DModelOutput(sample=x)
+        return x
