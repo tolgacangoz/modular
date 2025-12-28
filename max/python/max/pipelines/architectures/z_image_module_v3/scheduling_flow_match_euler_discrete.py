@@ -434,7 +434,7 @@ class FlowMatchEulerDiscreteScheduler:
         mask_int = mask.cast(DType.int32)
 
         # Count number of matches
-        num_matches = int(F.sum(mask_int))
+        num_matches = F.sum(mask_int).item()
 
         # Use cumsum to find the nth match
         # cumsum gives [0,0,1,1,2,2,...] where values increase at each True
@@ -446,7 +446,7 @@ class FlowMatchEulerDiscreteScheduler:
         # Find first index where cumsum equals target_pos
         # This is where the target_pos'th True occurs
         diff = F.abs(cumsum - target_pos)
-        return int(F.argmin(diff))
+        return F.argmin(diff).item()
 
     def _init_step_index(self, timestep: Tensor) -> None:
         if self.begin_index is None:
