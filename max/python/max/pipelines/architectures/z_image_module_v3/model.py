@@ -747,14 +747,22 @@ class ZImageModel(
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is None:
-            latents = random.normal(
-                shape,
-                device=device,
-                # generator=generator,  # TODO: implement generator
-                mean=0.0,
-                std=1.0,
-                dtype=dtype,
-            )
+            # DEBUG: Use numpy to force eager execution
+            import numpy as np
+            # Generate on CPU with numpy
+            latents_np = np.random.normal(loc=0.0, scale=1.0, size=shape).astype(np.float32)
+            # Convert to MAX tensor and move to device
+            latents = Tensor.from_dlpack(latents_np).to(device)
+
+            # Original code (commented out for debug)
+            # latents = random.normal(
+            #     shape,
+            #     device=device,
+            #     # generator=generator,  # TODO: implement generator
+            #     mean=0.0,
+            #     std=1.0,
+            #     dtype=dtype,
+            # )
         else:
             if latents.shape != shape:
                 raise ValueError(
@@ -1116,9 +1124,13 @@ class ZImageModel(
                 print(f"DEBUG: Image AFTER VAE - Cannot access values: {e}")
 
             # Get tensor
-            if hasattr(image, 'driver_tensor'):
-                image_tensor = image.driver_tensor
-            else:
+            try:
+                if hasattr(image, 'driver_tensor'):
+                    image_tensor = image.driver_tensor
+                else:
+                    image_tensor = image
+            except TypeError:
+                # If checking driver_tensor raises TypeError (e.g. symbolic), assume it's the tensor itself
                 image_tensor = image
 
         # Offload all models
