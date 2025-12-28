@@ -339,9 +339,11 @@ class ZImageModel(
         self._session = session  # reuse for on-device casts
 
         self.scheduler = None
-        self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
+        self.vae.decoder, self.text_encoder, _ = self.load_model(
             session
         )
+        # Use uncompiled transformer for debugging NaN issues
+        self.transformer = self.model.transformer
 
         # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (
@@ -517,42 +519,49 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        logger.info("Building and compiling VAE's decoder...")
-        before_vae_decode_build = time.perf_counter()
+        # SKIP COMPILATION FOR DEBUGGING - load weights directly
+        logger.info("SKIPPING compilation for debugging... Loading weights directly")
         self.vae = self.model.vae
         self.scheduler = self.model.scheduler
-        compiled_vae_decode_model = self.model.vae.decoder.compile(
-            sample_type,
-            weights=decoder_weights,
-        )
-        after_vae_decode_build = time.perf_counter()
-        logger.info(
-            f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
-        )
 
-        C, F_dim, H_dim, W_dim = 16, 1, 128, 128
-        cap_seq_len = 75
+        # Load weights into the uncompiled models
+        self.model.transformer.load_state_dict(transformer_state_dict)
+        self.model.vae.decoder.load_state_dict(decoder_weights)
 
-        hidden_states_type = TensorType(
-            DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref
-        )
-        t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
-        cap_feats_type = TensorType(
-            DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
-        )
+        # logger.info("Building and compiling VAE's decoder...")
+        # before_vae_decode_build = time.perf_counter()
+        # compiled_vae_decode_model = self.model.vae.decoder.compile(
+        #     sample_type,
+        #     weights=decoder_weights,
+        # )
+        # after_vae_decode_build = time.perf_counter()
+        # logger.info(
+        #     f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
+        # )
 
-        logger.info("Building and compiling the backbone transformer...")
-        before_transformer_build = time.perf_counter()
-        compiled_transformer_model = self.model.transformer.compile(
-            hidden_states_type,
-            t_type,
-            cap_feats_type,
-            weights=transformer_state_dict,
-        )
-        after_transformer_build = time.perf_counter()
-        logger.info(
-            f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
-        )
+        # C, F_dim, H_dim, W_dim = 16, 1, 128, 128
+        # cap_seq_len = 75
+
+        # hidden_states_type = TensorType(
+        #     DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref
+        # )
+        # t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
+        # cap_feats_type = TensorType(
+        #     DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
+        # )
+
+        # logger.info("Building and compiling the backbone transformer...")
+        # before_transformer_build = time.perf_counter()
+        # compiled_transformer_model = self.model.transformer.compile(
+        #     hidden_states_type,
+        #     t_type,
+        #     cap_feats_type,
+        #     weights=transformer_state_dict,
+        # )
+        # after_transformer_build = time.perf_counter()
+        # logger.info(
+        #     f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
+        # )
 
         # logger.info("Building and compiling text encoder...")
         # before_text_encoder_build = time.perf_counter()
@@ -577,10 +586,9 @@ class ZImageModel(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
-            compiled_vae_decode_model,
-            # compiled_text_encoder_model,
-            None,
-            compiled_transformer_model,
+            None,  # compiled_vae_decode_model - SKIPPED
+            None,  # compiled_text_encoder_model
+            None,  # compiled_transformer_model - SKIPPED
         )
 
     def _build_text_encoder_graph(
@@ -1053,19 +1061,10 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            # Debug: check latents before VAE
-            import numpy as np
-            import torch
-            latents_np = torch.from_numpy(
-                latents.driver_tensor.view(DType.uint16, latents.shape).to_numpy().copy()
-            ).view(torch.bfloat16).float().numpy()
-            print(f"DEBUG: Latents before VAE - shape: {latents_np.shape}, min: {np.nanmin(latents_np)}, max: {np.nanmax(latents_np)}, has_nan: {np.isnan(latents_np).any()}")
+            # Use uncompiled VAE decode for debugging
+            image = self.vae.decode(latents).sample
 
-            # Use compiled VAE decoder for materialized output
-            image = self.vae.decoder(latents)
-
-            # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize to [0, 1]
-            # First get as numpy array for manipulation
+            # Get tensor
             if hasattr(image, 'driver_tensor'):
                 image_tensor = image.driver_tensor
             else:
