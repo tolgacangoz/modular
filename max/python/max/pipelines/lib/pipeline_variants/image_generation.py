@@ -204,16 +204,11 @@ class ImageGenerationPipeline(
                 image_tensor = model_outputs.hidden_states
 
                 # Check if bfloat16 - need special handling
+                # Check if bfloat16 - need special handling
                 if image_tensor.dtype == DType.bfloat16:
                     # bfloat16 not supported by DLPack/numpy directly
-                    # Use torch as intermediate for reliable conversion
-                    import torch
-                    # View as uint16 for DLPack transfer
-                    uint16_tensor = image_tensor.view(DType.uint16, image_tensor.shape)
-                    uint16_np = uint16_tensor.to_numpy()
-                    # Convert to torch, then to bfloat16, then to float32
-                    torch_tensor = torch.from_numpy(uint16_np.copy()).view(torch.bfloat16)
-                    image_np = torch_tensor.float().numpy()
+                    # Cast to float32 which is supported
+                    image_np = image_tensor.cast(DType.float32).to_numpy()
                 else:
                     image_np = image_tensor.to_numpy().astype(np.float32)
 
