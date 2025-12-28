@@ -522,6 +522,8 @@ class ZImageModel(
         # SKIP COMPILATION FOR DEBUGGING - load weights directly
         logger.info("SKIPPING compilation for debugging... Loading weights directly")
         self.vae = self.model.vae
+        # Ensure decoder is set correctly for uncompiled use
+        self.vae.decoder = self.model.vae.decoder
         self.scheduler = self.model.scheduler
 
         # Load weights into the uncompiled models
