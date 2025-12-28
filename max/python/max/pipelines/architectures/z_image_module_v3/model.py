@@ -1014,35 +1014,12 @@ class ZImageModel(
 
                 noise_pred = -F.squeeze(noise_pred, 2)
 
-                # Debug: check values at first step only
-                if i == 0:
-                    import numpy as np
-                    import torch
-                    # Check noise_pred
-                    np_out = torch.from_numpy(
-                        noise_pred.driver_tensor.view(DType.uint16, noise_pred.shape).to_numpy().copy()
-                    ).view(torch.bfloat16).float().numpy()
-                    print(f"DEBUG step {i}: noise_pred - shape: {np_out.shape}, min: {np.nanmin(np_out):.4f}, max: {np.nanmax(np_out):.4f}, nan: {np.isnan(np_out).any()}")
-
-                    # Check latents before scheduler
-                    lat_np = torch.from_numpy(
-                        latents.driver_tensor.view(DType.uint16, latents.shape).to_numpy().copy()
-                    ).view(torch.bfloat16).float().numpy()
-                    print(f"DEBUG step {i}: latents BEFORE scheduler - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
-
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred.cast(DType.float32),
                     t,
                     latents,
                 ).prev_sample
-
-                # Debug: check latents after scheduler at first step
-                if i == 0:
-                    lat_np2 = torch.from_numpy(
-                        latents.driver_tensor.view(DType.uint16, latents.shape).to_numpy().copy()
-                    ).view(torch.bfloat16).float().numpy()
-                    print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_np2.shape}, min: {np.nanmin(lat_np2):.4f}, max: {np.nanmax(lat_np2):.4f}, nan: {np.isnan(lat_np2).any()}")
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
