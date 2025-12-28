@@ -978,7 +978,7 @@ class ZImageModel(
                     F.squeeze(latent_model_input, 0),
                     timestep_model_input,
                     prompt_embeds_model_input,
-                ).sample
+                )
 
                 if apply_cfg:
                     # Perform CFG
