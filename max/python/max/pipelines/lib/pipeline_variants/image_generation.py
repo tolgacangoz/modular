@@ -198,9 +198,23 @@ class ImageGenerationPipeline(
 
                 # Create output with the generated image
                 import numpy as np
+                from max.dtype import DType
+
                 # Convert driver tensor to numpy array
                 image_tensor = model_outputs.hidden_states
-                image_np = image_tensor.to_numpy().astype(np.float32)
+
+                # Check if bfloat16 - need special handling
+                if image_tensor.dtype == DType.bfloat16:
+                    # bfloat16 not supported by DLPack, convert via bytes
+                    # Get raw bytes and interpret as uint16, then convert to float32
+                    raw_bytes = image_tensor.copy().data
+                    bf16_array = np.frombuffer(raw_bytes, dtype=np.uint16).reshape(image_tensor.shape)
+                    # Convert bfloat16 to float32: shift left by 16 bits
+                    float32_bits = bf16_array.astype(np.uint32) << 16
+                    image_np = float32_bits.view(np.float32)
+                else:
+                    image_np = image_tensor.to_numpy().astype(np.float32)
+
                 results[request_id] = ImageGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
                     steps_executed=context.num_inference_steps,
