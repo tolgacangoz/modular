@@ -961,14 +961,14 @@ class ZImageModel(
                 )
 
                 if apply_cfg:
-                    latents_typed = latents.cast(self.transformer.dtype)
+                    latents_typed = latents.cast(DType.bfloat16)
                     latent_model_input = latents_typed.repeat(2, 1, 1, 1)
                     prompt_embeds_model_input = (
                         prompt_embeds + negative_prompt_embeds
                     )
                     timestep_model_input = timestep.repeat(2)
                 else:
-                    latent_model_input = latents.cast(self.transformer.dtype)
+                    latent_model_input = latents.cast(DType.bfloat16)
                     prompt_embeds_model_input = prompt_embeds
                     timestep_model_input = timestep
 
@@ -1051,7 +1051,7 @@ class ZImageModel(
             image = latents
 
         else:
-            latents = latents.cast(self.vae.dtype)
+            latents = latents.cast(DType.bfloat16)
             latents = (
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
