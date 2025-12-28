@@ -179,9 +179,7 @@ class FlowMatchEulerDiscreteScheduler:
 
         self._shift = shift
 
-        self.sigmas = sigmas.to(
-            CPU()
-        )  # to avoid too much CPU/GPU communication
+        self.sigmas = sigmas  # Keep on default device
         self.sigma_min = self.sigmas[-1].item()
         self.sigma_max = self.sigmas[0].item()
 
