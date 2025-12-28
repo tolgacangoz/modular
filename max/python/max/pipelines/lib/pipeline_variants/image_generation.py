@@ -207,6 +207,8 @@ class ImageGenerationPipeline(
                 # max.experimental.tensor.Tensor uses DLPack protocol
                 # max.driver.Tensor has to_numpy() method
                 try:
+                    from max.driver import CPU
+
                     # First cast to float32 (needed for bfloat16)
                     if image_tensor.dtype == DType.bfloat16:
                         image_casted = image_tensor.cast(DType.float32)
@@ -215,10 +217,12 @@ class ImageGenerationPipeline(
 
                     # Try DLPack protocol first (for experimental.tensor.Tensor)
                     if hasattr(image_casted, '__dlpack__'):
+                        # Transfer GPU → CPU (DLPack doesn't support GPU memory for NumPy)
+                        image_cpu = image_casted.to(CPU())
                         # Sync realization if needed
-                        if hasattr(image_casted, '_sync_realize'):
-                            image_casted._sync_realize()
-                        image_np = np.from_dlpack(image_casted).astype(np.float32)
+                        if hasattr(image_cpu, '_sync_realize'):
+                            image_cpu._sync_realize()
+                        image_np = np.from_dlpack(image_cpu).astype(np.float32)
                     elif hasattr(image_casted, 'driver_tensor'):
                         # Access underlying driver tensor
                         image_np = image_casted.driver_tensor.to_numpy().astype(np.float32)
