@@ -1106,9 +1106,6 @@ class ZImageModel(
 
                 # DEBUG: Check latents after scheduler at first step
                 if i == 0:
-                    # lat_np = debug_tensor_to_numpy(latents, f"step {i} latents AFTER scheduler")
-                    # if lat_np is not None:
-                    #     print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
                     print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
 
                 if callback_on_step_end is not None:
@@ -1147,7 +1144,7 @@ class ZImageModel(
             # lat_vae_np = debug_tensor_to_numpy(latents, "Latents BEFORE VAE")
             # if lat_vae_np is not None:
             #     print(f"DEBUG: Latents BEFORE VAE - shape: {lat_vae_np.shape}, min: {np.nanmin(lat_vae_np):.4f}, max: {np.nanmax(lat_vae_np):.4f}, nan: {np.isnan(lat_vae_np).any()}")
-            print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
+            print(latents.shape, np.isnan(np.from_dlpack(latents.cast(DType.float32).to(CPU()))).any())
 
             # Use uncompiled VAE decode for debugging
             image = self.vae.decode(latents).sample
@@ -1156,7 +1153,7 @@ class ZImageModel(
             # img_np = debug_tensor_to_numpy(image, "Image AFTER VAE")
             # if img_np is not None:
             #     print(f"DEBUG: Image AFTER VAE - shape: {img_np.shape}, min: {np.nanmin(img_np):.4f}, max: {np.nanmax(img_np):.4f}, nan: {np.isnan(img_np).any()}")
-            print(image.shape, np.isnan(np.from_dlpack(image.to(CPU()))).any())
+            print(image.shape, np.isnan(np.from_dlpack(image.cast(DType.float32).to(CPU()))).any())
 
             # Get tensor
             try:
