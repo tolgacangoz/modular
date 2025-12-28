@@ -362,7 +362,7 @@ class GroupNorm(nn.Module):
         mean = reduce_mean(x, axis=[2, 3, 4])
         var = reduce_var(x, axis=[2, 3, 4])
 
-        x = (x - mean) / F.rsqrt(var + self.eps)
+        x = (x - mean) / F.sqrt(var + self.eps)
 
         # Reshape back to (N, C, H, W)
         x = x.reshape([N, C, H, W])
@@ -398,7 +398,7 @@ class LayerNorm(nn.Module):
     def __call__(self, x: Tensor) -> Tensor:
         mean = reduce_mean(x, axis=-1)
         var = reduce_var(x, axis=-1)
-        x = (x - mean) / F.rsqrt(var + self.eps)
+        x = (x - mean) / F.sqrt(var + self.eps)
         if self.elementwise_affine:
             x = x * self.weight + self.bias
         return x
@@ -430,7 +430,7 @@ class SpatialNorm(nn.Module):
             zq_channels, f_channels, kernel_size=1, stride=1, padding=0
         )
 
-    def forward(self, f: Tensor, zq: Tensor) -> Tensor:
+    def __call__(self, f: Tensor, zq: Tensor) -> Tensor:
         f_size = f.shape[-2:]
         zq = F.interpolate(zq, size=f_size, mode="nearest")
         norm_f = self.norm_layer(f)
