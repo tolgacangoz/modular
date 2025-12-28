@@ -908,13 +908,15 @@ class ZImageModel(
         # DEBUG: Check initial latents
         try:
             import numpy as np
-            import torch
-            if hasattr(latents, 'to_numpy'):
-                lat_np = latents.to_numpy()
+            # Sync if experimental Tensor, then use DLPack
+            if hasattr(latents, '_sync_realize'):
+                latents._sync_realize()
+            if hasattr(latents, '__dlpack__'):
+                lat_np = np.from_dlpack(latents)
+            elif hasattr(latents, 'driver_tensor'):
+                lat_np = latents.driver_tensor.to_numpy()
             else:
-                lat_np = torch.from_numpy(
-                    latents.driver_tensor.view(DType.uint16, latents.shape).to_numpy().copy()
-                ).view(torch.bfloat16).float().numpy()
+                lat_np = latents.to_numpy() if hasattr(latents, 'to_numpy') else np.array(latents)
             print(f"DEBUG: Initial latents - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
         except Exception as e:
             print(f"DEBUG: Initial latents - Cannot access values (Symbolic?): {e}")
@@ -1018,7 +1020,14 @@ class ZImageModel(
                 # DEBUG: Check transformer output at first step
                 if i == 0:
                     try:
-                        mo_np = model_out.to_numpy() if hasattr(model_out, 'to_numpy') else model_out.driver_tensor.to_numpy()
+                        if hasattr(model_out, '_sync_realize'):
+                            model_out._sync_realize()
+                        if hasattr(model_out, '__dlpack__'):
+                            mo_np = np.from_dlpack(model_out)
+                        elif hasattr(model_out, 'driver_tensor'):
+                            mo_np = model_out.driver_tensor.to_numpy()
+                        else:
+                            mo_np = model_out.to_numpy()
                         print(f"DEBUG step {i}: transformer out - shape: {mo_np.shape}, min: {np.nanmin(mo_np):.4f}, max: {np.nanmax(mo_np):.4f}, nan: {np.isnan(mo_np).any()}")
                     except Exception as e:
                         print(f"DEBUG step {i}: transformer out - Cannot access values: {e}")
@@ -1069,7 +1078,14 @@ class ZImageModel(
                 # DEBUG: Check latents after scheduler at first step
                 if i == 0:
                     try:
-                        lat_after = latents.to_numpy() if hasattr(latents, 'to_numpy') else latents.driver_tensor.to_numpy()
+                        if hasattr(latents, '_sync_realize'):
+                            latents._sync_realize()
+                        if hasattr(latents, '__dlpack__'):
+                            lat_after = np.from_dlpack(latents)
+                        elif hasattr(latents, 'driver_tensor'):
+                            lat_after = latents.driver_tensor.to_numpy()
+                        else:
+                            lat_after = latents.to_numpy()
                         print(f"DEBUG step {i}: latents AFTER scheduler - shape: {lat_after.shape}, min: {np.nanmin(lat_after):.4f}, max: {np.nanmax(lat_after):.4f}, nan: {np.isnan(lat_after).any()}")
                     except Exception as e:
                         print(f"DEBUG step {i}: latents AFTER scheduler - Cannot access values: {e}")
@@ -1108,7 +1124,14 @@ class ZImageModel(
 
             # DEBUG: Check latents before VAE
             try:
-                lat_vae = latents.to_numpy() if hasattr(latents, 'to_numpy') else latents.driver_tensor.to_numpy()
+                if hasattr(latents, '_sync_realize'):
+                    latents._sync_realize()
+                if hasattr(latents, '__dlpack__'):
+                    lat_vae = np.from_dlpack(latents)
+                elif hasattr(latents, 'driver_tensor'):
+                    lat_vae = latents.driver_tensor.to_numpy()
+                else:
+                    lat_vae = latents.to_numpy()
                 print(f"DEBUG: Latents BEFORE VAE - shape: {lat_vae.shape}, min: {np.nanmin(lat_vae):.4f}, max: {np.nanmax(lat_vae):.4f}, nan: {np.isnan(lat_vae).any()}")
             except Exception as e:
                 print(f"DEBUG: Latents BEFORE VAE - Cannot access values: {e}")
@@ -1118,7 +1141,14 @@ class ZImageModel(
 
             # DEBUG: Check image after VAE
             try:
-                img_np = image.to_numpy() if hasattr(image, 'to_numpy') else image.driver_tensor.to_numpy()
+                if hasattr(image, '_sync_realize'):
+                    image._sync_realize()
+                if hasattr(image, '__dlpack__'):
+                    img_np = np.from_dlpack(image)
+                elif hasattr(image, 'driver_tensor'):
+                    img_np = image.driver_tensor.to_numpy()
+                else:
+                    img_np = image.to_numpy()
                 print(f"DEBUG: Image AFTER VAE - shape: {img_np.shape}, min: {np.nanmin(img_np):.4f}, max: {np.nanmax(img_np):.4f}, nan: {np.isnan(img_np).any()}")
             except Exception as e:
                 print(f"DEBUG: Image AFTER VAE - Cannot access values: {e}")

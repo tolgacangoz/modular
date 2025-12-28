@@ -203,14 +203,33 @@ class ImageGenerationPipeline(
                 # Convert driver tensor to numpy array
                 image_tensor = model_outputs.hidden_states
 
-                # Check if bfloat16 - need special handling
-                # Check if bfloat16 - need special handling
-                if image_tensor.dtype == DType.bfloat16:
-                    # bfloat16 not supported by DLPack/numpy directly
-                    # Cast to float32 which is supported
-                    image_np = image_tensor.cast(DType.float32).to_numpy()
-                else:
-                    image_np = image_tensor.to_numpy().astype(np.float32)
+                # Convert tensor to numpy - handle different tensor types
+                # max.experimental.tensor.Tensor uses DLPack protocol
+                # max.driver.Tensor has to_numpy() method
+                try:
+                    # First cast to float32 (needed for bfloat16)
+                    if image_tensor.dtype == DType.bfloat16:
+                        image_casted = image_tensor.cast(DType.float32)
+                    else:
+                        image_casted = image_tensor
+
+                    # Try DLPack protocol first (for experimental.tensor.Tensor)
+                    if hasattr(image_casted, '__dlpack__'):
+                        # Sync realization if needed
+                        if hasattr(image_casted, '_sync_realize'):
+                            image_casted._sync_realize()
+                        image_np = np.from_dlpack(image_casted).astype(np.float32)
+                    elif hasattr(image_casted, 'driver_tensor'):
+                        # Access underlying driver tensor
+                        image_np = image_casted.driver_tensor.to_numpy().astype(np.float32)
+                    elif hasattr(image_casted, 'to_numpy'):
+                        # Direct to_numpy (for driver.Tensor)
+                        image_np = image_casted.to_numpy().astype(np.float32)
+                    else:
+                        raise AttributeError(f"Unknown tensor type: {type(image_casted)}")
+                except Exception as e:
+                    logger.error(f"Failed to convert tensor to numpy: {e}")
+                    raise
 
                 # Debug: print shape and value range
                 print(f"DEBUG: Image shape: {image_np.shape}, dtype: {image_np.dtype}")
