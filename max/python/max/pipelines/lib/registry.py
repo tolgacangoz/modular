@@ -16,17 +16,21 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import huggingface_hub
 import numpy as np
 import numpy.typing as npt
 from max.driver import load_devices
 from max.graph.weights import WeightsAdapter, WeightsFormat
 from max.interfaces import (
     EmbeddingsContext,
+    ImageGenerationContext,
     Pipeline,
     PipelineTask,
     PipelineTokenizer,
@@ -41,17 +45,18 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
 )
+from transformers.configuration_utils import PretrainedConfig
 
 if TYPE_CHECKING:
     from .audio_generator_pipeline import AudioGeneratorPipeline
     from .config import PipelineConfig
 
 from .audio_generator_pipeline import AudioGeneratorPipeline
-from .config_enums import RopeType, SupportedEncoding
+from .config_enums import RepoType, RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo
 from .interfaces import PipelineModel
-from .pipeline_variants.text_generation import TextGenerationPipeline
+from .pipeline_variants import ImageGenerationPipeline, TextGenerationPipeline
 from .speculative_decoding import (
     EAGLESpeculativeDecodingPipeline,
     SpeculativeMethod,
@@ -74,6 +79,7 @@ def get_pipeline_for_task(
     | type[StandaloneSpeculativeDecodingPipeline]
     | type[SpeechTokenGenerationPipeline]
     | type[EAGLESpeculativeDecodingPipeline]
+    | type[ImageGenerationPipeline]
 ):
     if task == PipelineTask.TEXT_GENERATION:
         if pipeline_config._speculative_config is not None:
@@ -103,6 +109,8 @@ def get_pipeline_for_task(
         return AudioGeneratorPipeline
     elif task == PipelineTask.SPEECH_TOKEN_GENERATION:
         return SpeechTokenGenerationPipeline
+    elif task == PipelineTask.IMAGE_GENERATION:
+        return ImageGenerationPipeline
 
 
 @dataclass(frozen=False)
@@ -170,11 +178,15 @@ class SupportedArchitecture:
     default_weights_format: WeightsFormat
     """The weights format expected by the `pipeline_model`."""
 
-    context_type: type[TextGenerationContext] | type[EmbeddingsContext]
+    context_type: (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[ImageGenerationContext]
+    )
     """The context class type that this architecture uses for managing request state and inputs.
 
-    This should be a class (not an instance) that implements either the `TextGenerationContext`
-    or `EmbeddingsContext` protocol, defining how the pipeline processes and tracks requests.
+    This should be a class (not an instance) that implements either the `TextGenerationContext`,
+    `EmbeddingsContext`, or `ImageGenerationContext` protocol, defining how the pipeline processes and tracks requests.
     """
 
     rope_type: RopeType = RopeType.none
@@ -230,6 +242,18 @@ class SupportedArchitecture:
     the max sequence length of the model.
     """
 
+    scheduler: Any | None = None
+    """Optional scheduler class or object."""
+
+    vae: Any | None = None
+    """Optional VAE class or object."""
+
+    text_encoder: Any | None = None
+    """Optional text encoder class or object."""
+
+    transformer: Any | None = None
+    """Optional transformer class or object."""
+
     @property
     def tokenizer_cls(self) -> type[PipelineTokenizer[Any, Any, Any]]:
         if isinstance(self.tokenizer, type):
@@ -241,7 +265,9 @@ class SupportedArchitecture:
 class PipelineRegistry:
     def __init__(self, architectures: list[SupportedArchitecture]) -> None:
         self.architectures = {arch.name: arch for arch in architectures}
-        self._cached_huggingface_configs: dict[HuggingFaceRepo, AutoConfig] = {}
+        self._cached_huggingface_configs: dict[
+            HuggingFaceRepo, PretrainedConfig
+        ] = {}
         self._cached_huggingface_tokenizers: dict[
             HuggingFaceRepo, PreTrainedTokenizer | PreTrainedTokenizerFast
         ] = {}
@@ -293,7 +319,7 @@ class PipelineRegistry:
 
     def get_active_huggingface_config(
         self, huggingface_repo: HuggingFaceRepo
-    ) -> AutoConfig:
+    ) -> PretrainedConfig:
         """Retrieves or creates a cached HuggingFace AutoConfig for the given
         model configuration.
 
@@ -315,13 +341,50 @@ class PipelineRegistry:
             AutoConfig: The HuggingFace configuration object for the model.
         """
         if huggingface_repo not in self._cached_huggingface_configs:
-            self._cached_huggingface_configs[huggingface_repo] = (
-                AutoConfig.from_pretrained(
-                    huggingface_repo.repo_id,
-                    trust_remote_code=huggingface_repo.trust_remote_code,
-                    revision=huggingface_repo.revision,
+            model_index_path: str | None = None
+
+            if huggingface_repo.repo_type == RepoType.local:
+                local_index = (
+                    Path(huggingface_repo.repo_id) / "model_index.json"
                 )
-            )
+                if local_index.exists():
+                    model_index_path = str(local_index)
+            else:
+                try:
+                    if huggingface_hub.file_exists(
+                        huggingface_repo.repo_id,
+                        "model_index.json",
+                        revision=huggingface_repo.revision,
+                    ):
+                        model_index_path = huggingface_hub.hf_hub_download(
+                            huggingface_repo.repo_id,
+                            "model_index.json",
+                            revision=huggingface_repo.revision,
+                        )
+                except Exception:
+                    model_index_path = None
+
+            if model_index_path is not None:
+                with open(model_index_path, encoding="utf-8") as f:
+                    model_index = json.load(f)
+
+                class_name = model_index.get("_class_name")
+                if not class_name or not isinstance(class_name, str):
+                    raise ValueError(
+                        f"Diffusers-style repository '{huggingface_repo.repo_id}' is missing a valid '_class_name' in model_index.json"
+                    )
+
+                self._cached_huggingface_configs[huggingface_repo] = (
+                    PretrainedConfig(architectures=[class_name])
+                )
+            else:
+                self._cached_huggingface_configs[huggingface_repo] = (
+                    AutoConfig.from_pretrained(
+                        huggingface_repo.repo_id,
+                        trust_remote_code=huggingface_repo.trust_remote_code,
+                        revision=huggingface_repo.revision,
+                    )
+                )
 
         return self._cached_huggingface_configs[huggingface_repo]
 
@@ -481,6 +544,7 @@ class PipelineRegistry:
                 pipeline_config=pipeline_config,
                 chat_template=pipeline_config.retrieve_chat_template(),
                 context_validators=arch.context_validators,
+                subfolder="tokenizer",
             )
         # Cast tokenizer to the proper type for text generation pipeline compatibility
         typed_tokenizer = cast(
@@ -529,19 +593,23 @@ class PipelineRegistry:
 
     def retrieve_context_type(
         self, pipeline_config: PipelineConfig
-    ) -> type[TextGenerationContext] | type[EmbeddingsContext]:
+    ) -> (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[ImageGenerationContext]
+    ):
         """Retrieve the context class type associated with the architecture for the given pipeline configuration.
 
         The context type defines how the pipeline manages request state and inputs during
         model execution. Different architectures may use different context implementations
-        that adhere to either the TextGenerationContext or EmbeddingsContext protocol.
+        that adhere to either the TextGenerationContext, EmbeddingsContext, or ImageGenerationContext protocol.
 
         Args:
             pipeline_config: The configuration for the pipeline.
 
         Returns:
             The context class type associated with the architecture, which implements
-            either the TextGenerationContext or EmbeddingsContext protocol.
+            either the TextGenerationContext, EmbeddingsContext, or ImageGenerationContext protocol.
 
         Raises:
             ValueError: If no supported architecture is found for the given model repository.

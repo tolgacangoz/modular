@@ -11,5 +11,9 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from .image_generation import ImageGenerationPipeline
-from .text_generation import TextGenerationPipeline
+from .arch import hunyuanvideo1_5_module_v3_arch
+from .model_config import HunyuanVideo1_5Config
+
+ARCHITECTURES = [hunyuanvideo1_5_module_v3_arch]
+
+__all__ = ["ARCHITECTURES", "HunyuanVideo1_5Config", "hunyuanvideo1_5_module_v3_arch"]
