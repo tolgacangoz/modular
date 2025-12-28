@@ -214,6 +214,17 @@ class ImageGenerationPipeline(
                 else:
                     image_np = image_tensor.to_numpy().astype(np.float32)
 
+                # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
+                # VAE output is in (B, C, H, W) format
+                if len(image_np.shape) == 4:
+                    # Remove batch dimension and transpose C to last
+                    image_np = np.squeeze(image_np, axis=0)  # (C, H, W)
+                    image_np = np.transpose(image_np, (1, 2, 0))  # (H, W, C)
+
+                # Normalize to [0, 1] range (VAE output is typically in [-1, 1])
+                image_np = (image_np + 1.0) / 2.0
+                image_np = np.clip(image_np, 0.0, 1.0)
+
                 results[request_id] = ImageGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
                     steps_executed=context.num_inference_steps,

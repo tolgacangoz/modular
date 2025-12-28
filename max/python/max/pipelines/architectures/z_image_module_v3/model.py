@@ -1055,20 +1055,18 @@ class ZImageModel(
 
             # Use compiled VAE decoder for materialized output
             image = self.vae.decoder(latents)
-            # Cast to float32 for numpy compatibility
-            # Note: if compiled output, it's already materialized
+
+            # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize to [0, 1]
+            # First get as numpy array for manipulation
+            if hasattr(image, 'driver_tensor'):
+                image_tensor = image.driver_tensor
+            else:
+                image_tensor = image
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        # Get driver tensor from output (should be materialized from compiled model)
-        if hasattr(image, 'driver_tensor'):
-            output_tensor = cast(Tensor, image.driver_tensor)
-        else:
-            # If it's already a driver tensor
-            output_tensor = cast(Tensor, image)
-
-        return ModelOutputs(hidden_states=output_tensor, logits=None)
+        return ModelOutputs(hidden_states=cast(Tensor, image_tensor), logits=None)
 
     def prepare_initial_token_inputs(
         self,
