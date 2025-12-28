@@ -1055,7 +1055,7 @@ class ZImageModel(
                 )
 
                 # DEBUG: Check transformer output at first step
-                if i == 0:
+                # if i == 0:
                     # mo_np = debug_tensor_to_numpy(model_out, f"step {i} transformer out")
                     # if mo_np is not None:
                     #     print(f"DEBUG step {i}: transformer out - shape: {mo_np.shape}, min: {np.nanmin(mo_np):.4f}, max: {np.nanmax(mo_np):.4f}, nan: {np.isnan(mo_np).any()}")
@@ -1105,7 +1105,7 @@ class ZImageModel(
                 ).prev_sample
 
                 # DEBUG: Check latents after scheduler at first step
-                if i == 0:
+                # if i == 0:
                     # print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
 
                 if callback_on_step_end is not None:
