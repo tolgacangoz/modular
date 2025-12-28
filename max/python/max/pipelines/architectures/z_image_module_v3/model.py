@@ -954,7 +954,7 @@ class ZImageModel(
 
         # DEBUG: Check initial latents
         #lat_np = debug_tensor_to_numpy(latents, "Initial latents")
-        print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
+        # print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
         # if lat_np is not None:
         #     print(f"DEBUG: Initial latents - shape: {lat_np.shape}, min: {np.nanmin(lat_np):.4f}, max: {np.nanmax(lat_np):.4f}, nan: {np.isnan(lat_np).any()}")
 
@@ -1059,7 +1059,7 @@ class ZImageModel(
                     # mo_np = debug_tensor_to_numpy(model_out, f"step {i} transformer out")
                     # if mo_np is not None:
                     #     print(f"DEBUG step {i}: transformer out - shape: {mo_np.shape}, min: {np.nanmin(mo_np):.4f}, max: {np.nanmax(mo_np):.4f}, nan: {np.isnan(mo_np).any()}")
-                    print(model_out.shape, np.isnan(np.from_dlpack(model_out.to(CPU()))).any())
+                    # print(model_out.shape, np.isnan(np.from_dlpack(model_out.to(CPU()))).any())
 
                 if apply_cfg:
                     # Perform CFG
@@ -1106,7 +1106,7 @@ class ZImageModel(
 
                 # DEBUG: Check latents after scheduler at first step
                 if i == 0:
-                    print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
+                    # print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
