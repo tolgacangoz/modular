@@ -538,18 +538,18 @@ class ZImageModel(
         graph_inputs = self.model.text_encoder.input_types(
             self.model.text_encoder.kv_params
         )
-        self.model.text_encoder.load_state_dict(
-            text_encoder_llm_state_dict,
-            override_quantization_encoding=True,
-            weight_alignment=1,
-            # Stops strict from raising error when sharing LM head weights
-            # (as LM head is never technically loaded from the state dict)
-            strict=(
-                not getattr(
-                    self.huggingface_config, "tie_word_embeddings", False
-                )
-            ),
-        )
+        # self.model.text_encoder.load_state_dict(
+        #     text_encoder_llm_state_dict,
+        #     override_quantization_encoding=True,
+        #     weight_alignment=1,
+        #     # Stops strict from raising error when sharing LM head weights
+        #     # (as LM head is never technically loaded from the state dict)
+        #     strict=(
+        #         not getattr(
+        #             self.huggingface_config, "tie_word_embeddings", False
+        #         )
+        #     ),
+        # )
         device0 = self.devices[0]
 
         self.model.to(device0)
@@ -569,23 +569,23 @@ class ZImageModel(
 
         self.vae = self.model.vae
         # Ensure decoder is set correctly for uncompiled use
-        #self.vae.decoder = self.model.vae.decoder
+        self.vae.decoder = self.model.vae.decoder
         self.scheduler = self.model.scheduler
 
         # Load weights into the uncompiled models
-        # self.model.transformer.load_state_dict(transformer_state_dict)
-        # self.model.vae.decoder.load_state_dict(decoder_weights)
+        self.model.transformer.load_state_dict(transformer_state_dict)
+        self.model.vae.decoder.load_state_dict(decoder_weights)
 
         # # Move to device for uncompiled execution
-        # self.model.transformer.to(self.devices[0])
-        # self.model.vae.decoder.to(self.devices[0])
+        self.model.transformer.to(self.devices[0])
+        self.model.vae.decoder.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
-        compiled_vae_decode_model = self.model.vae.decoder.compile(
-            sample_type,
-            weights=decoder_weights,
-        )
+        # compiled_vae_decode_model = self.model.vae.decoder.compile(
+        #     sample_type,
+        #     weights=decoder_weights,
+        # )
         after_vae_decode_build = time.perf_counter()
         logger.info(
             f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
@@ -604,12 +604,12 @@ class ZImageModel(
 
         logger.info("Building and compiling the backbone transformer...")
         before_transformer_build = time.perf_counter()
-        compiled_transformer_model = self.model.transformer.compile(
-            hidden_states_type,
-            t_type,
-            cap_feats_type,
-            weights=transformer_state_dict,
-        )
+        # compiled_transformer_model = self.model.transformer.compile(
+        #     hidden_states_type,
+        #     t_type,
+        #     cap_feats_type,
+        #     weights=transformer_state_dict,
+        # )
         after_transformer_build = time.perf_counter()
         logger.info(
             f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
@@ -943,8 +943,20 @@ class ZImageModel(
         from safetensors.torch import load_file
 
         # Load prompt embeddings from safetensors file
+        # Note: This is temporary! The text encoder should be used instead.
         data = load_file("/root/prompt_embeds.safetensors")
-        prompt_embeds = Tensor.from_dlpack(data["prompt_embeds"]).to(device)
+        prompt_embeds_torch = data["prompt_embeds"]
+        print(f"DEBUG: Loaded prompt_embeds shape: {prompt_embeds_torch.shape}, dtype: {prompt_embeds_torch.dtype}")
+        # Convert torch -> numpy -> MAX tensor (torch tensors don't support dlpack directly)
+        prompt_embeds = Tensor.from_dlpack(prompt_embeds_torch.numpy()).to(device).cast(DType.bfloat16)
+
+        # CRITICAL: Validate prompt_embeds shape matches compiled model expectation
+        expected_cap_seq_len = 75
+        expected_hidden_dim = 2560
+        actual_shape = tuple(prompt_embeds.shape)
+        if actual_shape != (expected_cap_seq_len, expected_hidden_dim):
+            print(f"WARNING: prompt_embeds shape {actual_shape} != expected ({expected_cap_seq_len}, {expected_hidden_dim})")
+            print(f"         This WILL cause garbage output from the compiled transformer!")
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
@@ -964,8 +976,11 @@ class ZImageModel(
         )
 
         # DEBUG: Check initial latents
-        # print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
-        # print(f"DEBUG: Initial latents - shape: {latents.shape}, min: {np.nanmin(latents):.4f}, max: {np.nanmax(latents):.4f}, nan: {np.isnan(latents).any()}")
+        from max.driver import CPU
+        latents_init_np = np.from_dlpack(latents.to(CPU()))
+        print(f"DEBUG: Initial latents - shape: {latents_init_np.shape}, "
+              f"min: {np.nanmin(latents_init_np):.4f}, max: {np.nanmax(latents_init_np):.4f}, "
+              f"nan: {np.isnan(latents_init_np).any()}")
 
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
@@ -1057,15 +1072,28 @@ class ZImageModel(
 
                 latent_model_input = F.unsqueeze(latent_model_input, 2)
 
+                # Debug: Check all inputs before calling compiled transformer
+                x_in = F.squeeze(latent_model_input, 0)
+                if i == 0:
+                    print(f"DEBUG Step 0: Transformer inputs:")
+                    print(f"  x (latents): shape={tuple(x_in.shape)}, dtype={x_in.dtype}")
+                    print(f"  t (timestep): shape={tuple(timestep_model_input.shape)}, dtype={timestep_model_input.dtype}")
+                    print(f"  cap_feats: shape={tuple(prompt_embeds_model_input.shape)}, dtype={prompt_embeds_model_input.dtype}")
+                    print(f"Expected: x=(16, 1, 128, 128) bfloat16, t=(1,) float32, cap_feats=(75, 2560) bfloat16")
+
                 model_out = self.transformer(
-                    F.squeeze(latent_model_input, 0),
+                    x_in,
                     timestep_model_input,
                     prompt_embeds_model_input,
                 )
 
                 # DEBUG: Check transformer output at first step
-                # if i == 0:
-                #     print(model_out.shape, np.isnan(np.from_dlpack(model_out.to(CPU()))).any())
+                if i == 0:
+                    from max.driver import CPU
+                    model_out_np = np.from_dlpack(model_out.to(CPU()))
+                    print(f"DEBUG Step 0: Transformer output - shape: {model_out_np.shape}, "
+                          f"min: {np.nanmin(model_out_np):.4f}, max: {np.nanmax(model_out_np):.4f}, "
+                          f"nan: {np.isnan(model_out_np).any()}")
 
                 if apply_cfg:
                     # Perform CFG
@@ -1141,12 +1169,31 @@ class ZImageModel(
             image = latents
 
         else:
+            # Debug: Check final latent statistics before VAE decode
+            from max.driver import CPU
+            latents_np = np.from_dlpack(latents.to(CPU()))
+            print(f"DEBUG: Final latents after denoising - shape: {latents_np.shape}, "
+                  f"min: {np.nanmin(latents_np):.4f}, max: {np.nanmax(latents_np):.4f}, "
+                  f"mean: {np.nanmean(latents_np):.4f}, nan: {np.isnan(latents_np).any()}")
+
             latents = latents.cast(DType.bfloat16)
             latents = (
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
+            # Debug: Check scaled latents
+            scaled_latents_np = np.from_dlpack(latents.to(CPU()))
+            print(f"DEBUG: Scaled latents for VAE - shape: {scaled_latents_np.shape}, "
+                  f"min: {np.nanmin(scaled_latents_np):.4f}, max: {np.nanmax(scaled_latents_np):.4f}, "
+                  f"mean: {np.nanmean(scaled_latents_np):.4f}")
+
             image = self.vae.decoder(latents)#.sample
+
+            # Debug: Check VAE output
+            image_np = np.from_dlpack(image.to(CPU()))
+            print(f"DEBUG: VAE output - shape: {image_np.shape}, "
+                  f"min: {np.nanmin(image_np):.4f}, max: {np.nanmax(image_np):.4f}, "
+                  f"mean: {np.nanmean(image_np):.4f}")
 
         # Offload all models
         # self.maybe_free_model_hooks()
