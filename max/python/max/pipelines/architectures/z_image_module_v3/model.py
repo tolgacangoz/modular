@@ -387,11 +387,11 @@ class ZImageModel(
         self._session = session  # reuse for on-device casts
 
         self.scheduler = None
-        self.vae.decoder, self.text_encoder, _ = self.load_model(
+        self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
             session
         )
         # Use uncompiled transformer for debugging NaN issues
-        self.transformer = self.model.transformer
+        # self.transformer = self.model.transformer
 
         # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (
