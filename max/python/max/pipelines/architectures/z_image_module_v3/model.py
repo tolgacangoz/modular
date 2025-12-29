@@ -25,7 +25,7 @@ from typing import Any, cast
 import numpy as np
 from max._core.engine import Model
 from max.driver import CPU, Device
-from max.driver.Tensor import Tensor as DriverTensor
+import max.driver.Tensor as DriverTensor
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.experimental import functional as F
