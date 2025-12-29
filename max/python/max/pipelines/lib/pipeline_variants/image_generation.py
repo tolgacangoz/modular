@@ -210,16 +210,23 @@ class ImageGenerationPipeline(
                     from max.driver import CPU
 
                     # Handle bfloat16 specially - driver.Tensor has no cast() method
-                    # Use view(float16) for numpy compatibility, then convert to float32
+                    # bfloat16 is float32 with truncated lower 16 mantissa bits
+                    # Conversion: view as uint16 -> left-shift 16 bits to uint32 -> view as float32
                     if image_tensor.dtype == DType.bfloat16:
-                        # For max.driver.Tensor: view as float16 for numpy, then convert
+                        # Get raw bits as uint16
                         if hasattr(image_tensor, 'view'):
-                            image_np = image_tensor.view(DType.float16).to_numpy().astype(np.float32)
+                            raw_uint16 = image_tensor.view(DType.uint16).to_numpy()
                         elif hasattr(image_tensor, 'driver_tensor'):
-                            image_np = image_tensor.driver_tensor.view(DType.float16).to_numpy().astype(np.float32)
+                            raw_uint16 = image_tensor.driver_tensor.view(DType.uint16).to_numpy()
                         else:
-                            # Fallback: try to_numpy directly (may fail for bfloat16)
-                            image_np = image_tensor.to_numpy().astype(np.float32)
+                            raw_uint16 = image_tensor.to_numpy()
+
+                        # Convert bfloat16 bits to float32:
+                        # bfloat16 = [sign(1), exponent(8), mantissa(7)]
+                        # float32  = [sign(1), exponent(8), mantissa(23)]
+                        # So bfloat16 is the upper 16 bits of float32
+                        raw_uint32 = raw_uint16.astype(np.uint32) << 16
+                        image_np = raw_uint32.view(np.float32)
                     else:
                         # Non-bfloat16 path
                         # Try DLPack protocol first (for experimental.tensor.Tensor)
