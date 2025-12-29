@@ -1190,7 +1190,7 @@ class ZImageModel(
             scaled_latents_np = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
             print(f"DEBUG: Scaled latents for VAE - shape: {scaled_latents_np.shape}, "
                   f"min: {np.nanmin(scaled_latents_np):.4f}, max: {np.nanmax(scaled_latents_np):.4f}, "
-                  f"mean: {np.nanmean(scaled_latents_np):.4f}"))
+                  f"mean: {np.nanmean(scaled_latents_np):.4f}")
 
             image = self.vae.decoder(latents)#.sample
 
