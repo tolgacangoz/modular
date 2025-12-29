@@ -949,8 +949,10 @@ class ZImageModel(
         data = load_file("/root/prompt_embeds.safetensors")
         prompt_embeds_torch = data["prompt_embeds"]
         print(f"DEBUG: Loaded prompt_embeds shape: {prompt_embeds_torch.shape}, dtype: {prompt_embeds_torch.dtype}")
-        # Convert torch -> numpy -> MAX tensor (torch tensors don't support dlpack directly)
-        prompt_embeds = Tensor.from_dlpack(prompt_embeds_torch.numpy()).to(device).cast(DType.bfloat16)
+        # Convert torch -> numpy -> MAX tensor
+        # NumPy doesn't support bfloat16, so convert to float32 first
+        prompt_embeds_np = prompt_embeds_torch.float().numpy()  # bfloat16 -> float32 -> numpy
+        prompt_embeds = Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
 
         # CRITICAL: Validate prompt_embeds shape matches compiled model expectation
         expected_cap_seq_len = 75
@@ -1092,7 +1094,8 @@ class ZImageModel(
                 # DEBUG: Check transformer output at first step
                 if i == 0:
                     from max.driver import CPU
-                    model_out_np = np.from_dlpack(model_out.to(CPU()))
+                    # Cast to float32 before numpy conversion (numpy doesn't support bfloat16)
+                    model_out_np = np.from_dlpack(model_out.cast(DType.float32).to(CPU()))
                     print(f"DEBUG Step 0: Transformer output - shape: {model_out_np.shape}, "
                           f"min: {np.nanmin(model_out_np):.4f}, max: {np.nanmax(model_out_np):.4f}, "
                           f"nan: {np.isnan(model_out_np).any()}")
@@ -1183,16 +1186,16 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            # Debug: Check scaled latents
-            scaled_latents_np = np.from_dlpack(latents.to(CPU()))
+            # Debug: Check scaled latents (bfloat16 -> float32 for numpy)
+            scaled_latents_np = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
             print(f"DEBUG: Scaled latents for VAE - shape: {scaled_latents_np.shape}, "
                   f"min: {np.nanmin(scaled_latents_np):.4f}, max: {np.nanmax(scaled_latents_np):.4f}, "
-                  f"mean: {np.nanmean(scaled_latents_np):.4f}")
+                  f"mean: {np.nanmean(scaled_latents_np):.4f}"))
 
             image = self.vae.decoder(latents)#.sample
 
-            # Debug: Check VAE output
-            image_np = np.from_dlpack(image.to(CPU()))
+            # Debug: Check VAE output (cast to float32 for numpy if needed)
+            image_np = np.from_dlpack(image.cast(DType.float32).to(CPU()))
             print(f"DEBUG: VAE output - shape: {image_np.shape}, "
                   f"min: {np.nanmin(image_np):.4f}, max: {np.nanmax(image_np):.4f}, "
                   f"mean: {np.nanmean(image_np):.4f}")
