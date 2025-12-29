@@ -638,9 +638,11 @@ class ZImageModel(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
-            compiled_vae_decode_model,
+            self.model.vae.decoder,
+            # compiled_vae_decode_model,
             None,  # compiled_text_encoder_model,
-            compiled_transformer_model,
+            # compiled_transformer_model,
+            self.model.transformer
         )
 
     def _build_text_encoder_graph(
