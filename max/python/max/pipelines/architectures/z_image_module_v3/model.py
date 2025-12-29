@@ -1193,9 +1193,9 @@ class ZImageModel(
             # print(f"DEBUG: Scaled latents for VAE - shape: {scaled_latents_np.shape}, "
             #       f"min: {np.nanmin(scaled_latents_np):.4f}, max: {np.nanmax(scaled_latents_np):.4f}, "
             #       f"mean: {np.nanmean(scaled_latents_np):.4f}")
-            print(latents.shape, latents.dtype, latents.min(), F.max(latents), F.mean(latents), F.std(latents), F.min(latents))
+            print(latents.shape, latents.dtype, F.min(latents), F.max(latents), F.mean(latents), F.std(latents))
             image = self.vae.decoder(latents)#.sample
-            print(image.shape, image.dtype, image.min(), F.max(image), F.mean(image), F.std(image), F.min(image))
+            print(image.shape, image.dtype, F.min(image), F.max(image), F.mean(image), F.std(image))
 
             # Debug: Check VAE output (cast to float32 for numpy if needed)
             # DISABLED - causes OOM when copying to CPU
