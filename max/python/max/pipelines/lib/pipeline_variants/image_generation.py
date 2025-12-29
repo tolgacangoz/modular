@@ -198,32 +198,11 @@ class ImageGenerationPipeline(
 
                 # Create output with the generated image
                 import numpy as np
-                from max.dtype import DType
 
                 # Convert driver tensor to numpy array
-                image_tensor = model_outputs.hidden_states
-
-                # Model returns bfloat16 from compiled VAE, convert to float32
-                # numpy doesn't support bfloat16 via DLPack, so we view as uint16 first
-                # bfloat16 = [sign(1), exponent(8), mantissa(7)] = upper 16 bits of float32
-                if image_tensor.dtype == DType.bfloat16:
-                    # View bfloat16 as uint16 on driver tensor (same bit pattern)
-                    raw_uint16 = image_tensor.view(DType.uint16).to_numpy()
-                    # Shift left 16 bits and reinterpret as float32
-                    image_np = (raw_uint16.astype(np.uint32) << 16).view(np.float32)
-                else:
-                    image_np = image_tensor.to_numpy()
-
-                # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
-                # VAE output is in (B, C, H, W) format
-                if len(image_np.shape) == 4:
-                    # Remove batch dimension and transpose C to last
-                    image_np = np.squeeze(image_np, axis=0)  # (C, H, W)
-                    image_np = np.transpose(image_np, (1, 2, 0))  # (H, W, C)
-
-                # Normalize to [0, 1] range (VAE output is typically in [-1, 1])
-                image_np = (image_np + 1.0) / 2.0
-                image_np = np.clip(image_np, 0.0, 1.0)
+                image_np = model_outputs.hidden_states.to_numpy()
+                image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
+                image_np = image_np.transpose(0, 2, 3, 1)
 
                 results[request_id] = ImageGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
