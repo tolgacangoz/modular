@@ -30,6 +30,7 @@ from __future__ import annotations
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
 from max.experimental.tensor import Tensor
+from max.dtype import DType
 
 from .layers import AutoencoderKLOutput, Conv2d
 from .vae import (
@@ -239,7 +240,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         else:
             decoded = self._decode(z).sample
 
-        return DecoderOutput(sample=decoded)
+        return DecoderOutput(sample=decoded.cast(DType.float32))
 
     def blend_v(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         """Blend two tensors vertically using slice/concat (no item assignment)."""

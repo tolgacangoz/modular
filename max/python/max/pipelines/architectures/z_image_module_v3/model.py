@@ -1146,13 +1146,11 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            image = self.vae.decoder(latents)#.sample
+            image = self.vae.decode(latents).sample
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        # Return the compiled model output directly (already realized)
-        # bfloat16→float32 conversion is handled in image_generation.py
         return ModelOutputs(hidden_states=cast(DriverTensor, image.driver_tensor), logits=None)
 
     def prepare_initial_token_inputs(
