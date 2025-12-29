@@ -32,6 +32,7 @@ from dataclasses import dataclass
 import torch
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
+from max.dtype import DType
 from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
@@ -317,7 +318,7 @@ class Decoder(nn.Module):
         sample = self.conv_act(sample)
         sample = self.conv_out(sample)
 
-        return sample
+        return sample.cast(DType.float32)
 
 
 class DiagonalGaussianDistribution:
