@@ -639,7 +639,7 @@ class ZImageModel(
         )
         return (
             compiled_vae_decode_model,
-            # compiled_text_encoder_model,
+            None,  # compiled_text_encoder_model,
             compiled_transformer_model,
         )
 
