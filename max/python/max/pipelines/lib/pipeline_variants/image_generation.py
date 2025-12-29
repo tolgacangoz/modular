@@ -205,30 +205,36 @@ class ImageGenerationPipeline(
 
                 # Convert tensor to numpy - handle different tensor types
                 # max.experimental.tensor.Tensor uses DLPack protocol
-                # max.driver.Tensor has to_numpy() method
+                # max.driver.Tensor has to_numpy() method (but no cast())
                 try:
                     from max.driver import CPU
 
-                    # First cast to float32 (needed for bfloat16)
+                    # Handle bfloat16 specially - driver.Tensor has no cast() method
+                    # Use view(float16) for numpy compatibility, then convert to float32
                     if image_tensor.dtype == DType.bfloat16:
-                        image_casted = image_tensor.cast(DType.float32)
+                        # For max.driver.Tensor: view as float16 for numpy, then convert
+                        if hasattr(image_tensor, 'view'):
+                            image_np = image_tensor.view(DType.float16).to_numpy().astype(np.float32)
+                        elif hasattr(image_tensor, 'driver_tensor'):
+                            image_np = image_tensor.driver_tensor.view(DType.float16).to_numpy().astype(np.float32)
+                        else:
+                            # Fallback: try to_numpy directly (may fail for bfloat16)
+                            image_np = image_tensor.to_numpy().astype(np.float32)
                     else:
-                        image_casted = image_tensor
-
-                    # Try DLPack protocol first (for experimental.tensor.Tensor)
-                    if hasattr(image_casted, '__dlpack__'):
-                        # Transfer GPU → CPU (DLPack doesn't support GPU memory for NumPy)
-                        # Note: np.from_dlpack() internally calls __dlpack__() which triggers realization
-                        image_cpu = image_casted.to(CPU())
-                        image_np = np.from_dlpack(image_cpu).astype(np.float32)
-                    elif hasattr(image_casted, 'driver_tensor'):
-                        # Access underlying driver tensor
-                        image_np = image_casted.driver_tensor.to_numpy().astype(np.float32)
-                    elif hasattr(image_casted, 'to_numpy'):
-                        # Direct to_numpy (for driver.Tensor)
-                        image_np = image_casted.to_numpy().astype(np.float32)
-                    else:
-                        raise AttributeError(f"Unknown tensor type: {type(image_casted)}")
+                        # Non-bfloat16 path
+                        # Try DLPack protocol first (for experimental.tensor.Tensor)
+                        if hasattr(image_tensor, '__dlpack__'):
+                            # Transfer GPU → CPU (DLPack doesn't support GPU memory for NumPy)
+                            image_cpu = image_tensor.to(CPU())
+                            image_np = np.from_dlpack(image_cpu).astype(np.float32)
+                        elif hasattr(image_tensor, 'driver_tensor'):
+                            # Access underlying driver tensor
+                            image_np = image_tensor.driver_tensor.to_numpy().astype(np.float32)
+                        elif hasattr(image_tensor, 'to_numpy'):
+                            # Direct to_numpy (for driver.Tensor)
+                            image_np = image_tensor.to_numpy().astype(np.float32)
+                        else:
+                            raise AttributeError(f"Unknown tensor type: {type(image_tensor)}")
                 except Exception as e:
                     logger.error(f"Failed to convert tensor to numpy: {e}")
                     raise
