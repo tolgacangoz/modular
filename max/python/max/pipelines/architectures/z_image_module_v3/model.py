@@ -25,6 +25,7 @@ from typing import Any, cast
 import numpy as np
 from max._core.engine import Model
 from max.driver import CPU, Device
+from max.driver.Tensor import Tensor as DriverTensor
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.experimental import functional as F
@@ -1152,23 +1153,10 @@ class ZImageModel(
             # Use uncompiled VAE decode for debugging
             image = self.vae.decode(latents).sample
 
-            # DEBUG: Check image after VAE
-            # print(image.shape, np.isnan(np.from_dlpack(image.cast(DType.float32).to(CPU()))).any())
-
-            # Get tensor
-            try:
-                if hasattr(image, 'driver_tensor'):
-                    image_tensor = image.driver_tensor
-                else:
-                    image_tensor = image
-            except TypeError:
-                # If checking driver_tensor raises TypeError (e.g. symbolic), assume it's the tensor itself
-                image_tensor = image
-
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        return ModelOutputs(hidden_states=cast(Tensor, image_tensor), logits=None)
+        return ModelOutputs(hidden_states=cast(DriverTensor, image.driver_tensor), logits=None)
 
     def prepare_initial_token_inputs(
         self,
