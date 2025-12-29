@@ -573,19 +573,19 @@ class ZImageModel(
         self.scheduler = self.model.scheduler
 
         # Load weights into the uncompiled models
-        self.model.transformer.load_state_dict(transformer_state_dict)
-        self.model.vae.decoder.load_state_dict(decoder_weights)
+        # self.model.transformer.load_state_dict(transformer_state_dict)
+        # self.model.vae.decoder.load_state_dict(decoder_weights)
 
         # # Move to device for uncompiled execution
-        self.model.transformer.to(self.devices[0])
-        self.model.vae.decoder.to(self.devices[0])
+        # self.model.transformer.to(self.devices[0])
+        # self.model.vae.decoder.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
-        # compiled_vae_decode_model = self.model.vae.decoder.compile(
-        #     sample_type,
-        #     weights=decoder_weights,
-        # )
+        compiled_vae_decoder_model = self.model.vae.decoder.compile(
+            sample_type,
+            weights=decoder_weights,
+        )
         after_vae_decode_build = time.perf_counter()
         logger.info(
             f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
@@ -604,12 +604,12 @@ class ZImageModel(
 
         logger.info("Building and compiling the backbone transformer...")
         before_transformer_build = time.perf_counter()
-        # compiled_transformer_model = self.model.transformer.compile(
-        #     hidden_states_type,
-        #     t_type,
-        #     cap_feats_type,
-        #     weights=transformer_state_dict,
-        # )
+        compiled_transformer_model = self.model.transformer.compile(
+            hidden_states_type,
+            t_type,
+            cap_feats_type,
+            weights=transformer_state_dict,
+        )
         after_transformer_build = time.perf_counter()
         logger.info(
             f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
@@ -638,11 +638,9 @@ class ZImageModel(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
-            self.model.vae.decoder,
-            # compiled_vae_decode_model,
+            # compiled_vae_decoder_model,
             None,  # compiled_text_encoder_model,
             # compiled_transformer_model,
-            self.model.transformer
         )
 
     def _build_text_encoder_graph(
