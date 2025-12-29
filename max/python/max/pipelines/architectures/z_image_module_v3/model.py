@@ -1146,20 +1146,14 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            # DEBUG: Check latents before VAE
-            # print(latents.shape, np.isnan(np.from_dlpack(latents.cast(DType.float32).to(CPU()))).any())
-
             # Use uncompiled VAE decode for debugging
             image = self.vae.decode(latents).sample
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        # Cast to float32 before returning - driver.Tensor doesn't have cast()
-        # but experimental.tensor.Tensor does
-        if image.dtype == DType.bfloat16:
-            image = image.cast(DType.float32)
-
+        # Return the compiled model output directly (already realized)
+        # bfloat16→float32 conversion is handled in image_generation.py
         return ModelOutputs(hidden_states=cast(DriverTensor, image.driver_tensor), logits=None)
 
     def prepare_initial_token_inputs(
