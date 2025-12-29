@@ -219,7 +219,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
     def decode(
         self,
         z: Tensor,
-        # generator=None
+        seed: int | None = None,
     ) -> DecoderOutput:
         """
         Decode a batch of images.
@@ -454,20 +454,20 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         self,
         sample: Tensor,
         sample_posterior: bool = False,
-        # generator: Generator | None = None,
+        seed: int | None = None,
     ) -> DecoderOutput:
         r"""
         Args:
             sample (`Tensor`): Input sample.
             sample_posterior (`bool`, *optional*, defaults to `False`):
                 Whether to sample from the posterior.
+            seed (`int`, *optional*, defaults to `None`):
+                Seed for reproducible random sampling from posterior.
         """
         x = sample
         posterior = self.encode(x).latent_dist
         if sample_posterior:
-            z = posterior.sample(
-                # generator=generator
-            )
+            z = posterior.sample(seed=seed)
         else:
             z = posterior.mode()
         dec = self.decode(z).sample

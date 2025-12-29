@@ -463,7 +463,7 @@ class FlowMatchEulerDiscreteScheduler:
         s_tmin: float = 0.0,
         s_tmax: float = float("inf"),
         s_noise: float = 1.0,
-        # generator: Generator | None = None,
+        seed: int | None = None,
         per_token_timesteps: Tensor | None = None,
     ) -> FlowMatchEulerDiscreteSchedulerOutput:
         """
@@ -482,8 +482,8 @@ class FlowMatchEulerDiscreteScheduler:
             s_tmax  (`float`):
             s_noise (`float`, defaults to 1.0):
                 Scaling factor for noise added to the sample.
-            generator (`Generator`, *optional*):
-                A random number generator.
+            seed (`int`, *optional*):
+                Seed for reproducible random noise generation.
             per_token_timesteps (`Tensor`, *optional*):
                 The timesteps for each token in the sample.
 
@@ -519,8 +519,15 @@ class FlowMatchEulerDiscreteScheduler:
             dt = sigma_next - sigma
 
         if self.stochastic_sampling:
+            import torch
             x0 = sample - current_sigma * model_output
-            noise = random.normal(sample)
+            # Use PyTorch for random generation to match diffusers exactly
+            generator = torch.Generator("cpu")
+            if seed is not None:
+                generator.manual_seed(seed)
+            shape = tuple(int(d) for d in sample.shape)
+            noise_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
+            noise = Tensor.from_dlpack(noise_torch.numpy()).to(sample.device)
             prev_sample = (1.0 - next_sigma) * x0 + next_sigma * noise
         else:
             prev_sample = sample + dt * model_output
