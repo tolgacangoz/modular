@@ -108,9 +108,10 @@ class ZImageInputs(ModelInputs):
     num_images_per_prompt: int | None = 1
     """ The number of images to generate per prompt."""
 
-    # generator: F.Generator | list[F.Generator] | None = None
-    """ One or a list of [max generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
-    to make generation deterministic."""
+    seed: int | None = 0
+    """ Seed for the random number generator to make generation deterministic.
+    If None, random seed is used. Equivalent to torch.Generator().manual_seed(seed).
+    """
 
     latents: Tensor | None = None
     """ Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
@@ -566,55 +567,53 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        # SKIP COMPILATION FOR DEBUGGING - load weights directly
-        logger.info("SKIPPING compilation for debugging... Loading weights directly")
         self.vae = self.model.vae
         # Ensure decoder is set correctly for uncompiled use
-        self.vae.decoder = self.model.vae.decoder
+        #self.vae.decoder = self.model.vae.decoder
         self.scheduler = self.model.scheduler
 
         # Load weights into the uncompiled models
-        self.model.transformer.load_state_dict(transformer_state_dict)
-        self.model.vae.decoder.load_state_dict(decoder_weights)
+        # self.model.transformer.load_state_dict(transformer_state_dict)
+        # self.model.vae.decoder.load_state_dict(decoder_weights)
 
-        # Move to device for uncompiled execution
-        self.model.transformer.to(self.devices[0])
-        self.model.vae.decoder.to(self.devices[0])
+        # # Move to device for uncompiled execution
+        # self.model.transformer.to(self.devices[0])
+        # self.model.vae.decoder.to(self.devices[0])
 
-        # logger.info("Building and compiling VAE's decoder...")
-        # before_vae_decode_build = time.perf_counter()
-        # compiled_vae_decode_model = self.model.vae.decoder.compile(
-        #     sample_type,
-        #     weights=decoder_weights,
-        # )
-        # after_vae_decode_build = time.perf_counter()
-        # logger.info(
-        #     f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
-        # )
+        logger.info("Building and compiling VAE's decoder...")
+        before_vae_decode_build = time.perf_counter()
+        compiled_vae_decode_model = self.model.vae.decoder.compile(
+            sample_type,
+            weights=decoder_weights,
+        )
+        after_vae_decode_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
+        )
 
-        # C, F_dim, H_dim, W_dim = 16, 1, 128, 128
-        # cap_seq_len = 75
+        C, F_dim, H_dim, W_dim = 16, 1, 128, 128
+        cap_seq_len = 75
 
-        # hidden_states_type = TensorType(
-        #     DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref
-        # )
-        # t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
-        # cap_feats_type = TensorType(
-        #     DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
-        # )
+        hidden_states_type = TensorType(
+            DType.bfloat16, shape=(C, F_dim, H_dim, W_dim), device=device_ref
+        )
+        t_type = TensorType(DType.float32, shape=(1,), device=device_ref)
+        cap_feats_type = TensorType(
+            DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
+        )
 
-        # logger.info("Building and compiling the backbone transformer...")
-        # before_transformer_build = time.perf_counter()
-        # compiled_transformer_model = self.model.transformer.compile(
-        #     hidden_states_type,
-        #     t_type,
-        #     cap_feats_type,
-        #     weights=transformer_state_dict,
-        # )
-        # after_transformer_build = time.perf_counter()
-        # logger.info(
-        #     f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
-        # )
+        logger.info("Building and compiling the backbone transformer...")
+        before_transformer_build = time.perf_counter()
+        compiled_transformer_model = self.model.transformer.compile(
+            hidden_states_type,
+            t_type,
+            cap_feats_type,
+            weights=transformer_state_dict,
+        )
+        after_transformer_build = time.perf_counter()
+        logger.info(
+            f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
+        )
 
         # logger.info("Building and compiling text encoder...")
         # before_text_encoder_build = time.perf_counter()
@@ -639,10 +638,9 @@ class ZImageModel(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return (
-            self.model.vae.decoder, # Return uncompiled decoder!
+            compiled_vae_decode_model,
             # compiled_text_encoder_model,
-            None,
-            self.model.transformer, # Return uncompiled transformer!
+            compiled_transformer_model,
         )
 
     def _build_text_encoder_graph(
@@ -785,31 +783,41 @@ class ZImageModel(
         width: int,
         dtype: DType,
         device: Device,
-        # generator: Generator,
+        seed: int | None = None,
         latents: Tensor | None = None,
     ) -> Tensor:
+        """Prepare latents for the diffusion process.
+
+        Args:
+            batch_size: Number of images to generate.
+            num_channels_latents: Number of channels in the latent space.
+            height: Target image height.
+            width: Target image width.
+            dtype: Data type for the latents.
+            device: Device to place the latents on.
+            seed: Optional seed for reproducible random generation.
+                If None, uses random seed (non-deterministic).
+            latents: Optional pre-generated latents to use instead.
+
+        Returns:
+            Latent tensor of shape (batch_size, num_channels_latents, height, width).
+        """
+        import torch
+
         height = 2 * (int(height) // (self.vae_scale_factor * 2))
         width = 2 * (int(width) // (self.vae_scale_factor * 2))
 
         shape = (batch_size, num_channels_latents, height, width)
 
         if latents is None:
-            # DEBUG: Use numpy to force eager execution
-            import numpy as np
-            # Generate on CPU with numpy
-            latents_np = np.random.normal(loc=0.0, scale=1.0, size=shape).astype(np.float32)
+            # Use PyTorch for random generation to match diffusers exactly
+            # This ensures identical results when using the same seed
+            generator = torch.Generator("cpu")
+            if seed is not None:
+                generator.manual_seed(seed)
+            latents_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
             # Convert to MAX tensor and move to device
-            latents = Tensor.from_dlpack(latents_np).to(device)
-
-            # Original code (commented out for debug)
-            # latents = random.normal(
-            #     shape,
-            #     device=device,
-            #     # generator=generator,  # TODO: implement generator
-            #     mean=0.0,
-            #     std=1.0,
-            #     dtype=dtype,
-            # )
+            latents = Tensor.from_dlpack(latents_torch.numpy()).to(device)
         else:
             if latents.shape != shape:
                 raise ValueError(
@@ -941,6 +949,9 @@ class ZImageModel(
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
 
+        # Extract seed for reproducible latent generation
+        seed = model_inputs.seed
+
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
@@ -948,8 +959,8 @@ class ZImageModel(
             width,
             DType.float32,
             device,
-            # generator,
-            latents,
+            seed=seed,
+            latents=latents,
         )
 
         # DEBUG: Check initial latents

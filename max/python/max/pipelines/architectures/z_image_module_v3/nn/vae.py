@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import torch
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
 from max.experimental import random
@@ -348,17 +349,24 @@ class DiagonalGaussianDistribution:
 
     def sample(
         self,
-        #    generator: "Generator" | None = None
+        seed: int | None = None,
     ) -> Tensor:
-        # make sure sample is on the same device as the parameters and has same dtype
-        sample = random.normal(
-            self.mean.shape,
-            # generator=generator,  # TODO: implement generator
-            device=self.parameters.device,
-            mean=0.0,
-            std=1.0,
-            dtype=self.parameters.dtype,
-        )
+        """Sample from the distribution.
+
+        Args:
+            seed: Optional seed for reproducible random sampling.
+                If None, uses random seed (non-deterministic).
+
+        Returns:
+            A sample from the Gaussian distribution.
+        """
+        # Use PyTorch for random generation to match diffusers exactly
+        generator = torch.Generator("cpu")
+        if seed is not None:
+            generator.manual_seed(seed)
+        shape = tuple(int(d) for d in self.mean.shape)
+        sample_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
+        sample = Tensor.from_dlpack(sample_torch.numpy()).to(self.parameters.device).cast(self.parameters.dtype)
         x = self.mean + self.std * sample
         return x
 
