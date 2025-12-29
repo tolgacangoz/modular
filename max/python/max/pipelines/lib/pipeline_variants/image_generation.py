@@ -203,8 +203,14 @@ class ImageGenerationPipeline(
                 # Convert driver tensor to numpy array
                 image_tensor = model_outputs.hidden_states
 
-                # Model returns float32, just convert to numpy
-                image_np = image_tensor.to_numpy()
+                # Model returns bfloat16 from compiled VAE, convert to float32
+                # bfloat16 is float32 with truncated lower 16 mantissa bits
+                if image_tensor.dtype == DType.bfloat16:
+                    raw_uint16 = image_tensor.view(DType.uint16).to_numpy()
+                    # Shift left 16 bits: bfloat16 bits become upper 16 bits of float32
+                    image_np = (raw_uint16.astype(np.uint32) << 16).view(np.float32)
+                else:
+                    image_np = image_tensor.to_numpy()
 
                 # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
                 # VAE output is in (B, C, H, W) format
