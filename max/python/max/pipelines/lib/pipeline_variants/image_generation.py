@@ -203,52 +203,8 @@ class ImageGenerationPipeline(
                 # Convert driver tensor to numpy array
                 image_tensor = model_outputs.hidden_states
 
-                # Convert tensor to numpy - handle different tensor types
-                # max.experimental.tensor.Tensor uses DLPack protocol
-                # max.driver.Tensor has to_numpy() method (but no cast())
-                try:
-                    from max.driver import CPU
-
-                    # Handle bfloat16 specially - driver.Tensor has no cast() method
-                    # bfloat16 is float32 with truncated lower 16 mantissa bits
-                    # Conversion: view as uint16 -> left-shift 16 bits to uint32 -> view as float32
-                    if image_tensor.dtype == DType.bfloat16:
-                        # Get raw bits as uint16
-                        if hasattr(image_tensor, 'view'):
-                            raw_uint16 = image_tensor.view(DType.uint16).to_numpy()
-                        elif hasattr(image_tensor, 'driver_tensor'):
-                            raw_uint16 = image_tensor.driver_tensor.view(DType.uint16).to_numpy()
-                        else:
-                            raw_uint16 = image_tensor.to_numpy()
-
-                        # Convert bfloat16 bits to float32:
-                        # bfloat16 = [sign(1), exponent(8), mantissa(7)]
-                        # float32  = [sign(1), exponent(8), mantissa(23)]
-                        # So bfloat16 is the upper 16 bits of float32
-                        raw_uint32 = raw_uint16.astype(np.uint32) << 16
-                        image_np = raw_uint32.view(np.float32)
-                    else:
-                        # Non-bfloat16 path
-                        # Try DLPack protocol first (for experimental.tensor.Tensor)
-                        if hasattr(image_tensor, '__dlpack__'):
-                            # Transfer GPU → CPU (DLPack doesn't support GPU memory for NumPy)
-                            image_cpu = image_tensor.to(CPU())
-                            image_np = np.from_dlpack(image_cpu).astype(np.float32)
-                        elif hasattr(image_tensor, 'driver_tensor'):
-                            # Access underlying driver tensor
-                            image_np = image_tensor.driver_tensor.to_numpy().astype(np.float32)
-                        elif hasattr(image_tensor, 'to_numpy'):
-                            # Direct to_numpy (for driver.Tensor)
-                            image_np = image_tensor.to_numpy().astype(np.float32)
-                        else:
-                            raise AttributeError(f"Unknown tensor type: {type(image_tensor)}")
-                except Exception as e:
-                    logger.error(f"Failed to convert tensor to numpy: {e}")
-                    raise
-
-                # Debug: print shape and value range
-                # print(f"DEBUG: Image shape: {image_np.shape}, dtype: {image_np.dtype}")
-                # print(f"DEBUG: Value range: min={np.nanmin(image_np)}, max={np.nanmax(image_np)}, has_nan={np.isnan(image_np).any()}")
+                # Model returns float32, just convert to numpy
+                image_np = image_tensor.to_numpy()
 
                 # Post-process: convert from (B, C, H, W) to (H, W, C) and normalize
                 # VAE output is in (B, C, H, W) format

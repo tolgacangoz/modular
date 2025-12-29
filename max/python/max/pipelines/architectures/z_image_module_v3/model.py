@@ -1155,6 +1155,11 @@ class ZImageModel(
         # Offload all models
         # self.maybe_free_model_hooks()
 
+        # Cast to float32 before returning - driver.Tensor doesn't have cast()
+        # but experimental.tensor.Tensor does
+        if image.dtype == DType.bfloat16:
+            image = image.cast(DType.float32)
+
         return ModelOutputs(hidden_states=cast(DriverTensor, image.driver_tensor), logits=None)
 
     def prepare_initial_token_inputs(
