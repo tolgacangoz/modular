@@ -204,11 +204,19 @@ class ImageGenerationPipeline(
                 image_tensor = model_outputs.hidden_states
 
                 # Model returns bfloat16 from compiled VAE, convert to float32
-                # bfloat16 is float32 with truncated lower 16 mantissa bits
+                # bfloat16 is float32 with truncated lower 16 mantissa bits:
+                # bfloat16 = [sign(1), exponent(8), mantissa(7)]
+                # float32  = [sign(1), exponent(8), mantissa(23)]
+                # So bfloat16 is the upper 16 bits of float32
                 if image_tensor.dtype == DType.bfloat16:
-                    raw_uint16 = image_tensor.view(DType.uint16).to_numpy()
-                    # Shift left 16 bits: bfloat16 bits become upper 16 bits of float32
-                    image_np = (raw_uint16.astype(np.uint32) << 16).view(np.float32)
+                    # Get raw bytes - driver.Tensor.to_numpy() on bfloat16 returns uint16 view
+                    raw = image_tensor.to_numpy()
+                    # Ensure uint16 interpretation
+                    bf16_as_u16 = raw.view(np.uint16)
+                    # Create uint32 array and shift bfloat16 bits to upper 16 bits
+                    u32_padded = bf16_as_u16.astype(np.uint32) << 16
+                    # Reinterpret as float32
+                    image_np = u32_padded.view(np.float32)
                 else:
                     image_np = image_tensor.to_numpy()
 
