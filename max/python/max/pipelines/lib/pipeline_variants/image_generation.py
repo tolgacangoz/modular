@@ -196,9 +196,6 @@ class ImageGenerationPipeline(
                 # Mark context as done
                 context.status = GenerationStatus.END_OF_SEQUENCE
 
-                # Create output with the generated image
-                import numpy as np
-
                 # Convert driver tensor to numpy array
                 image_np = model_outputs.hidden_states.to_numpy()
                 image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)

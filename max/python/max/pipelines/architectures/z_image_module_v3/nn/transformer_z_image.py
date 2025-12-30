@@ -31,7 +31,6 @@ from .layers import (
     ModuleDict,
     RMSNorm,
     SiLU,
-    Transformer2DModelOutput,
 )
 
 ADALN_EMBED_DIM = 256

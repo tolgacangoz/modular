@@ -15,10 +15,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from max.driver import CPU, Device
+from max.driver import Device
 from max.dtype import DType
 from max.experimental import functional as F
-from max.experimental import random
 from max.experimental.tensor import Tensor
 
 # Note: scipy.stats.beta.ppf is used for beta sigmas but requires scipy
@@ -425,7 +424,9 @@ class FlowMatchEulerDiscreteScheduler:
             schedule_timesteps = self.timesteps
 
         # Get timestep value as scalar
-        timestep_val = timestep.item() if isinstance(timestep, Tensor) else float(timestep)
+        timestep_val = (
+            timestep.item() if isinstance(timestep, Tensor) else float(timestep)
+        )
 
         # Create boolean mask where timesteps match (within tolerance)
         mask = F.abs(schedule_timesteps - timestep_val) < 1e-5
@@ -439,7 +440,9 @@ class FlowMatchEulerDiscreteScheduler:
         cumsum = F.cumsum(mask_int, axis=0)
 
         # We want the second match (pos=1) if num_matches > 1, else first (pos=0)
-        target_pos = 2 if num_matches > 1 else 1  # cumsum value we're looking for
+        target_pos = (
+            2 if num_matches > 1 else 1
+        )  # cumsum value we're looking for
 
         # Find first index where cumsum equals target_pos
         # This is where the target_pos'th True occurs
@@ -520,13 +523,16 @@ class FlowMatchEulerDiscreteScheduler:
 
         if self.stochastic_sampling:
             import torch
+
             x0 = sample - current_sigma * model_output
             # Use PyTorch for random generation to match diffusers exactly
             generator = torch.Generator("cpu")
             if seed is not None:
                 generator.manual_seed(seed)
             shape = tuple(int(d) for d in sample.shape)
-            noise_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
+            noise_torch = torch.randn(
+                shape, generator=generator, dtype=torch.float32
+            )
             noise = Tensor.from_dlpack(noise_torch.numpy()).to(sample.device)
             prev_sample = (1.0 - next_sigma) * x0 + next_sigma * noise
         else:
