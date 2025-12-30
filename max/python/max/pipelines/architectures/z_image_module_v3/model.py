@@ -974,122 +974,122 @@ class ZImageModel(
         self.scheduler._step_index = 0
 
         # 6. Denoising loop
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i in range(self._num_timesteps):
-                t = timesteps[i]
-                if self.interrupt:
-                    continue
+        # with self.progress_bar(total=num_inference_steps) as progress_bar:
+        for i in range(self._num_timesteps):
+            t = timesteps[i]
+            if self.interrupt:
+                continue
 
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = F.broadcast_to(t, (int(latents.shape[0]),))
-                timestep = (1000 - timestep) / 1000
-                # Normalized time for time-aware config (0 at start, 1 at end)
-                # Use loop index to avoid GPU sync from .item()
-                t_norm = i / max(1, self._num_timesteps - 1)
+            # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+            timestep = F.broadcast_to(t, (int(latents.shape[0]),))
+            timestep = (1000 - timestep) / 1000
+            # Normalized time for time-aware config (0 at start, 1 at end)
+            # Use loop index to avoid GPU sync from .item()
+            t_norm = i / max(1, self._num_timesteps - 1)
 
-                # Handle cfg truncation
-                current_guidance_scale = self.guidance_scale
-                if (
-                    self.do_classifier_free_guidance
-                    and self._cfg_truncation is not None
-                    and float(self._cfg_truncation) <= 1
-                ):
-                    if t_norm > self._cfg_truncation:
-                        current_guidance_scale = 0.0
+            # Handle cfg truncation
+            current_guidance_scale = self.guidance_scale
+            if (
+                self.do_classifier_free_guidance
+                and self._cfg_truncation is not None
+                and float(self._cfg_truncation) <= 1
+            ):
+                if t_norm > self._cfg_truncation:
+                    current_guidance_scale = 0.0
 
-                # Run CFG only if configured AND scale is non-zero
-                apply_cfg = (
-                    self.do_classifier_free_guidance
-                    and current_guidance_scale > 0
+            # Run CFG only if configured AND scale is non-zero
+            apply_cfg = (
+                self.do_classifier_free_guidance
+                and current_guidance_scale > 0
+            )
+
+            if apply_cfg:
+                latents_typed = latents.cast(DType.bfloat16)
+                latent_model_input = latents_typed.repeat(2, 1, 1, 1)
+                prompt_embeds_model_input = (
+                    prompt_embeds + negative_prompt_embeds
                 )
+                timestep_model_input = timestep.repeat(2)
+            else:
+                latent_model_input = latents.cast(DType.bfloat16)
+                prompt_embeds_model_input = prompt_embeds
+                timestep_model_input = timestep
 
-                if apply_cfg:
-                    latents_typed = latents.cast(DType.bfloat16)
-                    latent_model_input = latents_typed.repeat(2, 1, 1, 1)
-                    prompt_embeds_model_input = (
-                        prompt_embeds + negative_prompt_embeds
-                    )
-                    timestep_model_input = timestep.repeat(2)
-                else:
-                    latent_model_input = latents.cast(DType.bfloat16)
-                    prompt_embeds_model_input = prompt_embeds
-                    timestep_model_input = timestep
+            latent_model_input = F.unsqueeze(latent_model_input, 2)
 
-                latent_model_input = F.unsqueeze(latent_model_input, 2)
+            x_in = F.squeeze(latent_model_input, 0)
 
-                x_in = F.squeeze(latent_model_input, 0)
+            model_out = self.transformer(
+                x_in,
+                timestep_model_input,
+                prompt_embeds_model_input,
+            )
 
-                model_out = self.transformer(
-                    x_in,
-                    timestep_model_input,
-                    prompt_embeds_model_input,
-                )
+            if apply_cfg:
+                # Perform CFG
+                pos_out = model_out_list[:actual_batch_size]
+                neg_out = model_out_list[actual_batch_size:]
 
-                if apply_cfg:
-                    # Perform CFG
-                    pos_out = model_out_list[:actual_batch_size]
-                    neg_out = model_out_list[actual_batch_size:]
+                noise_pred = []
+                for j in range(actual_batch_size):
+                    pos = pos_out[j].cast(DType.float32)
+                    neg = neg_out[j].cast(DType.float32)
 
-                    noise_pred = []
-                    for j in range(actual_batch_size):
-                        pos = pos_out[j].cast(DType.float32)
-                        neg = neg_out[j].cast(DType.float32)
+                    pred = pos + current_guidance_scale * (pos - neg)
 
-                        pred = pos + current_guidance_scale * (pos - neg)
-
-                        # Renormalization
-                        if (
+                    # Renormalization
+                    if (
+                        self._cfg_normalization
+                        and float(self._cfg_normalization) > 0.0
+                    ):
+                        # ori_pos_norm = torch.linalg.vector_norm(pos)
+                        # new_pos_norm = torch.linalg.vector_norm(pred)
+                        ori_pos_norm = F.sqrt(F.sum(pos * pos))
+                        new_pos_norm = F.sqrt(F.sum(pred * pred))
+                        max_new_norm = ori_pos_norm * float(
                             self._cfg_normalization
-                            and float(self._cfg_normalization) > 0.0
-                        ):
-                            # ori_pos_norm = torch.linalg.vector_norm(pos)
-                            # new_pos_norm = torch.linalg.vector_norm(pred)
-                            ori_pos_norm = F.sqrt(F.sum(pos * pos))
-                            new_pos_norm = F.sqrt(F.sum(pred * pred))
-                            max_new_norm = ori_pos_norm * float(
-                                self._cfg_normalization
-                            )
-                            if new_pos_norm > max_new_norm:
-                                pred = pred * (max_new_norm / new_pos_norm)
+                        )
+                        if new_pos_norm > max_new_norm:
+                            pred = pred * (max_new_norm / new_pos_norm)
 
-                        noise_pred.append(pred)
+                    noise_pred.append(pred)
 
-                    noise_pred = F.stack(noise_pred, axis=0)
-                else:
-                    # model_out is a single tensor [C, F, H, W], add batch dim
-                    noise_pred = F.unsqueeze(model_out.cast(DType.float32), 0)
+                noise_pred = F.stack(noise_pred, axis=0)
+            else:
+                # model_out is a single tensor [C, F, H, W], add batch dim
+                noise_pred = F.unsqueeze(model_out.cast(DType.float32), 0)
 
-                noise_pred = -F.squeeze(noise_pred, 2)
+            noise_pred = -F.squeeze(noise_pred, 2)
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(
-                    noise_pred.cast(DType.float32),
-                    t,
-                    latents,
-                ).prev_sample
+            # compute the previous noisy sample x_t -> x_t-1
+            latents = self.scheduler.step(
+                noise_pred.cast(DType.float32),
+                t,
+                latents,
+            ).prev_sample
 
-                if callback_on_step_end is not None:
-                    callback_kwargs = {}
-                    for k in callback_on_step_end_tensor_inputs:
-                        callback_kwargs[k] = locals()[k]
-                    callback_outputs = callback_on_step_end(
-                        self, i, t, callback_kwargs
-                    )
+            if callback_on_step_end is not None:
+                callback_kwargs = {}
+                for k in callback_on_step_end_tensor_inputs:
+                    callback_kwargs[k] = locals()[k]
+                callback_outputs = callback_on_step_end(
+                    self, i, t, callback_kwargs
+                )
 
-                    latents = callback_outputs.pop("latents", latents)
-                    prompt_embeds = callback_outputs.pop(
-                        "prompt_embeds", prompt_embeds
-                    )
-                    negative_prompt_embeds = callback_outputs.pop(
-                        "negative_prompt_embeds", negative_prompt_embeds
-                    )
+                latents = callback_outputs.pop("latents", latents)
+                prompt_embeds = callback_outputs.pop(
+                    "prompt_embeds", prompt_embeds
+                )
+                negative_prompt_embeds = callback_outputs.pop(
+                    "negative_prompt_embeds", negative_prompt_embeds
+                )
 
-                # call the callback, if provided
-                if i == int(timesteps.shape[0]) - 1 or (
-                    (i + 1) > num_warmup_steps
-                    and (i + 1) % self.scheduler.order == 0
-                ):
-                    progress_bar.update()
+            # call the callback, if provided
+            # if i == int(timesteps.shape[0]) - 1 or (
+            #     (i + 1) > num_warmup_steps
+            #     and (i + 1) % self.scheduler.order == 0
+            # ):
+            #     progress_bar.update()
 
         if output_type == "latent":
             image = latents
