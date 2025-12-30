@@ -29,11 +29,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import torch
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
+import torch
 from max.dtype import DType
-from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
 
@@ -366,8 +365,14 @@ class DiagonalGaussianDistribution:
         if seed is not None:
             generator.manual_seed(seed)
         shape = tuple(int(d) for d in self.mean.shape)
-        sample_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
-        sample = Tensor.from_dlpack(sample_torch.numpy()).to(self.parameters.device).cast(self.parameters.dtype)
+        sample_torch = torch.randn(
+            shape, generator=generator, dtype=torch.float32
+        )
+        sample = (
+            Tensor.from_dlpack(sample_torch.numpy())
+            .to(self.parameters.device)
+            .cast(self.parameters.dtype)
+        )
         x = self.mean + self.std * sample
         return x
 

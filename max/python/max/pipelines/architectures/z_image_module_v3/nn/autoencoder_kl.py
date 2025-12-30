@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
-from max.experimental.tensor import Tensor
 from max.dtype import DType
+from max.experimental.tensor import Tensor
 
 from .layers import AutoencoderKLOutput, Conv2d
 from .vae import (
