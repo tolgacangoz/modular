@@ -1091,16 +1091,16 @@ class ZImageModel(
             # ):
             #     progress_bar.update()
 
-        if output_type == "latent":
-            image = latents
+        # if output_type == "latent":
+        image = latents
 
-        else:
-            latents = latents.cast(DType.bfloat16)
-            latents = (
-                latents / self.vae.scaling_factor
-            ) + self.vae.shift_factor
+        # else:
+        #     latents = latents.cast(DType.bfloat16)
+        #     latents = (
+        #         latents / self.vae.scaling_factor
+        #     ) + self.vae.shift_factor
 
-            image = self.vae.decoder(latents)  # .sample
+        #     image = self.vae.decoder(latents)  # .sample
 
         # Offload all models
         # self.maybe_free_model_hooks()
