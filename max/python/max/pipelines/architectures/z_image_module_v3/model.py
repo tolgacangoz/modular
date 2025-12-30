@@ -343,6 +343,9 @@ class ZImageModel(
         self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
             session
         )
+        self.vae.to(self.devices[0])
+        self.vae.decoder.to(self.devices[0])
+        self.transformer.to(self.devices[0])
         # Use uncompiled transformer for debugging NaN issues
         # self.transformer = self.model.transformer
 
