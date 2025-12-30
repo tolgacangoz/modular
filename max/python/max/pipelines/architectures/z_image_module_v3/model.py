@@ -343,9 +343,6 @@ class ZImageModel(
         self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
             session
         )
-        self.vae.to(self.devices[0])
-        self.vae.decoder.to(self.devices[0])
-        self.transformer.to(self.devices[0])
         # Use uncompiled transformer for debugging NaN issues
         # self.transformer = self.model.transformer
 
@@ -524,6 +521,7 @@ class ZImageModel(
         }
 
         self.vae = self.model.vae
+        self.transformer = self.model.transformer
         # Ensure decoder is set correctly for uncompiled use
         self.vae.decoder = self.model.vae.decoder
         self.scheduler = self.model.scheduler
@@ -536,6 +534,8 @@ class ZImageModel(
         # Move to device for compilation
         self.model.transformer.to(self.devices[0])
         self.model.vae.decoder.to(self.devices[0])
+        self.model.vae.to(self.devices[0])
+        self.transformer.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
