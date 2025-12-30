@@ -155,53 +155,6 @@ class ZImageInputs(ModelInputs):
     """Maximum sequence length for full attention for vision inputs."""
 
 
-def debug_tensor_to_numpy(t, name="tensor"):
-    """Convert MAX tensor to numpy for debugging.
-
-    Handles:
-    - Lazy/symbolic tensors (forces realization)
-    - GPU tensors (transfers to CPU for DLPack)
-    - Different tensor types (experimental.Tensor vs driver.Tensor)
-
-    Returns numpy array or None if conversion fails.
-    """
-    try:
-        import numpy as np
-
-        # Check if symbolic (lazy) and force realization
-        if hasattr(t, 'real') and not t.real:
-            print(f"DEBUG {name}: Tensor is lazy, forcing realization...")
-            t._sync_realize()
-
-        # Transfer from GPU to CPU for DLPack compatibility
-        if hasattr(t, 'to'):
-            t_cpu = t.to(CPU())
-        else:
-            t_cpu = t
-
-        # Convert to numpy via DLPack or driver_tensor
-        if hasattr(t_cpu, '__dlpack__'):
-            return np.from_dlpack(t_cpu)
-        elif hasattr(t_cpu, 'driver_tensor'):
-            return t_cpu.driver_tensor.to_numpy()
-        elif hasattr(t_cpu, 'to_numpy'):
-            return t_cpu.to_numpy()
-        else:
-            raise AttributeError(f"Unknown tensor type: {type(t_cpu)}")
-    except Exception as e:
-        print(f"DEBUG {name}: Cannot convert to numpy - {e}")
-        return None
-
-
-def is_symbolic(t) -> bool:
-    """Check if a MAX tensor is symbolic (not yet realized)."""
-    if hasattr(t, 'real'):
-        return not t.real
-    if hasattr(t, 'storage'):
-        return t.storage is None
-    return False
-
-
 def calculate_shift(
     image_seq_len: int,
     base_seq_len: int = 256,
@@ -947,19 +900,8 @@ class ZImageModel(
         # Note: This is temporary! The text encoder should be used instead.
         data = load_file("/root/prompt_embeds.safetensors")
         prompt_embeds_torch = data["prompt_embeds"]
-        # print(f"DEBUG: Loaded prompt_embeds shape: {prompt_embeds_torch.shape}, dtype: {prompt_embeds_torch.dtype}")
-        # Convert torch -> numpy -> MAX tensor
-        # NumPy doesn't support bfloat16, so convert to float32 first
         prompt_embeds_np = prompt_embeds_torch.float().numpy()  # bfloat16 -> float32 -> numpy
         prompt_embeds = Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
-
-        # CRITICAL: Validate prompt_embeds shape matches compiled model expectation
-        expected_cap_seq_len = 75
-        expected_hidden_dim = 2560
-        actual_shape = tuple(prompt_embeds.shape)
-        # if actual_shape != (expected_cap_seq_len, expected_hidden_dim):
-        #     print(f"WARNING: prompt_embeds shape {actual_shape} != expected ({expected_cap_seq_len}, {expected_hidden_dim})")
-        #     print(f"         This WILL cause garbage output from the compiled transformer!")
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
@@ -978,12 +920,7 @@ class ZImageModel(
             latents=latents,
         )
 
-        # DEBUG: Check initial latents
         from max.driver import CPU
-        # latents_init_np = np.from_dlpack(latents.to(CPU()))
-        # print(f"DEBUG: Initial latents - shape: {latents_init_np.shape}, "
-        #       f"min: {np.nanmin(latents_init_np):.4f}, max: {np.nanmax(latents_init_np):.4f}, "
-        #       f"nan: {np.isnan(latents_init_np).any()}")
 
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
@@ -1025,8 +962,6 @@ class ZImageModel(
             0,
         )
         self._num_timesteps = int(timesteps.shape[0])
-
-        print("DEBUG: Starting denoising loop")
 
         # Pre-set step index to avoid expensive lookup on each step
         self.scheduler._step_index = 0
@@ -1075,29 +1010,13 @@ class ZImageModel(
 
                 latent_model_input = F.unsqueeze(latent_model_input, 2)
 
-                # Debug: Check all inputs before calling compiled transformer
                 x_in = F.squeeze(latent_model_input, 0)
-                # if i == 0:
-                #     print(f"DEBUG Step 0: Transformer inputs:")
-                #     print(f"  x (latents): shape={tuple(x_in.shape)}, dtype={x_in.dtype}")
-                #     print(f"  t (timestep): shape={tuple(timestep_model_input.shape)}, dtype={timestep_model_input.dtype}")
-                #     print(f"  cap_feats: shape={tuple(prompt_embeds_model_input.shape)}, dtype={prompt_embeds_model_input.dtype}")
-                #     print(f"Expected: x=(16, 1, 128, 128) bfloat16, t=(1,) float32, cap_feats=(75, 2560) bfloat16")
 
                 model_out = self.transformer(
                     x_in,
                     timestep_model_input,
                     prompt_embeds_model_input,
                 )
-
-                # DEBUG: Check transformer output at first step
-                # if i == 0:
-                #     from max.driver import CPU
-                #     # Cast to float32 before numpy conversion (numpy doesn't support bfloat16)
-                #     model_out_np = np.from_dlpack(model_out.cast(DType.float32).to(CPU()))
-                #     print(f"DEBUG Step 0: Transformer output - shape: {model_out_np.shape}, "
-                #           f"min: {np.nanmin(model_out_np):.4f}, max: {np.nanmax(model_out_np):.4f}, "
-                #           f"nan: {np.isnan(model_out_np).any()}")
 
                 if apply_cfg:
                     # Perform CFG
@@ -1142,10 +1061,6 @@ class ZImageModel(
                     latents,
                 ).prev_sample
 
-                # DEBUG: Check latents after scheduler at first step
-                # if i == 0:
-                #     print(latents.shape, np.isnan(np.from_dlpack(latents.to(CPU()))).any())
-
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -1173,35 +1088,12 @@ class ZImageModel(
             image = latents
 
         else:
-            # Debug: Check final latent statistics before VAE decode
-            # DISABLED - causes OOM when copying to CPU
-            # from max.driver import CPU
-            # latents_np = np.from_dlpack(latents.to(CPU()))
-            # print(f"DEBUG: Final latents after denoising - shape: {latents_np.shape}, "
-            #       f"min: {np.nanmin(latents_np):.4f}, max: {np.nanmax(latents_np):.4f}, "
-            #       f"mean: {np.nanmean(latents_np):.4f}, nan: {np.isnan(latents_np).any()}")
-
             latents = latents.cast(DType.bfloat16)
             latents = (
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            # Debug: Check scaled latents (bfloat16 -> float32 for numpy)
-            # DISABLED - causes OOM when copying to CPU
-            # scaled_latents_np = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-            # print(f"DEBUG: Scaled latents for VAE - shape: {scaled_latents_np.shape}, "
-            #       f"min: {np.nanmin(scaled_latents_np):.4f}, max: {np.nanmax(scaled_latents_np):.4f}, "
-            #       f"mean: {np.nanmean(scaled_latents_np):.4f}")
-            # print(latents.shape, latents.dtype, F.min(latents), F.max(latents), F.mean(latents))
             image = self.vae.decoder(latents)#.sample
-            # print(image.shape, image.dtype, F.min(image), F.max(image), F.mean(image))
-
-            # Debug: Check VAE output (cast to float32 for numpy if needed)
-            # DISABLED - causes OOM when copying to CPU
-            # image_np = np.from_dlpack(image.cast(DType.float32).to(CPU()))
-            # print(f"DEBUG: VAE output - shape: {image_np.shape}, "
-            #       f"min: {np.nanmin(image_np):.4f}, max: {np.nanmax(image_np):.4f}, "
-            #       f"mean: {np.nanmean(image_np):.4f}")
 
         # Offload all models
         # self.maybe_free_model_hooks()
