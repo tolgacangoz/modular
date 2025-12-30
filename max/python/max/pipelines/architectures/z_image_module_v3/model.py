@@ -926,7 +926,6 @@ class ZImageModel(
             latents=latents,
         )
 
-
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
             prompt_embeds = [
