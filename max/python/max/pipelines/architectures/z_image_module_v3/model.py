@@ -24,11 +24,11 @@ from typing import Any, cast
 
 import numpy as np
 from max._core.engine import Model
-from max.driver import CPU, Device, Tensor as DriverTensor
+from max.driver import Device
+from max.driver import Tensor as DriverTensor
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.experimental import functional as F
-from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import DeviceRef, Graph, TensorType
 from max.graph.weights import (
@@ -769,7 +769,9 @@ class ZImageModel(
             generator = torch.Generator("cpu")
             if seed is not None:
                 generator.manual_seed(seed)
-            latents_torch = torch.randn(shape, generator=generator, dtype=torch.float32)
+            latents_torch = torch.randn(
+                shape, generator=generator, dtype=torch.float32
+            )
             # Convert to MAX tensor and move to device
             latents = Tensor.from_dlpack(latents_torch.numpy()).to(device)
         else:
@@ -900,8 +902,12 @@ class ZImageModel(
         # Note: This is temporary! The text encoder should be used instead.
         data = load_file("/root/prompt_embeds.safetensors")
         prompt_embeds_torch = data["prompt_embeds"]
-        prompt_embeds_np = prompt_embeds_torch.float().numpy()  # bfloat16 -> float32 -> numpy
-        prompt_embeds = Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
+        prompt_embeds_np = (
+            prompt_embeds_torch.float().numpy()
+        )  # bfloat16 -> float32 -> numpy
+        prompt_embeds = (
+            Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
+        )
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
@@ -920,7 +926,6 @@ class ZImageModel(
             latents=latents,
         )
 
-        from max.driver import CPU
 
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
@@ -1093,12 +1098,14 @@ class ZImageModel(
                 latents / self.vae.scaling_factor
             ) + self.vae.shift_factor
 
-            image = self.vae.decoder(latents)#.sample
+            image = self.vae.decoder(latents)  # .sample
 
         # Offload all models
         # self.maybe_free_model_hooks()
 
-        return ModelOutputs(hidden_states=cast(DriverTensor, image.driver_tensor), logits=None)
+        return ModelOutputs(
+            hidden_states=cast(DriverTensor, image.driver_tensor), logits=None
+        )
 
     def prepare_initial_token_inputs(
         self,
