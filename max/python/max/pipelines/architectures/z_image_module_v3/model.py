@@ -572,19 +572,20 @@ class ZImageModel(
         self.vae.decoder = self.model.vae.decoder
         self.scheduler = self.model.scheduler
 
-        # Load weights into the uncompiled models
-        # self.model.transformer.load_state_dict(transformer_state_dict)
-        # self.model.vae.decoder.load_state_dict(decoder_weights)
+        # Load weights into the models before compiling
+        # (This works around an issue where compile(weights=...) doesn't load correctly)
+        self.model.transformer.load_state_dict(transformer_state_dict)
+        self.model.vae.decoder.load_state_dict(decoder_weights)
 
-        # # Move to device for uncompiled execution
-        # self.model.transformer.to(self.devices[0])
-        # self.model.vae.decoder.to(self.devices[0])
+        # Move to device for compilation
+        self.model.transformer.to(self.devices[0])
+        self.model.vae.decoder.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
         compiled_vae_decoder_model = self.model.vae.decoder.compile(
             sample_type,
-            weights=decoder_weights,
+            # weights loaded via load_state_dict() above
         )
         after_vae_decode_build = time.perf_counter()
         logger.info(
@@ -608,7 +609,7 @@ class ZImageModel(
             hidden_states_type,
             t_type,
             cap_feats_type,
-            weights=transformer_state_dict,
+            # weights loaded via load_state_dict() above
         )
         after_transformer_build = time.perf_counter()
         logger.info(
