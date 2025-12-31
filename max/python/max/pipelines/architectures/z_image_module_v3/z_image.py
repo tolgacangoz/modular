@@ -240,7 +240,7 @@ class ZImage(nn.Module):
     def __call__(
         self,
         # prompt: str | list[str] = None,
-        prompt_tensor_for_benchmarking: Tensor,
+        prompt: Tensor | None = None,
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 50,

@@ -71,13 +71,16 @@ class ZImageInputs(ModelInputs):
     including both text and vision inputs. Vision inputs are optional and can be None
     for text-only processing."""
 
-    prompt: str | list[str] = None
+    # prompt: str | list[str] = None
+    # """ The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds` instead."""
+
+    prompt: Tensor | None = None
     """ The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds` instead."""
 
-    height: int | None = None
+    height: int = 1024
     """ The height in pixels of the generated image."""
 
-    width: int | None = None
+    width: int = 1024
     """ The width in pixels of the generated image."""
 
     num_inference_steps: int = 50
@@ -637,6 +640,20 @@ class ZImageModel(
             ModelOutputs containing the generated images.
         """
         model_inputs = cast(ZImageInputs, model_inputs)
+
+        from safetensors.torch import load_file
+
+        # Load prompt embeddings from safetensors file
+        # Note: This is temporary! The text encoder should be used instead.
+        data = load_file("/root/prompt_embeds.safetensors")
+        prompt_embeds_torch = data["prompt_embeds"]
+        prompt_embeds_np = (
+            prompt_embeds_torch.float().numpy()
+        )  # bfloat16 -> float32 -> numpy
+        prompt_embeds = (
+            Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
+        )
+        model_inputs.prompt = prompt_embeds
 
         model_outputs = self.pipeline(model_inputs)
 
