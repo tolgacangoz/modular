@@ -18,6 +18,7 @@ from dataclasses import asdict
 
 from max.driver import Device
 from max.dtype import DType
+from max.experimental.tensor import Tensor
 import max.nn.module_v3 as nn
 from max.pipelines.architectures.qwen3.qwen3 import Qwen3
 
