@@ -68,6 +68,13 @@ from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
 
+# Compile-time constants for Z-Image Turbo
+# These are fixed at compile time to enable graph compilation
+NUM_INFERENCE_STEPS = 9  # Z-Image Turbo uses 9 steps
+BATCH_SIZE = 1  # Single image generation
+GUIDANCE_SCALE = 0.0  # No classifier-free guidance for Z-Image
+
+
 
 def calculate_shift(
     image_seq_len: int,
@@ -362,9 +369,9 @@ class ZImage(nn.Module):
         prompt: Tensor | None = None,
         height: int = 1024,
         width: int = 1024,
-        num_inference_steps: int = 50,
+        num_inference_steps: int = NUM_INFERENCE_STEPS,
         sigmas: list[float] | None = None,
-        guidance_scale: float = 0.0,
+        guidance_scale: float = GUIDANCE_SCALE,
         cfg_normalization: bool = False,
         cfg_truncation: float = 1.0,
         negative_prompt: str | list[str] | None = None,
@@ -409,7 +416,7 @@ class ZImage(nn.Module):
         self._interrupt = False
         self._cfg_normalization = cfg_normalization
         self._cfg_truncation = cfg_truncation
-        batch_size = 1
+        batch_size = BATCH_SIZE
         # 2. Define call parameters
         # if prompt is not None and isinstance(prompt, str):
         #     batch_size = 1
@@ -483,10 +490,12 @@ class ZImage(nn.Module):
                     for _ in range(num_images_per_prompt)
                 ]
 
-        actual_batch_size = batch_size * num_images_per_prompt
-        image_seq_len = (int(latents.shape[2]) // 2) * (
-            int(latents.shape[3]) // 2
-        )
+        actual_batch_size = BATCH_SIZE * num_images_per_prompt
+        # Use compile-time constants for image dimensions
+        # 1024x1024 -> latent 128x128 -> image_seq_len = 64*64 = 4096
+        latent_h = height // self.vae_scale_factor
+        latent_w = width // self.vae_scale_factor
+        image_seq_len = (latent_h // 2) * (latent_w // 2)
 
         # 5. Prepare timesteps
         mu = calculate_shift(
@@ -506,24 +515,23 @@ class ZImage(nn.Module):
             **scheduler_kwargs,
         )
         num_warmup_steps = max(
-            int(timesteps.shape[0])
-            - num_inference_steps * self.scheduler.order,
+            num_inference_steps - num_inference_steps * self.scheduler.order,
             0,
         )
-        self._num_timesteps = int(timesteps.shape[0])
+        self._num_timesteps = num_inference_steps  # Use Python int, not tensor.shape
 
         # Pre-set step index to avoid expensive lookup on each step
         self.scheduler._step_index = 0
 
         # 6. Denoising loop
         # with self.progress_bar(total=num_inference_steps) as progress_bar:
-        for i in range(self._num_timesteps):
+        for i in range(num_inference_steps):  # Use Python int for loop count
             t = timesteps[i]
             # if self.interrupt:
             #     continue
 
-            # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-            timestep = F.broadcast_to(t, (int(latents.shape[0]),))
+            # broadcast to batch dimension - use compile-time constant
+            timestep = F.broadcast_to(t, (BATCH_SIZE,))
             timestep = (1000 - timestep) / 1000
             # Normalized time for time-aware config (0 at start, 1 at end)
             # Use loop index to avoid GPU sync from .item()
