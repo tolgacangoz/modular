@@ -942,9 +942,10 @@ class ZImageModel(
                 ]
 
         actual_batch_size = batch_size * num_images_per_prompt
-        image_seq_len = (int(latents.shape[2]) // 2) * (
-            int(latents.shape[3]) // 2
-        )
+        # Compute image_seq_len from height/width Python ints to avoid GPU sync
+        latent_h = height // self.vae_scale_factor
+        latent_w = width // self.vae_scale_factor
+        image_seq_len = (latent_h // 2) * (latent_w // 2)
 
         # 5. Prepare timesteps
         mu = calculate_shift(
@@ -963,12 +964,12 @@ class ZImageModel(
             sigmas=sigmas,
             **scheduler_kwargs,
         )
+        # Use Python int from retrieve_timesteps instead of tensor.shape to avoid sync
         num_warmup_steps = max(
-            int(timesteps.shape[0])
-            - num_inference_steps * self.scheduler.order,
+            num_inference_steps - num_inference_steps * self.scheduler.order,
             0,
         )
-        self._num_timesteps = int(timesteps.shape[0])
+        self._num_timesteps = num_inference_steps
 
         # Pre-set step index to avoid expensive lookup on each step
         self.scheduler._step_index = 0
@@ -980,8 +981,8 @@ class ZImageModel(
                 if self.interrupt:
                     continue
 
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = F.broadcast_to(t, (int(latents.shape[0]),))
+                # broadcast to batch dimension - use batch_size to avoid GPU sync
+                timestep = F.broadcast_to(t, (batch_size,))
                 timestep = (1000 - timestep) / 1000
                 # Normalized time for time-aware config (0 at start, 1 at end)
                 # Use loop index to avoid GPU sync from .item()
@@ -1085,7 +1086,7 @@ class ZImageModel(
                     )
 
                 # call the callback, if provided
-                if i == int(timesteps.shape[0]) - 1 or (
+                if i == self._num_timesteps - 1 or (
                     (i + 1) > num_warmup_steps
                     and (i + 1) % self.scheduler.order == 0
                 ):
