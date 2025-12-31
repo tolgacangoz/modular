@@ -283,7 +283,7 @@ class ZImage(nn.Module):
                 f"Please adjust the width to a multiple of {vae_scale}."
             )
 
-        device = self.devices[0]
+        device = self.device
 
         self._guidance_scale = guidance_scale
         self._joint_attention_kwargs = joint_attention_kwargs
