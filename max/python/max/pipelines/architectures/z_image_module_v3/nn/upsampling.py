@@ -30,7 +30,7 @@ import max.experimental.functional as F
 import max.nn.module_v3 as nn
 from max.experimental.tensor import Tensor
 
-from .layers import Conv2d, RMSNorm
+from .layers import Conv2d, RMSNorm, LayerNorm
 
 
 class Upsample2D(nn.Module):
@@ -72,7 +72,7 @@ class Upsample2D(nn.Module):
         self.interpolate = interpolate
 
         if norm_type == "ln_norm":
-            self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
+            self.norm = LayerNorm(channels, eps, elementwise_affine)
         elif norm_type == "rms_norm":
             self.norm = RMSNorm(channels, eps, elementwise_affine)
         elif norm_type is None:
