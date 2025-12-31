@@ -28,8 +28,6 @@ from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 
-from .vae import DiagonalGaussianDistribution
-
 # ===----------------------------------------------------------------------=== #
 # Output Dataclasses
 # ===----------------------------------------------------------------------=== #
@@ -54,7 +52,7 @@ class AutoencoderKLOutput:
         latent_dist: The diagonal gaussian distribution of the latent space.
     """
 
-    latent_dist: DiagonalGaussianDistribution
+    latent_dist: "DiagonalGaussianDistribution"
 
 
 # ===----------------------------------------------------------------------=== #

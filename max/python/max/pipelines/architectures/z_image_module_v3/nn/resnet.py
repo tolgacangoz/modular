@@ -35,7 +35,7 @@ import max.nn.module_v3 as nn
 from max.experimental.tensor import Tensor
 
 from .downsampling import Downsample2D, downsample_2d
-from .layers import Conv2d, Dropout, GroupNorm, SpatialNorm, get_activation
+from .layers import Conv2d, Dropout, GroupNorm, get_activation
 from .upsampling import Upsample2D, upsample_2d
 
 
