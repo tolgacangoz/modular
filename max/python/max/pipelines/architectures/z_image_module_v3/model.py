@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from max.pipelines.lib import KVCacheConfig, PipelineConfig, SupportedEncoding
 
 import numpy as np
 from max._core.engine import Model
@@ -573,7 +574,7 @@ class ZImageModel(
             prompt_embeds_torch.float().numpy()
         )  # bfloat16 -> float32 -> numpy
         prompt_embeds = (
-            Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
+            Tensor.from_dlpack(prompt_embeds_np).to(self.devices[0]).cast(DType.bfloat16)
         )
         model_inputs.prompt = prompt_embeds
 
