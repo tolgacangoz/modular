@@ -334,7 +334,7 @@ class ZImage(nn.Module):
         # prompt_embeds = (
         #     Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
         # )
-        prompt_embeds = prompt_tensor_for_benchmarking
+        prompt_embeds = prompt
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
 
