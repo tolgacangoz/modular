@@ -443,21 +443,21 @@ class ZImageModel(
         # Apply the architecture weight adapter (if any) only to the text encoder
         # subset. For Z-Image this maps Qwen3-VL style names to the expected
         # ? format.
-        # if self.adapter:
-        #     text_encoder_llm_state_dict: dict[str, WeightData] = self.adapter(
-        #         text_encoder_weights,
-        #         huggingface_config=self.huggingface_config,
-        #         pipeline_config=self.pipeline_config,
-        #     )
-        # else:
-        #     text_encoder_llm_state_dict = {
-        #         key: weight.data()
-        #         for key, weight in text_encoder_weights.items()
-        #     }
+        if self.adapter:
+            text_encoder_llm_state_dict: dict[str, WeightData] = self.adapter(
+                text_encoder_weights,
+                huggingface_config=self.huggingface_config,
+                pipeline_config=self.pipeline_config,
+            )
+        else:
+            text_encoder_llm_state_dict = {
+                key: weight.data()
+                for key, weight in text_encoder_weights.items()
+            }
 
-        # text_encoder_state_dict: dict[str, dict[str, WeightData]] = {
-        #     "llm_state_dict": text_encoder_llm_state_dict,
-        # }
+        text_encoder_state_dict: dict[str, dict[str, WeightData]] = {
+            "llm_state_dict": text_encoder_llm_state_dict,
+        }
 
         # Generate ZImage config from HuggingFace config
         zimage_config = ZImageConfig.generate(
