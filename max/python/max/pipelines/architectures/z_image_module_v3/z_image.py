@@ -83,7 +83,7 @@ def calculate_shift(
 
 
 def retrieve_timesteps(
-    scheduler: SchedulerMixin,
+    scheduler: FlowMatchEulerDiscreteScheduler,
     num_inference_steps: int | None = None,
     device: str | Device | None = None,
     timesteps: list[int] | None = None,
