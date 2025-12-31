@@ -319,9 +319,10 @@ class ResnetBlock2D(nn.Module):
                 fir_kernel = (1, 3, 3, 1)
                 self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
             elif kernel == "sde_vp":
-                self.upsample = partial(
-                    F.interpolate, scale_factor=2.0, mode="nearest"
-                )
+                raise NotImplementedError("sde_vp kernel not implemented since F.interpolate not implemented")
+                # self.upsample = partial(
+                #     F.interpolate, scale_factor=2.0, mode="nearest"
+                # )
             else:
                 self.upsample = Upsample2D(in_channels, use_conv=False)
         elif self.down:

@@ -23,6 +23,12 @@ from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
 from typing_extensions import TypeVar
+from max.nn.attention.mask_config import MHAMaskVariant
+from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
+
+flash_attention_gpu = F.functional(_flash_attention_gpu)
+
+from .vae import DiagonalGaussianDistribution
 
 # ===----------------------------------------------------------------------=== #
 # Output Dataclasses
@@ -48,145 +54,12 @@ class AutoencoderKLOutput:
         latent_dist: The diagonal gaussian distribution of the latent space.
     """
 
-    latent_dist: "DiagonalGaussianDistribution"  # Forward reference
+    latent_dist: DiagonalGaussianDistribution
 
 
 # ===----------------------------------------------------------------------=== #
 # Utility Functions
 # ===----------------------------------------------------------------------=== #
-
-
-def pad_sequence(
-    sequences: Sequence[Tensor],
-    batch_first: bool = True,
-    padding_value: float = 0.0,
-) -> Tensor:
-    """Pad a list of variable length tensors with a padding value.
-
-    This is a Modular-native implementation of torch.nn.utils.rnn.pad_sequence.
-
-    Args:
-        sequences: List of tensors to pad. All tensors must have the same
-            number of dimensions except for the first (sequence) dimension.
-        batch_first: If True, output is (batch, seq, *). If False, output
-            is (seq, batch, *).
-        padding_value: Value for padded elements.
-
-    Returns:
-        Padded tensor with shape (batch, max_seq_len, *) if batch_first=True,
-        otherwise (max_seq_len, batch, *).
-    """
-    if not sequences:
-        raise ValueError("sequences cannot be empty")
-
-    # Get the max sequence length
-    max_len = max(seq.shape[0] for seq in sequences)
-    batch_size = len(sequences)
-
-    # Get the trailing dimensions (all dims except the first)
-    trailing_dims = sequences[0].shape[1:]
-    dtype = sequences[0].dtype
-
-    # Create output shape
-    if batch_first:
-        out_shape = [batch_size, max_len] + list(trailing_dims)
-    else:
-        out_shape = [max_len, batch_size] + list(trailing_dims)
-
-    # Create output tensor filled with padding value
-    out = Tensor.full(out_shape, value=padding_value, dtype=dtype)
-
-    # Copy each sequence into the output tensor
-    # Note: This uses a functional approach via concatenation since
-    # MAX tensors are immutable
-    padded_sequences = []
-    for seq in sequences:
-        seq_len = seq.shape[0]
-        if seq_len < max_len:
-            # Create padding tensor
-            pad_shape = [max_len - seq_len] + list(trailing_dims)
-            padding = Tensor.full(pad_shape, value=padding_value, dtype=dtype)
-            padded_seq = F.concat([seq, padding], axis=0)
-        else:
-            padded_seq = seq
-        padded_sequences.append(padded_seq)
-
-    # Stack all padded sequences
-    if batch_first:
-        return F.stack(padded_sequences, axis=0)
-    else:
-        stacked = F.stack(padded_sequences, axis=0)
-        # Transpose to (seq, batch, *)
-        perm = [1, 0] + list(range(2, len(stacked.shape)))
-        return F.transpose(stacked, perm)
-
-
-def create_attention_mask(
-    batch_size: int,
-    max_seq_len: int,
-    seq_lens: Sequence[int],
-    dtype: DType = DType.bool,
-) -> Tensor:
-    """Create an attention mask for variable-length sequences.
-
-    This function creates a batched attention mask where each row i has
-    True values for positions 0 to seq_lens[i]-1 and False elsewhere.
-
-    Uses functional construction compatible with MAX's immutable tensors.
-
-    Args:
-        batch_size: Number of sequences in the batch.
-        max_seq_len: Maximum sequence length (width of the mask).
-        seq_lens: List of actual sequence lengths for each batch item.
-        dtype: Data type for the mask (default: bool).
-
-    Returns:
-        Tensor of shape (batch_size, max_seq_len) with True for valid positions.
-    """
-    # Create a range tensor [0, 1, 2, ..., max_seq_len-1]
-    positions = Tensor.arange(0, max_seq_len, dtype=DType.int32)
-
-    # Create seq_lens as a column tensor for broadcasting
-    seq_lens_tensor = Tensor.constant(seq_lens, dtype=DType.int32).reshape(
-        [batch_size, 1]
-    )
-
-    # Broadcast comparison: positions < seq_lens for each batch item
-    # Result: (batch_size, max_seq_len) boolean mask
-    mask = F.unsqueeze(positions, 0) < seq_lens_tensor
-
-    return mask.cast(dtype)
-
-
-def masked_scatter(
-    tensor: Tensor,
-    mask: Tensor,
-    value: Tensor | float,
-) -> Tensor:
-    """Return a new tensor with values at masked positions replaced.
-
-    This is a functional equivalent of tensor[mask] = value, compatible with
-    MAX's immutable tensors.
-
-    Args:
-        tensor: The input tensor to update.
-        mask: Boolean mask indicating positions to update.
-        value: The value to place at masked positions.
-
-    Returns:
-        New tensor with masked positions updated.
-    """
-    if isinstance(value, (int, float)):
-        value = Tensor.full(tensor.shape, value=value, dtype=tensor.dtype)
-    elif value.shape != tensor.shape:
-        # Broadcast value to tensor shape
-        value = F.broadcast_to(value, tensor.shape)
-
-    # Ensure mask broadcasts to tensor
-    while mask.rank < tensor.rank:
-        mask = F.unsqueeze(mask, -1)
-
-    return F.where(mask, value, tensor)
 
 
 def reduce_mean(x: Tensor, axis: int | Sequence[int]) -> Tensor:
@@ -276,6 +149,7 @@ class Conv2d(nn.Module):
         return out.permute([0, 3, 1, 2])
 
 
+# TODO: Replace with max/python/max/nn/module_v3/norm/rms_norm.RMSNorm
 class RMSNorm(nn.Module):
     r"""
     RMS Norm as introduced in https://huggingface.co/papers/1910.07467 by Zhang et al.
@@ -400,52 +274,13 @@ class LayerNorm(nn.Module):
         var = reduce_var(x, axis=-1)
         x = (x - mean) / F.sqrt(var + self.eps)
         if self.elementwise_affine:
-            x = x * self.weight + self.bias
+            x = F.layer_norm(x, self.weight, self.bias, self.eps)
         return x
-
-
-class SpatialNorm(nn.Module):
-    """
-    Spatially conditioned normalization as defined in https://huggingface.co/papers/2209.09002.
-
-    Args:
-        f_channels (`int`):
-            The number of channels for input to group normalization layer, and output of the spatial norm layer.
-        zq_channels (`int`):
-            The number of channels for the quantized vector as described in the paper.
-    """
-
-    def __init__(
-        self,
-        f_channels: int,
-        zq_channels: int,
-    ):
-        self.norm_layer = GroupNorm(
-            num_channels=f_channels, num_groups=32, eps=1e-6, affine=True
-        )
-        self.conv_y = Conv2d(
-            zq_channels, f_channels, kernel_size=1, stride=1, padding=0
-        )
-        self.conv_b = Conv2d(
-            zq_channels, f_channels, kernel_size=1, stride=1, padding=0
-        )
-
-    def __call__(self, f: Tensor, zq: Tensor) -> Tensor:
-        f_size = f.shape[-2:]
-        zq = F.interpolate(zq, size=f_size, mode="nearest")
-        norm_f = self.norm_layer(f)
-        new_f = norm_f * self.conv_y(zq) + self.conv_b(zq)
-        return new_f
 
 
 class SiLU(nn.Module):
     def __call__(self, x: Tensor) -> Tensor:
         return F.silu(x)
-
-
-class Identity(nn.Module):
-    def __call__(self, x: Tensor) -> Tensor:
-        return x
 
 
 class Dropout(nn.Module):
@@ -500,9 +335,10 @@ class Attention(nn.Module):
 
         # Normalization
         if spatial_norm_dim is not None:
-            self.group_norm = SpatialNorm(
-                f_channels=query_dim, zq_channels=spatial_norm_dim
-            )
+            raise NotImplementedError("SpatialNorm not implemented yet")
+            # self.group_norm = SpatialNorm(
+            #     f_channels=query_dim, zq_channels=spatial_norm_dim
+            # )
         elif norm_num_groups is not None:
             self.group_norm = GroupNorm(
                 num_groups=norm_num_groups,
@@ -549,10 +385,10 @@ class Attention(nn.Module):
 
         # Apply normalization
         if self.group_norm is not None:
-            if isinstance(self.group_norm, SpatialNorm):
-                hidden_states = self.group_norm(hidden_states, temb)
-            else:
+            if isinstance(self.group_norm, GroupNorm):
                 hidden_states = self.group_norm(hidden_states)
+            else:
+                hidden_states = self.group_norm(hidden_states, temb)
 
         # Reshape from (B, C, H, W) to (B, H*W, C) for attention
         hidden_states = hidden_states.permute([0, 2, 3, 1])  # (B, H, W, C)
@@ -570,30 +406,38 @@ class Attention(nn.Module):
         value = value.reshape([batch, seq_len, self.heads, self.head_dim])
 
         # Transpose to (B, heads, seq_len, head_dim)
-        query = query.permute([0, 2, 1, 3])
-        key = key.permute([0, 2, 1, 3])
-        value = value.permute([0, 2, 1, 3])
+        # query = query.permute([0, 2, 1, 3])
+        # key = key.permute([0, 2, 1, 3])
+        # value = value.permute([0, 2, 1, 3])
 
         # Compute attention scores
         # (B, heads, seq_len, head_dim) @ (B, heads, head_dim, seq_len) -> (B, heads, seq_len, seq_len)
-        attn_scores = query @ key.permute([0, 1, 3, 2])
-        attn_scores = attn_scores * self.scale
+        # attn_scores = query @ key.permute([0, 1, 3, 2])
+        # attn_scores = attn_scores * self.scale
 
         # Softmax with optional upcasting
-        if self.upcast_softmax:
-            attn_scores = attn_scores.cast(DType.float32)
-        attn_probs = F.softmax(attn_scores, axis=-1)
-        attn_probs = attn_probs.cast(value.dtype)
+        # if self.upcast_softmax:
+        #     attn_scores = attn_scores.cast(DType.float32)
+        # attn_probs = F.softmax(attn_scores, axis=-1)
+        # attn_probs = attn_probs.cast(value.dtype)
 
         # Apply attention to values
         # (B, heads, seq_len, seq_len) @ (B, heads, seq_len, head_dim) -> (B, heads, seq_len, head_dim)
-        hidden_states = attn_probs @ value
+        # hidden_states = attn_probs @ value
+
+        attn_out = flash_attention_gpu(
+            query,
+            key,
+            value,
+            MHAMaskVariant.NULL_MASK,
+            self.scale,
+        )
 
         # Reshape back: (B, heads, seq_len, head_dim) -> (B, seq_len, heads * head_dim)
-        hidden_states = hidden_states.permute(
-            [0, 2, 1, 3]
-        )  # (B, seq_len, heads, head_dim)
-        hidden_states = hidden_states.reshape([batch, seq_len, self.inner_dim])
+        # hidden_states = hidden_states.permute(
+        #     [0, 2, 1, 3]
+        # )  # (B, seq_len, heads, head_dim)
+        hidden_states = attn_out.reshape([batch, seq_len, self.inner_dim])
 
         # Output projection (Linear + Dropout from to_out list)
         hidden_states = self.to_out[0](hidden_states)
