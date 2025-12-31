@@ -36,7 +36,7 @@ from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
 
-from .layers import Conv2d, GroupNorm, SiLU, SpatialNorm
+from .layers import Conv2d, GroupNorm, SiLU
 from .unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
 
 
