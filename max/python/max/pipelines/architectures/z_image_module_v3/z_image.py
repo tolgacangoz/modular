@@ -41,7 +41,7 @@ class ZImage(nn.Module):
         self.text_encoder = self.build_text_encoder()
         self.transformer = self.build_transformer()
 
-        self.vae_scale_factor = 2 ** (len(self.model_config.vae_config.block_out_channels) - 1)
+        self.vae_scale_factor = 2 ** (len(self.config.vae_config.block_out_channels) - 1)
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""
