@@ -430,6 +430,11 @@ class ZImageModel(
         prompt_type = TensorType(
             DType.bfloat16, shape=(75, 2560), device=device_ref
         )
+        # Latents input type - shape for 1024x1024 image with 16 latent channels
+        # latent_height = 1024 // 8 = 128, latent_width = 1024 // 8 = 128
+        latents_type = TensorType(
+            DType.float32, shape=(1, 16, 128, 128), device=device_ref
+        )
         # sample_type = TensorType(
         #     DType.bfloat16, shape=(1, 16, 128, 128), device=device_ref
         # )
@@ -454,7 +459,8 @@ class ZImageModel(
         # logger.info("Building and compiling VAE's decoder...")
         # before_vae_decode_build = time.perf_counter()
         # compiled_vae_decoder_model = self.model.vae.decoder.compile(sample_type)
-        compiled_pipeline = self.model.compile(prompt_type)
+        # Compile with both prompt_embeds and latents as inputs
+        compiled_pipeline = self.model.compile(prompt_type, latents_type)
         # after_vae_decode_build = time.perf_counter()
         # logger.info(
         #     f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
@@ -578,27 +584,26 @@ class ZImageModel(
         )
         model_inputs.prompt = prompt_embeds
 
+        # Generate latents using PyTorch (outside the compiled graph)
+        import torch
+        height = model_inputs.height or 1024
+        width = model_inputs.width or 1024
+        # Latent dimensions: height/8, width/8 (VAE scale factor)
+        latent_height = height // 8
+        latent_width = width // 8
+        seed = getattr(model_inputs, 'seed', 0) or 0
+        generator = torch.Generator("cpu").manual_seed(seed)
+        latents_torch = torch.randn(
+            (1, 16, latent_height, latent_width),
+            generator=generator,
+            dtype=torch.float32
+        )
+        latents = Tensor.from_dlpack(latents_torch.numpy()).to(self.devices[0])
+
+        # Call compiled pipeline with (prompt, latents) as first two positional args
         model_outputs = self.pipeline(
-        model_inputs.prompt,
-        model_inputs.height or 1024,
-        model_inputs.width or 1024,
-        model_inputs.num_inference_steps,
-        model_inputs.sigmas,
-        model_inputs.guidance_scale,
-        model_inputs.cfg_normalization,
-        model_inputs.cfg_truncation,
-        model_inputs.negative_prompt,
-        model_inputs.num_images_per_prompt or 1,
-        model_inputs.latents,
-        model_inputs.prompt_embeds,
-        model_inputs.negative_prompt_embeds,
-        model_inputs.output_type,
-        model_inputs.joint_attention_kwargs,
-        model_inputs.callback_on_step_end,
-        model_inputs.callback_on_step_end_tensor_inputs,
-        model_inputs.max_sequence_length,
-        model_inputs.cu_seqlens,
-        model_inputs.max_seqlen,
+            model_inputs.prompt,  # First positional arg
+            latents,              # Second positional arg (pre-generated)
         )
 
         return ModelOutputs(

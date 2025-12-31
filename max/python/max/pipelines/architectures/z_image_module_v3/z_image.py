@@ -365,8 +365,10 @@ class ZImage(nn.Module):
 
     def __call__(
         self,
-        # prompt: str | list[str] = None,
-        prompt: Tensor | None = None,
+        # First two args are graph inputs (must match compile() input_types order)
+        prompt: Tensor,  # prompt_embeds [seq_len, hidden_dim]
+        latents: Tensor,  # latent noise [batch, channels, height, width]
+        # Remaining args have compile-time default values
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = NUM_INFERENCE_STEPS,
@@ -376,7 +378,6 @@ class ZImage(nn.Module):
         cfg_truncation: float = 1.0,
         negative_prompt: str | list[str] | None = None,
         num_images_per_prompt: int | None = 1,
-        latents: Tensor | None = None,
         prompt_embeds: list[Tensor] | None = None,
         negative_prompt_embeds: list[Tensor] | None = None,
         output_type: str | None = "pil",
@@ -461,22 +462,8 @@ class ZImage(nn.Module):
         #     Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
         # )
         prompt_embeds = prompt
-        # 4. Prepare latent variables
-        num_channels_latents = self.transformer.in_channels
-
-        # Extract seed for reproducible latent generation
-        seed = 0
-
-        latents = self.prepare_latents(
-            batch_size * num_images_per_prompt,
-            num_channels_latents,
-            height,
-            width,
-            DType.float32,
-            device,
-            seed=seed,
-            latents=latents,
-        )
+        # 4. Latent variables - passed as graph input (pre-generated outside compilation)
+        # For compiled pipeline: latents MUST be provided as a graph input
 
         # Repeat prompt_embeds for num_images_per_prompt
         if num_images_per_prompt > 1:
