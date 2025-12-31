@@ -339,7 +339,7 @@ class ZImage(nn.Module):
         num_channels_latents = self.transformer.in_channels
 
         # Extract seed for reproducible latent generation
-        seed = model_inputs.seed
+        seed = 0
 
         latents = self.prepare_latents(
             batch_size * num_images_per_prompt,
