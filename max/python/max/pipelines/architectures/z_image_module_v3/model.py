@@ -655,7 +655,28 @@ class ZImageModel(
         )
         model_inputs.prompt = prompt_embeds
 
-        model_outputs = self.pipeline(model_inputs)
+        model_outputs = self.pipeline(
+        model_inputs.prompt,
+        model_inputs.height or 1024,
+        model_inputs.width or 1024,
+        model_inputs.num_inference_steps,
+        model_inputs.sigmas,
+        model_inputs.guidance_scale,
+        model_inputs.cfg_normalization,
+        model_inputs.cfg_truncation,
+        model_inputs.negative_prompt,
+        model_inputs.num_images_per_prompt or 1,
+        model_inputs.latents,
+        model_inputs.prompt_embeds,
+        model_inputs.negative_prompt_embeds,
+        model_inputs.output_type,
+        model_inputs.joint_attention_kwargs,
+        model_inputs.callback_on_step_end,
+        model_inputs.callback_on_step_end_tensor_inputs,
+        model_inputs.max_sequence_length,
+        model_inputs.cu_seqlens,
+        model_inputs.max_seqlen,
+        )
 
         return ModelOutputs(
             hidden_states=cast(DriverTensor, model_outputs.driver_tensor), logits=None
