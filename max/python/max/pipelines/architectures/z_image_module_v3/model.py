@@ -264,6 +264,10 @@ class ZImageModel(
         devices: list[Device],
         kv_cache_config: KVCacheConfig,
         weights: Weights,
+        scheduler_config: SchedulerConfig,
+        vae_config: VAEConfig,
+        text_encoder_config: AutoConfig,
+        transformer_config: TransformerConfig,
         adapter: WeightsAdapter | None = None,
         return_logits: ReturnLogits = ReturnLogits.LAST_TOKEN,
     ) -> None:
@@ -277,6 +281,10 @@ class ZImageModel(
             weights,
             adapter,
             return_logits,
+            scheduler_config,
+            vae_config,
+            text_encoder_config,
+            transformer_config,
         )
 
         # For Z-Image, the Hugging Face repository is a diffusers pipeline with
