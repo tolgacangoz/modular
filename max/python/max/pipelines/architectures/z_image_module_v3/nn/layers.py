@@ -105,7 +105,8 @@ class Conv2d(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
-        self.padding = padding
+        ph, pw = padding
+        self.padding = (ph, ph, pw, pw)
         self.dilation = dilation
         self.groups = groups
         self.padding_mode = padding_mode
@@ -129,19 +130,16 @@ class Conv2d(nn.Module):
         # Permute weight to RSCF (H, W, I, O) from (O, I, H, W)
         weight = self.weight.permute((2, 3, 1, 0))
 
-        # Prepare padding (pad_h_before, pad_h_after, pad_w_before, pad_w_after)
-        ph, pw = self.padding
-        padding = (ph, ph, pw, pw)
-
+        #input_layout: ConvInputLayout = ConvInputLayout.NHWC,
+        #filter_layout: FilterLayout = FilterLayout.RSCF,
         out = F.conv2d(
             x,
             weight,
-            bias=self.bias,
-            stride=self.stride,
-            padding=padding,
-            dilation=self.dilation,
-            groups=self.groups,
-            # Default input_layout is NHWC
+            self.stride,
+            self.dilation,
+            self.padding,
+            self.groups,
+            self.bias,
         )
         # F.conv2d returns NHWC, convert back to NCHW
         return out.permute([0, 3, 1, 2])
