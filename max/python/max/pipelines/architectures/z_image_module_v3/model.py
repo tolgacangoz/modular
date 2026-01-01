@@ -54,7 +54,6 @@ from transformers import AutoConfig
 
 from .model_config import ZImageConfig
 from .nn.autoencoder_kl import AutoencoderKL
-from .nn.image_processor import VaeImageProcessor
 from .nn.transformer_z_image import ZImageTransformer2DModel
 from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
@@ -169,7 +168,7 @@ def calculate_shift(
 
 
 def retrieve_timesteps(
-    scheduler: SchedulerMixin,
+    scheduler: FlowMatchEulerDiscreteScheduler,
     num_inference_steps: int | None = None,
     device: str | Device | None = None,
     timesteps: list[int] | None = None,
@@ -181,7 +180,7 @@ def retrieve_timesteps(
     custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
 
     Args:
-        scheduler (`SchedulerMixin`):
+        scheduler (`FlowMatchEulerDiscreteScheduler`):
             The scheduler to get timesteps from.
         num_inference_steps (`int`):
             The number of diffusion steps used when generating samples with a pre-trained model. If used, `timesteps`
@@ -234,7 +233,6 @@ def retrieve_timesteps(
 
 
 class ZImageModel(
-    # AlwaysSignalBuffersMixin,
     PipelineModel[TextContext],
 ):
     """A ZImage model for text-to-image generation."""
@@ -268,7 +266,7 @@ class ZImageModel(
         weights: Weights,
         adapter: WeightsAdapter | None = None,
         return_logits: ReturnLogits = ReturnLogits.LAST_TOKEN,
-    ):
+    ) -> None:
         super().__init__(
             pipeline_config,
             session,
@@ -337,20 +335,16 @@ class ZImageModel(
         self.transformer_config = SimpleNamespace(**transformer_dict)
 
         self.model_config = None
-        self._session = session  # reuse for on-device casts
+        self._session = session  # Reuse for on-device casts
 
         self.scheduler = None
         self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
             session
         )
-        # Use uncompiled transformer for debugging NaN issues
-        # self.transformer = self.model.transformer
 
-        # Access config from vae instance or config object
         self.vae_scale_factor = 2 ** (
             len(self.model_config.vae_config.block_out_channels) - 1
         )
-        self.image_processor = VaeImageProcessor()
 
         # Serving interface: image_pipeline is self
         self._active_requests: dict[str, Any] = {}
@@ -773,7 +767,7 @@ class ZImageModel(
             if seed is not None:
                 generator.manual_seed(seed)
             latents_torch = torch.randn(
-                shape, generator=generator, dtype=torch.float32
+                shape, generator=generator, dtype=dtype
             )
             # Convert to MAX tensor and move to device
             latents = Tensor.from_dlpack(latents_torch.numpy()).to(device)
