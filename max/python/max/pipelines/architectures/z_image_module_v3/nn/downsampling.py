@@ -29,7 +29,7 @@ import max.experimental.functional as F
 import max.nn.module_v3 as nn
 from max.experimental.tensor import Tensor
 
-from .layers import Conv2d, RMSNorm, LayerNorm
+from .layers import Conv2d, LayerNorm, RMSNorm
 from .upsampling import upfirdn2d_native
 
 

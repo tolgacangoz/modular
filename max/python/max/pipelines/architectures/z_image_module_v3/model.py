@@ -774,9 +774,7 @@ class ZImageModel(
             generator = torch.Generator("cpu")
             if seed is not None:
                 generator.manual_seed(seed)
-            latents_torch = torch.randn(
-                shape, generator=generator, dtype=dtype
-            )
+            latents_torch = torch.randn(shape, generator=generator, dtype=dtype)
             # Convert to MAX tensor and move to device
             latents = Tensor.from_dlpack(latents_torch.numpy()).to(device)
         else:

@@ -21,10 +21,10 @@ from max.driver import Device
 from max.dtype import DType
 from max.experimental import random
 from max.experimental.tensor import Tensor
-from max.nn.module_v3.sequential import ModuleList
-from typing_extensions import TypeVar
 from max.nn.attention.mask_config import MHAMaskVariant
 from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
+from max.nn.module_v3.sequential import ModuleList
+from typing_extensions import TypeVar
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 
@@ -130,8 +130,8 @@ class Conv2d(nn.Module):
         # Permute weight to RSCF (H, W, I, O) from (O, I, H, W)
         weight = self.weight.permute((2, 3, 1, 0))
 
-        #input_layout: ConvInputLayout = ConvInputLayout.NHWC,
-        #filter_layout: FilterLayout = FilterLayout.RSCF,
+        # input_layout: ConvInputLayout = ConvInputLayout.NHWC,
+        # filter_layout: FilterLayout = FilterLayout.RSCF,
         out = F.conv2d(
             x,
             weight,

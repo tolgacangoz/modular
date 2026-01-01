@@ -47,7 +47,7 @@ from .lora_config import LoRAConfig
 from .lora_request_processor import LoRARequestProcessor
 from .memory_estimation import MemoryEstimator
 from .model_config import MAXModelConfig, MAXModelConfigBase
-from .pipeline_variants import TextGenerationPipeline, ImageGenerationPipeline
+from .pipeline_variants import ImageGenerationPipeline, TextGenerationPipeline
 from .profiling_config import ProfilingConfig
 from .registry import PIPELINE_REGISTRY, SupportedArchitecture
 from .sampling import (
