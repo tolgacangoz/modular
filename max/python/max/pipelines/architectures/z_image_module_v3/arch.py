@@ -30,7 +30,7 @@ from .scheduling_flow_match_euler_discrete import (
     FlowMatchEulerDiscreteScheduler,
 )
 
-z_image_arch = SupportedArchitecture(
+z_image_module_v3_arch = SupportedArchitecture(
     name="ZImagePipeline",
     task=PipelineTask.IMAGE_GENERATION,
     example_repo_ids=["Tongyi-MAI/Z-Image-Turbo"],
