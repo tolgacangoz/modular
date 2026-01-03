@@ -560,19 +560,16 @@ class OpenAISpeechResponseGenerator:
         return response
 
 
-class OpenAIImageResponseGenerator:
-    """Response generator for OpenAI-compatible image generation endpoints."""
-
-    def __init__(self, pipeline: ImageGeneratorPipeline) -> None:
+class OpenAIPixelResponseGenerator:
+    def __init__(self, pipeline: PixelGeneratorPipeline) -> None:
         self.logger = logging.getLogger(
-            "max.serve.router.OpenAIImageResponseGenerator"
+            "max.serve.router.OpenAIPixelResponseGenerator"
         )
         self.pipeline = pipeline
 
     async def generate_images(
-        self, request: ImageGenerationRequest
+        self, request: PixelGenerationContext
     ) -> ImagesResponse:
-        """Generate images and return OpenAI-compatible response."""
         self.logger.debug("Image generation: Start: %s", request)
         output = await self.pipeline.generate_full_image(request)
 
@@ -619,6 +616,11 @@ class OpenAIImageResponseGenerator:
         buffer.seek(0)
 
         return base64.b64encode(buffer.read()).decode("utf-8")
+
+    async def generate_videos(
+        self, request: "VideoGenerationRequest"
+    ) -> "VideosResponse":
+        raise("Not implemented yet!")
 
 
 async def openai_parse_chat_completion_request(
@@ -1509,52 +1511,40 @@ def _parse_image_size(size: str | None) -> tuple[int, int]:
 async def openai_create_image(
     request: Request,
 ) -> ImagesResponse:
-    """OpenAI-compatible image generation endpoint.
-
-    Generates images based on a text prompt using diffusion models.
-    https://platform.openai.com/docs/api-reference/images/create
-    """
     request_id = request.state.request_id
     try:
         image_request = CreateImageRequest.model_validate_json(
             await request.body()
         )
-
-        app_state: State = request.app.state
-        pipeline = app_state.pipeline
-
-        if not isinstance(pipeline, ImageGeneratorPipeline):
-            raise HTTPException(
-                status_code=400,
-                detail="This endpoint requires an image generation model. "
-                "Please start the server with --task image_generation.",
-            )
+        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
+            get_pipeline(request, completion_request.model)
+        )
+        assert isinstance(pipeline, PixelGeneratorPipeline)
 
         logger.debug(
-            "Processing path, %s, req-id, %s, for model, %s.",
+            "Processing path, %s, req-id,%s%s, for model, %s.",
             request.url.path,
             request_id,
-            image_request.model,
+            " (streaming) " if completion_request.stream else "",
+            completion_request.model,
         )
 
-        # Parse size string to width/height
         width, height = _parse_image_size(image_request.size)
 
-        # Create the ImageGenerationRequest
-        image_gen_request = ImageGenerationRequest(
+        response_generator = OpenAIPixelResponseGenerator(pipeline)
+
+        image_gen_request = PixelGenerationRequest(
             request_id=RequestID(request_id),
-            model=image_request.model or pipeline.model_name,
-            input=image_request.prompt,
+            model=image_request.model,
             prompt=image_request.prompt,
             height=height,
             width=width,
-            num_images_per_prompt=image_request.n or 1,
-            guidance_scale=image_request.guidance_scale or 0.0,
+            num_images_per_prompt=image_request.n,
+            guidance_scale=image_request.guidance_scale,
             negative_prompt=image_request.negative_prompt,
-            num_inference_steps=image_request.num_inference_steps or 50,
+            num_inference_steps=image_request.num_inference_steps,
         )
 
-        response_generator = OpenAIImageResponseGenerator(pipeline)
         response = await response_generator.generate_images(image_gen_request)
         return response
 
@@ -1571,6 +1561,9 @@ async def openai_create_image(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
         logger.exception("ValueError in request %s", request_id)
+        # NOTE(SI-722): These errors need to return more helpful details,
+        # but we don't necessarily want to expose the full error description
+        # to the user. There are many different ValueErrors that can be raised.
         raise HTTPException(status_code=400, detail="Value error.") from e
 
 

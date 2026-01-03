@@ -34,48 +34,46 @@ from typing_extensions import TypeVar
 @dataclass(frozen=True)
 class ImageGenerationRequest(Request):
     model: str = field()
-    """The name of the model to be used for generating images. This should match
+    """
+    The name of the model to be used for generating images. This should match
     the available models on the server and determines the behavior and
     capabilities of the response generation.
     """
-
-    input: str | None = None
-    """The text to generate images for. The maximum length is 4096 characters."""
-
-    image_prompt_tokens: list[int] = field(default_factory=list)
-    """The prompt image IDs to use for image generation."""
-
-    sampling_params: SamplingParams = field(default_factory=SamplingParams)
-    """Request sampling configuration options."""
-
-    prompt: list[int] | str | None = field(default=None)
-    """Optionally provide a preprocessed list of token ids or a prompt string to pass as input directly into the model.
-    This replaces automatically generating TokenGeneratorRequestMessages given the input, image prompt tokens fields."""
-
-    streaming: bool = False
-    """Whether to stream the image generation."""
-
-    guidance_scale: float = 0.0
-    """Guidance scale for classifier-free guidance. Set to 0 to disable CFG."""
-
-    height: int | None = 1024
-    """Height of generated image in pixels. Defaults to model's default (typically 1024)."""
-
-    width: int | None = 1024
-    """Width of generated image in pixels. Defaults to model's default (typically 1024)."""
-
-    num_inference_steps: int = 50
-    """Number of denoising steps. More steps = higher quality but slower."""
-
+    prompt: str | None = None
+    """
+    The text to generate images for. The maximum length is 4096 characters.
+    """
     negative_prompt: str | None = None
-    """Negative prompt to guide what NOT to generate."""
-
+    """
+    Negative prompt to guide what NOT to generate.
+    """
+    image: bytes | None = None
+    """
+    The prompt image to use for image generation.
+    """
+    guidance_scale: float = 7.5
+    """
+    Guidance scale for classifier-free guidance. Set to 1 to disable CFG.
+    """
+    height: int | None = 1024
+    """
+    Height of generated image in pixels. Defaults to model's default (typically 1024).
+    """
+    width: int | None = 1024
+    """
+    Width of generated image in pixels. Defaults to model's default (typically 1024).
+    """
+    num_inference_steps: int = 50
+    """
+    Number of denoising steps. More steps = higher quality but slower.
+    """
     num_images_per_prompt: int = 1
-    """Number of images to generate per prompt."""
-
+    """
+    Number of images to generate per prompt.
+    """
     def __post_init__(self) -> None:
-        if self.prompt is None and self.input is None:
-            raise RuntimeError("either token_ids or input must be provided.")
+        if self.prompt is None:
+            raise RuntimeError("prompt must be provided.")
 
 
 class ImageGenerationMetadata(

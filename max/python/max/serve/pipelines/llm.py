@@ -391,16 +391,16 @@ class AudioGeneratorPipeline(
         )
 
 
-class ImageGeneratorPipeline(
-    BasePipeline[TextContext, ImageGenerationRequest, ImageGenerationOutput]
+class PixelGeneratorPipeline(
+    BasePipeline[PixelContext, PixelGenerationRequest, PixelGenerationOutput]
 ):
-    """Base class for diffusion-based image generation pipelines."""
+    """Base class for diffusion-based image and video generation pipelines."""
 
     async def next_chunk(
-        self, request: ImageGenerationRequest
-    ) -> AsyncGenerator[ImageGenerationOutput, None]:
-        """Generates and streams images for the provided request."""
-        from max.interfaces import ImageGenerationContext
+        self, request: PixelGenerationRequest
+    ) -> AsyncGenerator[PixelGenerationOutput, None]:
+        """Generates and streams images or videos for the provided request."""
+        from max.interfaces import PixelGenerationContext
 
         total_sw = StopWatch()
         self.logger.debug(
@@ -413,14 +413,12 @@ class ImageGeneratorPipeline(
             with record_ms(METRICS.input_time):
                 # context = await self.tokenizer.new_context(request)
                 # For image generation, create context directly from request
-                # (no tokenization needed - just the prompt and generation params)
-                context = ImageGenerationContext(
+                # since Qwen-3-4B isn't working now.
+                context = PixelGenerationContext(
                     request_id=request.request_id,
-                    prompt=request.prompt
-                    if isinstance(request.prompt, str)
-                    else (request.input or ""),
-                    height=request.height or 1024,
-                    width=request.width or 1024,
+                    prompt=request.prompt,
+                    height=request.height,
+                    width=request.width,
                     num_inference_steps=request.num_inference_steps,
                     guidance_scale=request.guidance_scale,
                     negative_prompt=request.negative_prompt,
@@ -441,10 +439,10 @@ class ImageGeneratorPipeline(
                 )
 
     async def generate_full_image(
-        self, request: ImageGenerationRequest
-    ) -> ImageGenerationOutput:
+        self, request: PixelGenerationContext
+    ) -> PixelGenerationOutput:
         """Generates complete image for the provided request."""
-        image_chunks: list[ImageGenerationOutput] = []
+        image_chunks: list[PixelGenerationOutput] = []
         np_chunks: list[npt.NDArray[np.floating[Any]]] = []
         async for chunk in self.next_chunk(request):
             if chunk.image_data.size == 0 or chunk.image_data.size == 0:
@@ -457,7 +455,7 @@ class ImageGeneratorPipeline(
         import numpy as np
 
         if len(image_chunks) == 0:
-            return ImageGenerationOutput(
+            return PixelGenerationOutput(
                 steps_executed=sum(
                     chunk.steps_executed for chunk in image_chunks
                 ),
@@ -473,7 +471,7 @@ class ImageGeneratorPipeline(
         last_chunk = image_chunks[-1]
         assert last_chunk.is_done
 
-        return ImageGenerationOutput(
+        return PixelGenerationOutput(
             image_data=combined_image,
             metadata=last_chunk.metadata,
             steps_executed=sum(chunk.steps_executed for chunk in image_chunks),

@@ -910,3 +910,514 @@ def reserve_token_space_for_batch(
         for ctx in batch:
             ctx._active_idx = saved_indices[ctx.request_id][0]
             ctx._end_idx = saved_indices[ctx.request_id][1]
+
+
+@dataclass(kw_only=True)
+class PixelContext:
+    """A base class for model context, specifically for Text model variants.
+
+    This class manages the state and processing of text generation, including token management,
+    caching, and generation parameters.
+
+    Configuration:
+        request_id: A unique identifier for this sequence.
+        max_length: Maximum allowed length of the generated sequence
+        tokens: NumPy array containing the token IDs
+        eos_token_ids: Set of token IDs that indicate end of sequence
+        log_probabilities: Whether to return token log probabilities
+        log_probabilities_echo: Whether to return log probabilities for prompt tokens
+        ignore_eos: Whether to ignore end of sequence tokens and continue generating
+        matcher: Optional grammar matcher for constrained decoding
+        json_schema: Optional JSON schema for structured output
+        sampling_params: Parameters controlling the token sampling strategy
+        min_tokens: Minimum number of new tokens to generate.
+        target_endpoint: Optional target endpoint identifier for routing requests
+        _status: Current generation status (active, finished, etc)
+        _size: Current allocated size of token array
+        _start_idx: Start index of current generation window
+        _active_idx: Current position in token sequence
+        _end_idx: End index of valid tokens
+        _completion_start_idx: Start index of completion tokens
+        _completion_end_idx: End index of completion tokens
+        _prompt_len: Length of original prompt
+        _log_probabilities_data: Token log probabilities data
+        _is_initial_prompt: Whether this is the initial prompt encoding
+        _draft_offset: Offset for draft decoding
+    """
+
+    max_length: int
+    tokens: TokenSlice
+    request_id: RequestID = field(default_factory=RequestID)
+    eos_token_ids: set[int] = field(default_factory=set)
+    eos_sequences: list[list[int]] = field(default_factory=list)
+    log_probabilities: int = field(default=0)
+    log_probabilities_echo: bool = field(default=False)
+    ignore_eos: bool = field(default=False)
+    json_schema: str | None = field(default=None)
+    sampling_params: SamplingParams = field(default_factory=SamplingParams)
+    model_name: str = field(default="")
+    _matcher: Any | None = field(default=None)
+    status: GenerationStatus = field(default=GenerationStatus.ACTIVE)
+    _size: int = field(default=-1)
+    _start_idx: int = field(default=0)
+    _active_idx: int = field(default=-1)
+    _end_idx: int = field(default=-1)
+    _completion_start_idx: int = field(default=-1)
+    _completion_end_idx: int = field(default=-1)
+    _prompt_len: int = field(default=-1)
+    _log_probabilities_data: dict[int, LogProbabilities] = field(
+        default_factory=dict
+    )
+
+    _is_initial_prompt: bool = field(default=True)
+    _draft_offset: int = field(default=0)
+
+    target_endpoint: str | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        """Initialize context state after deserialization.
+
+        This method is called each time the model is deserialized from msgspec.
+        We only update fields that have their default initialization values (-1),
+        preserving any explicitly set values during deserialization.
+
+        The method:
+        1. Validates token array dimensionality
+        2. Initializes size based on token length if not already set
+        3. Sets active/end indices to token length if not already set
+        4. Sets completion indices to match active index if not already set
+        5. Resizes token array to match size if needed
+
+        Raises:
+            ValueError: If tokens array is not one-dimensional
+        """
+        if self.tokens.ndim != 1:
+            raise ValueError(
+                f"tokens must be one dimensional array: got shape '{self.tokens.shape}'"
+            )
+
+        if self._size == -1:
+            self._size = int(
+                np.ceil(len(self.tokens) / CHUNK_SIZE) * CHUNK_SIZE
+            )
+
+        if self._active_idx == -1:
+            self._active_idx = len(self.tokens)
+
+        if self._end_idx == -1:
+            self._end_idx = self._active_idx
+
+        if self._completion_start_idx == -1:
+            self._completion_start_idx = self._active_idx
+
+        if self._completion_end_idx == -1:
+            self._completion_end_idx = self._active_idx
+
+        if self._prompt_len == -1:
+            self._prompt_len = self._active_idx
+
+        if self.min_tokens + self._prompt_len > self.max_length:
+            raise ValueError(
+                f"min_tokens ({self.min_tokens}) + prompt_len ({self._prompt_len}) must be less than or equal to max_length ({self.max_length})"
+            )
+
+        if self.target_endpoint is not None:
+            if not self.target_endpoint.startswith(("tcp://", "ipc://")):
+                raise ValueError(
+                    f"target_endpoint must be prefixed with 'tcp://' or 'ipc://': {self.target_endpoint}"
+                )
+            if (
+                self.target_endpoint.startswith("tcp://")
+                and ":" not in self.target_endpoint.split("://")[-1]
+            ):
+                raise ValueError(
+                    f"target_endpoint must contain a port if using tcp: {self.target_endpoint}"
+                )
+
+        # Ensure the array is writable even when copy=False
+        # This is necessary because frombuffer creates read-only arrays
+        if not self.tokens.flags.writeable:
+            self.tokens = self.tokens.copy()
+
+        # Resize Data Up
+        # Ensure the tokens array is at least self._size
+        if self._end_idx < self._size:
+            self.tokens = np.resize(self.tokens, self._size)
+
+    @property
+    def all_tokens(self) -> TokenSlice:
+        return self.tokens[: self._end_idx]
+
+    @property
+    def is_done(self) -> bool:
+        return self.status.is_done
+
+    @property
+    def processed_length(self) -> int:
+        return self._start_idx + self._draft_offset
+
+    @property
+    def current_position(self) -> int:
+        return self._active_idx
+
+    def skip_processing(self, n: int) -> None:
+        """Advance the processing window start by n.
+
+        Use after committing tokens to cache or accepting a draft so future steps no
+        longer reprocess those tokens. Validates that start <= end.
+        Args:
+            n (int): The number of tokens to skip.
+        """
+        self._bump_token_indices(start_idx=n)
+
+    def rewind_processing(self, n: int) -> None:
+        """Rewind the processing window start by n.
+
+        Use after rejecting a draft so future steps reprocess those tokens.
+        Args:
+            n (int): The number of tokens to rewind.
+        """
+        self._bump_token_indices(start_idx=-n)
+
+    def chunk(self, chunk_size: int) -> None:
+        """Optionally chunk the active token window to enforce a maximum size.
+
+        This is used by the text-generation scheduler when performing chunked
+        prefill. If the number of active prompt tokens exceeds the configured
+        per-batch target, the context is "chunked" by advancing indices so that
+        only a bounded number of active tokens remain.
+
+        Args:
+            chunk_size: The desired maximum number of active tokens to keep
+                in this context.
+
+        Raises:
+            ValueError: If `chunk_size` is negative or equal to/greater than the
+                current number of active tokens (``active_length``).
+
+        """
+
+        if chunk_size < 0 or chunk_size >= self.active_length:
+            raise ValueError(
+                f"chunk size must be non-negative and less than active_length: got {chunk_size}"
+            )
+
+        # Calculate how much to bump the token indices by
+        # If chunk_size = 10, and available_active_tokens = 30, we have to move back the current_position
+        # by 20.
+        self._bump_token_indices(
+            current_position=chunk_size - self.active_length
+        )
+
+    @property
+    def min_tokens(self) -> int:
+        """The minimum number of new tokens to generate."""
+        return self.sampling_params.min_new_tokens
+
+    def apply_processing_offset(self, offset: int) -> None:
+        self._draft_offset = offset
+
+    def get_min_token_logit_mask(
+        self, num_steps: int
+    ) -> list[npt.NDArray[np.int32]]:
+        """Returns a set of indices for the tokens in the output that should be masked.
+
+        This is primarily used for the min_tokens setting, where we mask
+        `eos` tokens in the logits to avoid generating them before we reach
+        min_tokens.
+
+        Returns:
+            A set of indices for the tokens in the output that should be masked.
+        """
+
+        ret_list: list[npt.NDArray[np.int32]] = []
+        start_range = self._prompt_len
+        end_range = self._prompt_len + self.min_tokens
+
+        for i in range(self._active_idx, self._active_idx + num_steps):
+            if i < start_range or i >= end_range:
+                ret_list.append(np.zeros((0, 2), dtype=np.int32))
+                continue
+
+            new_list = []
+            for eos_token_id in self.eos_token_ids:
+                new_list.append((0, eos_token_id))
+
+            ret_list.append(np.asarray(new_list, dtype=np.int32))
+
+        return ret_list
+
+    def set_matcher(self, matcher: llguidance.LLMatcher) -> None:
+        self._matcher = matcher
+
+    @property
+    def matcher(self) -> llguidance.LLMatcher | None:
+        return self._matcher
+
+    @property
+    def current_length(self) -> int:
+        """The current length of the sequence, including completed and active tokens."""
+        return self._end_idx
+
+    @property
+    def active_length(self) -> int:
+        """Current sequence length: num tokens input this iteration.
+
+        This will be the prompt size for context encoding, and simply 1 (or more) for
+        token generation.
+        """
+        return self._active_idx - self._start_idx
+
+    def to_generation_output(self) -> TextGenerationOutput:
+        """Get completion tokens that are ready to be returned to the user.
+
+        This method retrieves tokens that have been generated but not yet
+        delivered to the user, along with their associated log probability data.
+
+        Returns:
+            TextGenerationOutput: The completion tokens and their associated
+            log probabilities, if available.
+        """
+        tokens: list[int] = []
+        log_probabilities: list[LogProbabilities] | None = None
+        for token_idx in range(
+            self._completion_start_idx, self._completion_end_idx
+        ):
+            tokens.append(int(self.tokens[token_idx]))
+            if token_idx in self._log_probabilities_data:
+                if log_probabilities is None:
+                    log_probabilities = []
+                # We are using a pop here instead of a get, as we should not have
+                # to maintain this data once it is returned. The expectation is that
+                # this method never returns the same tokens more than once.
+                log_probability = self._log_probabilities_data.pop(token_idx)
+                log_probabilities.append(log_probability)
+
+        self._completion_start_idx = self._completion_end_idx
+
+        return TextGenerationOutput(
+            request_id=self.request_id,
+            tokens=tokens,
+            log_probabilities=log_probabilities,
+            final_status=self.status,
+        )
+
+    def _bump_token_indices(
+        self,
+        start_idx: int = 0,
+        current_position: int = 0,
+        end_idx: int = 0,
+    ) -> None:
+        """Update the start_idx, current_position and end_idx without manipulating the token array."""
+        new_start_idx = start_idx + self._start_idx
+        new_active_idx = current_position + self._active_idx
+        new_end_idx = end_idx + self._end_idx
+
+        self._set_token_indices(
+            start_idx=new_start_idx,
+            current_position=new_active_idx,
+            end_idx=new_end_idx,
+        )
+
+    def _set_token_indices(
+        self,
+        start_idx: int | None = None,
+        current_position: int | None = None,
+        end_idx: int | None = None,
+    ) -> None:
+        """Set the token indices without manipulating the token array."""
+        new_start_idx = start_idx if start_idx is not None else self._start_idx
+        new_active_idx = (
+            current_position
+            if current_position is not None
+            else self._active_idx
+        )
+        new_end_idx = end_idx if end_idx is not None else self._end_idx
+
+        if new_start_idx >= new_active_idx:
+            raise ValueError(f"""
+            current_position must always be greater than start_idx, unable to bump token indices
+            as new start_idx ({new_start_idx}) is greater than new current_position ({new_active_idx}).
+            """)
+
+        if new_active_idx > new_end_idx:
+            raise ValueError(f"""
+            end_idx must always be greater than current_position, unable to bump token indices
+            as new current_position ({new_active_idx}) is greater than new end_idx ({new_end_idx}).
+            """)
+
+        self._start_idx = new_start_idx
+        self._active_idx = new_active_idx
+        self._end_idx = new_end_idx
+
+    @property
+    def next_tokens(self) -> TokenSlice:
+        """Returns the tokens between start_idx and current_position.
+
+        Returns:
+            np.ndarray: Array of tokens that have been generated but not yet processed.
+        """
+        return self.tokens[self._start_idx : self._active_idx]
+
+    @property
+    def prompt_tokens(self) -> TokenSlice:
+        """Returns the original prompt tokens.
+
+        Returns:
+            np.ndarray: Array of tokens from the initial prompt.
+        """
+        return self.tokens[: self._prompt_len]
+
+    @property
+    def generated_tokens(self) -> TokenSlice:
+        """Returns all tokens that have been generated after the prompt.
+
+        Returns:
+            np.ndarray: Array of generated tokens from prompt_len to end_idx.
+        """
+        return self.tokens[self._prompt_len : self._end_idx]
+
+    def get_last_generated_token(self) -> int:
+        """Returns the most recently generated token. If no tokens have been generated, raises an error.
+
+        This is not a @property method since it can raise.
+
+        Returns:
+            int: The most recently generated token.
+        """
+        if self._end_idx == self._prompt_len:
+            raise ValueError("No tokens have been generated")
+        # The `int(...)` is needed or else the returned value is a numpy.int64
+        # which is not serializable by msgspec!
+        return int(self.tokens[self._end_idx - 1])
+
+    def _upsize(self) -> None:
+        """Increases the size of the token array if needed.
+
+        Resizes the token array by CHUNK_SIZE if end_idx has reached the current size.
+        """
+        if self._end_idx >= self._size:
+            self._size += CHUNK_SIZE
+            self.tokens = np.resize(self.tokens, self._size)
+
+    def _is_eos(self, new_token: int) -> bool:
+        """
+        Checks for end-of-sequence conditions.
+
+        This function performs two checks:
+        1. Whether the newly generated token is in the set of `eos_token_ids`.
+        2. Whether appending the new token results in a sequence that matches any per-request `stop` sequence.
+        """
+        if new_token in self.eos_token_ids:
+            return True
+
+        if not self.eos_sequences:
+            return False
+
+        for eos in self.eos_sequences:
+            if self._end_idx - self._prompt_len < len(eos):
+                continue
+
+            comp_tokens = self.generated_tokens
+            comp_tokens = comp_tokens[len(comp_tokens) - len(eos) :]
+
+            if np.array_equal(comp_tokens, eos):
+                return True
+
+        return False
+
+    def update(
+        self,
+        new_token: int,
+        log_probabilities: LogProbabilities | None = None,
+    ) -> None:
+        """Updates the next_tokens and extends existing tokens to include all generated tokens."""
+        # This is required for chunked prefill.
+        # The scheduler will update the current_position via _bump_token_indices and pass through the model
+        # To accommodate this, if we identify that the current_position is not at the end of the completed
+        # token array, we only update the start_idx and current_position, leaving the token array alone.
+        if self._active_idx < self._end_idx:
+            self._start_idx = self._active_idx
+            self._active_idx = self._end_idx
+            return
+
+        # Update tokens and log probabilities data
+        self._upsize()
+        self.tokens[self._active_idx] = new_token
+        if log_probabilities:
+            self._log_probabilities_data[self._active_idx] = log_probabilities
+
+        # Bump Indices
+        self._start_idx = self._active_idx
+        self._active_idx += 1
+        self._end_idx += 1
+
+        if self._is_eos(new_token):
+            self.status = GenerationStatus.END_OF_SEQUENCE
+        elif self.current_position >= self.max_length:
+            self.status = GenerationStatus.MAXIMUM_LENGTH
+            # We must return the last token that fits in max length.
+            self._completion_end_idx += 1
+
+        if self.status == GenerationStatus.ACTIVE:
+            self._completion_end_idx += 1
+
+        # Accept the token, and move the FSM for constrained decoding forward.
+        if self.matcher:
+            assert self.matcher.consume_token(new_token)
+
+        self._is_initial_prompt = False
+
+    def jump_ahead(self, new_token: int) -> None:
+        """Updates the token array, while ensuring the new token is returned to the user."""
+        self._upsize()
+
+        # Update tokens
+        self.tokens[self._active_idx] = new_token
+
+        # Bump Indices
+        self._active_idx += 1
+        self._end_idx += 1
+
+        if self._is_eos(new_token):
+            self.status = GenerationStatus.END_OF_SEQUENCE
+
+        if self.status == GenerationStatus.ACTIVE:
+            self._completion_end_idx += 1
+
+        # Accept the token, and move the FSM for constrained decoding forward.
+        if self.matcher:
+            assert self.matcher.consume_token(new_token)
+
+        self._is_initial_prompt = False
+
+    def reset(self) -> None:
+        """Resets the context's state by combining all tokens into a new prompt."""
+        self._start_idx = 0
+        self._prompt_len = self._active_idx
+
+        self._is_initial_prompt = True
+
+    def compute_num_available_steps(
+        self,
+        max_seq_len: int,
+    ) -> int:
+        """Compute the max number of steps we can execute for a given context
+        without exceeding the max_seq_len."""
+        return max_seq_len - (self.current_length - self.active_length)
+
+    @property
+    def needs_ce(self) -> bool:
+        """Returns whether this context needs context encoding (CE).
+
+        CE mode indicates that the context has additional prompt tokens to encode.
+
+        Returns:
+            bool: True if the context needs CE, False otherwise.
+        """
+        return self._start_idx < self._prompt_len
+
+    @property
+    def is_initial_prompt(self) -> bool:
+        """Returns true if the context has not been updated with tokens."""
+        return self._is_initial_prompt
