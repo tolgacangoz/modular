@@ -34,14 +34,17 @@ from max.interfaces import (
     Request,
     TextGenerationOutput,
     TextGenerationRequest,
+    PixelGenerationRequest,
+    PixelGenerationOutput,
 )
-from max.pipelines.core import TextAndVisionContext, TextContext, TTSContext
+from max.pipelines.core import TextAndVisionContext, TextContext, TTSContext, PixelContext
 from max.profiler import Tracer
 from max.serve.pipelines.stop_detection import StopDetector
 from max.serve.queue.lora_queue import LoRAQueue
 from max.serve.scheduler.queues import EngineQueue, SchedulerZmqConfigs
 from max.serve.telemetry.metrics import METRICS
 from max.serve.telemetry.stopwatch import StopWatch, record_ms
+from max.serve.pipelines.llm import BasePipeline
 from typing_extensions import Self
 
 if sys.version_info < (3, 11):
@@ -95,6 +98,21 @@ class PixelGeneratorPipeline(
                     context.request_id, context
                 ):
                     assert isinstance(response, PixelGenerationOutput)
+
+                    # Postprocess image: normalize [-1,1] → [0,1] and transpose NCHW → NHWC
+                    # This is analogous to tokenizer.decode() in text generation
+                    if response.pixel_data is not None and response.pixel_data.size > 0:
+                        image_np = response.pixel_data
+                        image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
+                        image_np = image_np.transpose(0, 2, 3, 1)  # NCHW → NHWC
+                        # Create new output with processed image
+                        response = PixelGenerationOutput(
+                            pixel_data=image_np,
+                            metadata=response.metadata,
+                            steps_executed=response.steps_executed,
+                            final_status=response.final_status,
+                        )
+
                     yield response
         finally:
             if self.debug_logging:

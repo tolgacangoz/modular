@@ -596,7 +596,6 @@ class OpenAIPixelResponseGenerator:
         )
         return response
 
-    # TODO: Move this before the PixelGeneratorPipeline.next_chunk's yielding
     def _encode_image_to_base64(self, image_array: np.ndarray) -> str:
         """Encode a numpy image array to base64 PNG string."""
         from io import BytesIO

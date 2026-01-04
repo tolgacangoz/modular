@@ -197,15 +197,14 @@ class PixelGenerationPipeline(
                 context.status = GenerationStatus.END_OF_SEQUENCE
 
                 # Convert driver tensor to numpy array
+                # Raw output is in [-1, 1] range with NCHW format
+                # Postprocessing (normalization + transpose) happens in serve pipeline
                 image_np = model_outputs.hidden_states.to_numpy()
-                # TODO: Move this before the PixelGeneratorPipeline.next_chunk's yielding
-                image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
-                image_np = image_np.transpose(0, 2, 3, 1)
 
                 results[request_id] = PixelGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
                     steps_executed=context.num_inference_steps,
-                    image_data=image_np,
+                    pixel_data=image_np,
                 )
 
         return results
