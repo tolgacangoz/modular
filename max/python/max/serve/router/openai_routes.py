@@ -568,22 +568,21 @@ class OpenAIPixelResponseGenerator:
         self.pipeline = pipeline
 
     async def generate_images(
-        self, request: PixelGenerationContext
+        self, requests: list[PixelGenerationRequest]
     ) -> ImagesResponse:
-        self.logger.debug("Image generation: Start: %s", request)
-        output = await self.pipeline.generate_full_image(request)
-
+        self.logger.debug("Image generation: Start: %s", requests[0])
+        output = await self.pipeline.generate_full_image(requests[0])
+        assert output.pixel_data is not None
         # Convert numpy image data to base64-encoded PNG
         images_data: list[Image] = []
 
-        if output.image_data.size > 0:
-            image_array = output.image_data
+        if output.pixel_data.size > 0:
+            image_array = output.pixel_data
 
             # Handle different number of images (batch dimension)
             if len(image_array.shape) == 4:
                 # Batch of images: (N, H, W, C)
-                for i in range(image_array.shape[0]):
-                    img_data = image_array[i]
+                for img_data in image_array:
                     img_b64 = self._encode_image_to_base64(img_data)
                     images_data.append(Image(b64_json=img_b64))
             else:
@@ -597,13 +596,14 @@ class OpenAIPixelResponseGenerator:
         )
         return response
 
+    # TODO: Move this before the PixelGeneratorPipeline.next_chunk's yielding
     def _encode_image_to_base64(self, image_array: np.ndarray) -> str:
         """Encode a numpy image array to base64 PNG string."""
         from io import BytesIO
 
         from PIL import Image as PILImage
 
-        # Normalize to [0, 255] if needed
+        # Denormalize to [0, 255] if needed
         if image_array.max() <= 1.0:
             image_array = (image_array * 255).astype(np.uint8)
         else:
@@ -618,9 +618,20 @@ class OpenAIPixelResponseGenerator:
         return base64.b64encode(buffer.read()).decode("utf-8")
 
     async def generate_videos(
-        self, request: "VideoGenerationRequest"
+        self, requests: list["VideoGenerationRequest"]
     ) -> "VideosResponse":
         raise("Not implemented yet!")
+        self.logger.debug("Video generation: Start: %s", requests[0])
+        output = await self.pipeline.generate_full_video(requests[0])
+        assert output.pixel_data is not None
+
+    async def stream_video(
+        self, request: "VideoGenerationRequest"
+    ) -> AsyncGenerator[str | ErrorResponse | JSONResponse, None]:
+        raise("Not implemented yet!")
+        self.logger.debug("Streaming: Start: %s", request)
+        record_request_start()
+        request_timer = StopWatch(start_ns=request.timestamp_ns)
 
 
 async def openai_parse_chat_completion_request(

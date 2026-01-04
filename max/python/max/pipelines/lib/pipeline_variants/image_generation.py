@@ -198,6 +198,7 @@ class PixelGenerationPipeline(
 
                 # Convert driver tensor to numpy array
                 image_np = model_outputs.hidden_states.to_numpy()
+                # TODO: Move this before the PixelGeneratorPipeline.next_chunk's yielding
                 image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
                 image_np = image_np.transpose(0, 2, 3, 1)
 
