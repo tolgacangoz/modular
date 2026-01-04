@@ -10,10 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""Image generation interface definitions for Modular's MAX API.
+"""Pixel generation interface definitions for Modular's MAX API.
 
-This module provides data structures and interfaces for handling image generation
-responses, including status tracking and image data encapsulation.
+This module provides data structures and interfaces for handling pixel generation
+responses, including status tracking and pixel data encapsulation.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ from typing_extensions import TypeVar
 
 
 @dataclass(frozen=True)
-class ImageGenerationRequest(Request):
+class PixelGenerationRequest(Request):
     model: str = field()
     """
-    The name of the model to be used for generating images. This should match
+    The name of the model to be used for generating pixels. This should match
     the available models on the server and determines the behavior and
     capabilities of the response generation.
     """
@@ -76,14 +76,14 @@ class ImageGenerationRequest(Request):
             raise RuntimeError("prompt must be provided.")
 
 
-class ImageGenerationMetadata(
+class PixelGenerationMetadata(
     msgspec.Struct, tag=True, omit_defaults=True, kw_only=True
 ):
     """
     Represents metadata associated with image generation.
 
     This class will eventually replace the metadata dictionary used throughout
-    the ImageGenerationOutput object, providing a structured and type-safe
+    the PixelGenerationOutput object, providing a structured and type-safe
     alternative for image generation metadata.
 
     Configuration:
@@ -108,8 +108,8 @@ class ImageGenerationMetadata(
         return result
 
 
-ImageGenerationContextType = TypeVar(
-    "ImageGenerationContextType", bound=BaseContext
+PixelGenerationContextType = TypeVar(
+    "PixelGenerationContextType", bound=BaseContext
 )
 """Type variable for image generation context types.
 
@@ -121,7 +121,7 @@ and maintain the required interface for image generation operations.
 
 
 @dataclass
-class ImageGenerationContext:
+class PixelGenerationContext:
     """Context for image generation requests.
 
     This is a simple context that implements BaseContext protocol for diffusion
@@ -202,8 +202,8 @@ class ImageGenerationContext:
 
 
 @dataclass(frozen=True)
-class ImageGenerationInputs(
-    PipelineInputs, Generic[ImageGenerationContextType]
+class PixelGenerationInputs(
+    PipelineInputs, Generic[PixelGenerationContextType]
 ):
     """Input data structure for image generation pipelines.
 
@@ -212,15 +212,15 @@ class ImageGenerationInputs(
     generic support for different image generation context types.
     """
 
-    batch: dict[RequestID, ImageGenerationContextType]
-    """A dictionary mapping RequestID to ImageGenerationContextType instances.
+    batch: dict[RequestID, PixelGenerationContextType]
+    """A dictionary mapping RequestID to PixelGenerationContextType instances.
     This batch structure allows for processing multiple image generation
     requests simultaneously while maintaining request-specific context
     and configuration data.
     """
 
 
-class ImageGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
+class PixelGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
     """Represents a response from the image generation API.
 
     This class encapsulates the result of an image generation request, including
@@ -235,8 +235,8 @@ class ImageGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
         default_factory=lambda: np.array([], dtype=np.float32)
     )
     """The generated image data, if available."""
-    metadata: ImageGenerationMetadata = msgspec.field(
-        default_factory=ImageGenerationMetadata
+    metadata: PixelGenerationMetadata = msgspec.field(
+        default_factory=PixelGenerationMetadata
     )
     """Metadata associated with the image generation, such as chunk information, prompt details, or other relevant context."""
 
@@ -251,6 +251,6 @@ class ImageGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
 
 
 def _check_image_generator_output_implements_pipeline_output(
-    x: ImageGenerationOutput,
+    x: PixelGenerationOutput,
 ) -> PipelineOutput:
     return x

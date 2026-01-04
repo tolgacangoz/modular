@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
-"""MAX pipeline for model inference and generation (Image Generation variant)."""
+"""MAX pipeline for model inference and generation (Pixel Generation variant)."""
 
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ import numpy.typing as npt
 from max.driver import load_devices
 from max.graph.weights import WeightsAdapter, WeightsFormat
 from max.interfaces import (
-    ImageGenerationContextType,
-    ImageGenerationInputs,
-    ImageGenerationOutput,
-    ImageGenerationRequest,
+    PixelGenerationContextType,
+    PixelGenerationInputs,
+    PixelGenerationOutput,
+    PixelGenerationRequest,
     Pipeline,
     PipelineOutputsDict,
     PipelineTokenizer,
@@ -43,9 +43,9 @@ from ..interfaces import PipelineModel
 logger = logging.getLogger("max.pipelines")
 
 
-class ImageGenerationPipeline(
+class PixelGenerationPipeline(
     Pipeline[
-        ImageGenerationInputs[ImageGenerationContextType], ImageGenerationOutput
+        PixelGenerationInputs[PixelGenerationContextType], PixelGenerationOutput
     ],
 ):
     """Pipeline for diffusion-based image generation models."""
@@ -53,13 +53,13 @@ class ImageGenerationPipeline(
     def __init__(
         self,
         pipeline_config: PipelineConfig,
-        pipeline_model: type[PipelineModel[ImageGenerationContextType]],
+        pipeline_model: type[PipelineModel[PixelGenerationContextType]],
         eos_token_id: int,
         weight_adapters: dict[WeightsFormat, WeightsAdapter],
         tokenizer: PipelineTokenizer[
-            ImageGenerationContextType,
+            PixelGenerationContextType,
             npt.NDArray[np.integer[Any]],
-            ImageGenerationRequest,
+            PixelGenerationRequest,
         ],
     ) -> None:
         """Initialize an image generation pipeline instance.
@@ -142,9 +142,9 @@ class ImageGenerationPipeline(
     def tokenizer(
         self,
     ) -> PipelineTokenizer[
-        ImageGenerationContextType,
+        PixelGenerationContextType,
         npt.NDArray[np.integer[Any]],
-        ImageGenerationRequest,
+        PixelGenerationRequest,
     ]:
         """Return the tokenizer used for building contexts."""
         return self._tokenizer
@@ -156,8 +156,8 @@ class ImageGenerationPipeline(
 
     def execute(
         self,
-        inputs: ImageGenerationInputs[ImageGenerationContextType],
-    ) -> PipelineOutputsDict[ImageGenerationOutput]:
+        inputs: PixelGenerationInputs[PixelGenerationContextType],
+    ) -> PipelineOutputsDict[PixelGenerationOutput]:
         """Execute the image generation pipeline.
 
         For diffusion models, this runs the full denoising loop and returns
@@ -174,7 +174,7 @@ class ImageGenerationPipeline(
             ZImageInputs,
         )
 
-        results: dict[RequestID, ImageGenerationOutput] = {}
+        results: dict[RequestID, PixelGenerationOutput] = {}
 
         # Flatten batches
         for batch in inputs.batches:
@@ -201,7 +201,7 @@ class ImageGenerationPipeline(
                 image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
                 image_np = image_np.transpose(0, 2, 3, 1)
 
-                results[request_id] = ImageGenerationOutput(
+                results[request_id] = PixelGenerationOutput(
                     final_status=GenerationStatus.END_OF_SEQUENCE,
                     steps_executed=context.num_inference_steps,
                     image_data=image_np,

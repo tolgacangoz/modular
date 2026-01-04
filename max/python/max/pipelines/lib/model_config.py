@@ -140,6 +140,9 @@ class MAXModelConfig(MAXModelConfigBase):
     _huggingface_config: AutoConfig | None = None
     """Hugging Face config. This should only be set by internal code."""
 
+    _diffusers_repo_config: DiffusersRepoConfig = None
+    """Diffusers repo config (parsed from model_index.json). This should only be set by internal code."""
+
     _weights_repo_id: str | None = None
     """Hugging Face repo id to load weights from only. This should only be set by internal code."""
 
@@ -168,27 +171,31 @@ class MAXModelConfig(MAXModelConfigBase):
         self.model = ""
 
     def __getstate__(self) -> dict[str, Any]:
-        """Customize pickling to avoid serializing non-picklable HF config.
+        """Customize pickling to avoid serializing non-picklable configs.
 
-        Drops `_huggingface_config` from the serialized state to ensure
-        the object remains pickleable across processes; it will be
-        lazily re-initialized on access via the `huggingface_config` property.
+        Drops `_huggingface_config` and `_diffusers_repo_config` from the
+        serialized state to ensure the object remains pickleable across
+        processes; they will be lazily re-initialized on access.
         """
         state = self.__dict__.copy()
-        # Do not serialize potentially non-picklable HF configs
+        # Do not serialize potentially non-picklable configs
         if "_huggingface_config" in state:
             state["_huggingface_config"] = None
+        if "_diffusers_repo_config" in state:
+            state["_diffusers_repo_config"] = None
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state while ensuring `_huggingface_config` is reset.
+        """Restore state while ensuring lazy-loaded configs are reset.
 
-        `_huggingface_config` is restored as None to preserve the lazy
-        loading behavior defined in `huggingface_config`.
+        `_huggingface_config` and `_diffusers_repo_config` are restored as
+        None to preserve the lazy loading behavior.
         """
         self.__dict__.update(state)
         if "_huggingface_config" not in self.__dict__:
             self._huggingface_config = None
+        if "_diffusers_repo_config" not in self.__dict__:
+            self._diffusers_repo_config = None
 
     # TODO(zheng): This can't just be a __post_init__ method, because we need to
     # it also sets and updates other fields which may not be determined /
@@ -372,6 +379,38 @@ class MAXModelConfig(MAXModelConfigBase):
                 )
             )
         return self._huggingface_config
+
+    @property
+    def diffusers_config(self) -> Any:
+        """Lazy-load diffusers config from model_index.json.
+
+        Returns:
+            DiffusersRepoConfig if this is a diffusers-style model, else None.
+        """
+        if self._diffusers_repo_config is None:
+            # Try local path
+            model_path = Path(self.model_path)
+            if (model_path / "model_index.json").exists():
+                from .diffusers_config import DiffusersRepoConfig
+                try:
+                    self._diffusers_repo_config = DiffusersRepoConfig.from_model_path(model_path)
+                except Exception:
+                    pass
+            # Try HuggingFace
+            elif "/" in self.model_path:
+                try:
+                    from .diffusers_config import DiffusersRepoConfig
+                    self._diffusers_repo_config = DiffusersRepoConfig.from_huggingface_repo(
+                        self.model_path, revision=self.huggingface_model_revision
+                    )
+                except Exception:
+                    pass
+        return self._diffusers_repo_config
+
+    @property
+    def is_diffusers_model(self) -> bool:
+        """Check if this is a diffusers-style model (has model_index.json)."""
+        return self.diffusers_config is not None
 
     @cached_property
     def generation_config(self) -> GenerationConfig:

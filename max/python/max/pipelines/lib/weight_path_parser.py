@@ -149,3 +149,111 @@ class WeightPathParser:
             raise ValueError(error_message)
 
         return path, None
+
+
+    @staticmethod
+    def parse_diffusers_component(
+        model_path: str,
+        component_name: str,
+        subfolder: str | None = None,
+    ) -> tuple[list[Path], str | None]:
+        """Parse weight paths for a specific diffusers pipeline component.
+
+        Diffusers pipelines organize weights in subfolders (e.g., vae/, transformer/).
+        This method handles locating and returning weight paths for a single component.
+
+        Args:
+            model_path: Root model path - can be a HuggingFace repo ID or local directory.
+            component_name: Component name from model_index.json (e.g., "vae", "transformer").
+            subfolder: Optional explicit subfolder override. Defaults to component_name.
+
+        Returns:
+            A tuple of (weight_paths, weights_repo_id):
+            - weight_paths: List of Path objects pointing to weight files
+            - weights_repo_id: HuggingFace repo ID if weights are remote, else None
+
+        Examples:
+            >>> WeightPathParser.parse_diffusers_component(
+            ...     "black-forest-labs/FLUX.1-dev", "vae"
+            ... )
+            ([Path("diffusion_pytorch_model.safetensors")], "black-forest-labs/FLUX.1-dev")
+
+            >>> WeightPathParser.parse_diffusers_component(
+            ...     "/local/path/to/model", "transformer"
+            ... )
+            ([Path("/local/path/to/model/transformer/diffusion_pytorch_model.safetensors")], None)
+        """
+        component_subfolder = subfolder or component_name
+        model_path_obj = Path(model_path)
+
+        # Check if it's a local directory
+        if model_path_obj.exists() and model_path_obj.is_dir():
+            component_dir = model_path_obj / component_subfolder
+
+            if not component_dir.exists():
+                logger.warning(
+                    f"Component subfolder not found: {component_dir}"
+                )
+                return [], None
+
+            # Collect safetensor files (preferred) or pytorch files
+            safetensor_files = sorted(component_dir.glob("*.safetensors"))
+            if safetensor_files:
+                return safetensor_files, None
+
+            pytorch_files = sorted(component_dir.glob("*.bin"))
+            if pytorch_files:
+                return pytorch_files, None
+
+            logger.warning(f"No weight files found in {component_dir}")
+            return [], None
+
+        # Assume it's a HuggingFace repo ID
+        # Return relative paths - actual downloading happens elsewhere
+        weight_files = []
+        hf_repo_id = model_path
+
+        # Common diffusers weight file patterns
+        common_patterns = [
+            f"{component_subfolder}/diffusion_pytorch_model.safetensors",
+            f"{component_subfolder}/model.safetensors",
+            f"{component_subfolder}/pytorch_model.bin",
+        ]
+
+        # For sharded weights, we'd need to check model.safetensors.index.json
+        # For now, return the common single-file pattern
+        # The actual resolution happens at load time via huggingface_hub
+
+        for pattern in common_patterns:
+            # Use the first pattern as the expected file
+            weight_files.append(Path(pattern))
+            break
+
+        return weight_files, hf_repo_id
+
+    @staticmethod
+    def is_diffusers_repo(model_path: str) -> bool:
+        """Check if a model path points to a diffusers-style repository.
+
+        Args:
+            model_path: Path to check (local directory or HF repo ID).
+
+        Returns:
+            True if the path contains a model_index.json file.
+        """
+        model_path_obj = Path(model_path)
+
+        # Local directory check
+        if model_path_obj.exists() and model_path_obj.is_dir():
+            return (model_path_obj / "model_index.json").exists()
+
+        # For HF repos, we'd need to make a network call
+        # Return False for now - actual check should use huggingface_hub.file_exists
+        if "/" in model_path:
+            try:
+                return huggingface_hub.file_exists(model_path, "model_index.json")
+            except Exception:
+                return False
+
+        return False
+

@@ -22,6 +22,7 @@ from max.interfaces import PipelineTask
 from max.pipelines import (
     PIPELINE_REGISTRY,
     AudioGenerationConfig,
+    PixelGenerationConfig,
     PipelineConfig,
 )
 from max.profiler import Tracer
@@ -58,6 +59,10 @@ def serve_api_server_and_model_worker(
     if pipeline_task == PipelineTask.AUDIO_GENERATION:
         assert isinstance(pipeline_config, AudioGenerationConfig)
         override_architecture = pipeline_config.audio_decoder
+
+    if pipeline_task == PipelineTask.PIXEL_GENERATION:
+        assert isinstance(pipeline_config, PixelGenerationConfig)
+        override_architecture = pipeline_config._diffusers_repo_config.pipeline_class
 
     # Load tokenizer and pipeline from PIPELINE_REGISTRY.
     tokenizer, pipeline_factory = PIPELINE_REGISTRY.retrieve_factory(

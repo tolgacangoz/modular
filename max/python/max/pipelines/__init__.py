@@ -18,6 +18,7 @@ from .core import TextAndVisionContext, TextContext, TTSContext
 from .lib.config import (
     AudioGenerationConfig,
     PipelineConfig,
+    PixelGenerationConfig,
     PrependPromptSpeechTokens,
     PrometheusMetricsMode,
 )
@@ -39,8 +40,7 @@ from .lib.kv_cache_config import KVCacheConfig
 from .lib.lora import ADAPTER_CONFIG_FILE
 from .lib.memory_estimation import MemoryEstimator
 from .lib.model_config import MAXModelConfig
-from .lib.pipeline_variants.image_generation import ImageGenerationPipeline
-from .lib.pipeline_variants.text_generation import TextGenerationPipeline
+from .lib.pipeline_variants import TextGenerationPipeline, PixelGenerationPipeline
 from .lib.profiling_config import ProfilingConfig
 from .lib.registry import PIPELINE_REGISTRY, SupportedArchitecture
 from .lib.sampling.sampling_config import SamplingConfig
@@ -64,9 +64,10 @@ __all__ = [
     "EmbeddingsPipelineType",
     "GenerateMixin",
     "IdentityPipelineTokenizer",
-    "ImageGenerationPipeline",
+    "PixelGenerationPipeline",
     "KVCacheConfig",
     "MAXModelConfig",
+    "PixelGenerationConfig",
     "MemoryEstimator",
     "ModelInputs",
     "ModelOutputs",

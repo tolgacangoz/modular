@@ -359,7 +359,7 @@ class ZImageModel(
 
     @property
     def image_pipeline(self) -> ZImageModel:
-        """Returns self for ImageGeneratorPipeline compatibility."""
+        """Returns self for PixelGeneratorPipeline compatibility."""
         return self
 
     @classmethod

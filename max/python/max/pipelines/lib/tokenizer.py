@@ -28,6 +28,8 @@ import numpy.typing as npt
 from max.interfaces import (
     ImageMetadata,
     PipelineTokenizer,
+    PixelGenerationContext,
+    PixelGenerationRequest,
     TextGenerationRequest,
     TextGenerationRequestMessage,
     TextGenerationRequestTool,
@@ -885,3 +887,184 @@ def _convert_image_mode(image: Image.Image, to_mode: str):  # noqa: ANN202
         return _rgba_to_rgb(image)
     else:
         return image.convert(to_mode)
+
+
+class PixelGenerationTextTokenizer(
+    PipelineTokenizer[
+        PixelContext,
+        npt.NDArray[np.integer[Any]],
+        PixelGenerationRequest,
+    ]
+):
+    """Tokenizer for diffusers text encoders with dual encoder support.
+
+    This tokenizer handles both single and dual text encoder models:
+    - Single encoder: T5/UMT5 for models like Wan
+    - Dual encoder: CLIP + T5 for models like Flux
+    - NOTE: Stable Diffusion 3 has three and HiDream-I1 has 4 text encoders and tokenizers,
+    - but they are uncommon
+
+    Args:
+        model_path: Path to the diffusers model (HF repo or local path)
+        revision: Git revision/branch to use
+        max_length: Maximum sequence length for primary tokenizer (default 512 for T5/UMT5)
+        trust_remote_code: Whether to trust remote code from the model
+        pipeline_config: Optional pipeline configuration for accessing diffusers config
+    """
+
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        revision: str | None = None,
+        max_length: int = 512,
+        trust_remote_code: bool = False,
+        pipeline_config: "PipelineConfig | None" = None,
+        **unused_kwargs,
+    ) -> None:
+        self.model_path = model_path
+        self.max_length = max_length
+
+        # Determine tokenizer subfolders from diffusers config
+        primary_subfolder = "tokenizer"
+        secondary_subfolder: str | None = None
+
+        if pipeline_config and hasattr(pipeline_config, "model_config"):
+            model_config = pipeline_config.model_config
+            if hasattr(model_config, "diffusers_config") and model_config.diffusers_config:
+                diffusers_cfg = model_config.diffusers_config
+                if hasattr(diffusers_cfg, "components"):
+                    if "tokenizer" in diffusers_cfg.components:
+                        primary_subfolder = str(diffusers_cfg.components["tokenizer"].subfolder)
+                    if "tokenizer_2" in diffusers_cfg.components:
+                        secondary_subfolder = str(diffusers_cfg.components["tokenizer_2"].subfolder)
+
+        # Primary tokenizer (T5/UMT5 for T2I, or first text encoder)
+        try:
+            self.delegate = AutoTokenizer.from_pretrained(
+                model_path,
+                subfolder=primary_subfolder,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                model_max_length=max_length,
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load primary tokenizer from {model_path}/{primary_subfolder}. "
+                f"Error: {e}"
+            ) from e
+
+        # Secondary tokenizer (CLIP for dual-encoder models like Flux, optional)
+        self.delegate_2: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
+        if secondary_subfolder:
+            try:
+                self.delegate_2 = AutoTokenizer.from_pretrained(
+                    model_path,
+                    subfolder=secondary_subfolder,
+                    revision=revision,
+                    trust_remote_code=trust_remote_code,
+                )
+            except Exception:
+                # Secondary tokenizer is optional
+                logger.debug(
+                    f"Could not load secondary tokenizer from {model_path}/{secondary_subfolder}"
+                )
+
+    @property
+    def eos(self) -> int:
+        """The end of sequence token for the primary tokenizer."""
+        return self.delegate.eos_token_id or 0
+
+    @property
+    def expects_content_wrapping(self) -> bool:
+        """Pixel generation does not use content wrapping."""
+        return False
+
+    async def encode(
+        self, prompt: str, add_special_tokens: bool = True
+    ) -> npt.NDArray[np.integer[Any]]:
+        """Encode text with the primary tokenizer (T5/UMT5).
+
+        Args:
+            prompt: Text to encode
+            add_special_tokens: Whether to add special tokens
+
+        Returns:
+            Encoded token IDs as numpy array
+        """
+        encoded = await run_with_default_executor(
+            functools.partial(
+                self.delegate.encode,
+                prompt,
+                max_length=self.max_length,
+                truncation=True,
+                add_special_tokens=add_special_tokens,
+            )
+        )
+        return np.array(encoded)
+
+    async def encode_secondary(
+        self, prompt: str, add_special_tokens: bool = True
+    ) -> npt.NDArray[np.integer[Any]] | None:
+        """Encode text with the secondary tokenizer (CLIP for dual-encoder models).
+
+        Args:
+            prompt: Text to encode
+            add_special_tokens: Whether to add special tokens
+
+        Returns:
+            Encoded token IDs as numpy array, or None if no secondary tokenizer
+        """
+        if self.delegate_2 is None:
+            return None
+
+        max_len = getattr(self.delegate_2, "model_max_length", 77)
+        encoded = await run_with_default_executor(
+            functools.partial(
+                self.delegate_2.encode,
+                prompt,
+                max_length=max_len,
+                truncation=True,
+                add_special_tokens=add_special_tokens,
+            )
+        )
+        return np.array(encoded)
+
+    async def decode(
+        self, encoded: npt.NDArray[np.integer[Any]], **kwargs
+    ) -> str:
+        """Decode tokens back to text using the primary tokenizer.
+
+        Args:
+            encoded: Token IDs to decode
+
+        Returns:
+            Decoded text string
+        """
+        try:
+            return self.delegate.decode(encoded, **kwargs)
+        except OverflowError as e:
+            error_msg = _handle_decode_overflow(encoded, len(self.delegate))
+            raise OverflowError(error_msg) from e
+
+    async def new_context(self, request: PixelGenerationRequest) -> PixelGenerationContext:
+        """Create a new PixelGenerationContext from a PixelGenerationRequest.
+
+        Args:
+            request: PixelGenerationRequest instance
+
+        Returns:
+            PixelGenerationContext instance
+        """
+        return PixelGenerationContext(
+            request_id=request.request_id,
+            prompt=request.prompt,
+            max_length=self.max_length,
+            height=request.height,
+            width=request.width,
+            num_inference_steps=request.num_inference_steps,
+            guidance_scale=request.guidance_scale,
+            negative_prompt=request.negative_prompt,
+            num_images_per_prompt=request.num_images_per_prompt,
+            model_name=request.model,
+        )
