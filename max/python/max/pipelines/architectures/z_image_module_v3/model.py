@@ -532,6 +532,7 @@ class ZImageModel(
         self.transformer.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
+        print(self.model.vae.decoder.graph)
         before_vae_decode_build = time.perf_counter()
         compiled_vae_decoder_model = self.model.vae.decoder.compile(
             sample_type,
@@ -555,6 +556,7 @@ class ZImageModel(
 
         logger.info("Building and compiling the backbone transformer...")
         before_transformer_build = time.perf_counter()
+        print(self.model.transformer.graph)
         compiled_transformer_model = self.model.transformer.compile(
             hidden_states_type,
             t_type,
