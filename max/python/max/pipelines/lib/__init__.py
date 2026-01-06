@@ -30,7 +30,7 @@ from .config_enums import (
     RopeType,
     SupportedEncoding,
 )
-from .diffusers_config import DiffusersComponentConfig, DiffusersRepoConfig
+from .diffusers_config import DiffusersComponentConfig, DiffusersConfig
 from .embeddings_pipeline import EmbeddingsPipeline, EmbeddingsPipelineType
 from .float8 import parse_float8_config
 from .hf_utils import (
@@ -85,7 +85,7 @@ __all__ = [
     "AlwaysSignalBuffersMixin",
     "AudioGenerationConfig",
     "DiffusersComponentConfig",
-    "DiffusersRepoConfig",
+    "DiffusersConfig",
     "EAGLESpeculativeDecodingPipeline",
     "EmbeddingsPipeline",
     "EmbeddingsPipelineType",

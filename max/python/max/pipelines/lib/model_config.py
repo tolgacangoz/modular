@@ -140,7 +140,7 @@ class MAXModelConfig(MAXModelConfigBase):
     _huggingface_config: AutoConfig | None = None
     """Hugging Face config. This should only be set by internal code."""
 
-    _diffusers_repo_config: DiffusersRepoConfig = None
+    _diffusers_config: DiffusersConfig = None
     """Diffusers repo config (parsed from model_index.json). This should only be set by internal code."""
 
     _weights_repo_id: str | None = None
@@ -173,7 +173,7 @@ class MAXModelConfig(MAXModelConfigBase):
     def __getstate__(self) -> dict[str, Any]:
         """Customize pickling to avoid serializing non-picklable configs.
 
-        Drops `_huggingface_config` and `_diffusers_repo_config` from the
+        Drops `_huggingface_config` and `_diffusers_config` from the
         serialized state to ensure the object remains pickleable across
         processes; they will be lazily re-initialized on access.
         """
@@ -181,21 +181,21 @@ class MAXModelConfig(MAXModelConfigBase):
         # Do not serialize potentially non-picklable configs
         if "_huggingface_config" in state:
             state["_huggingface_config"] = None
-        if "_diffusers_repo_config" in state:
-            state["_diffusers_repo_config"] = None
+        if "_diffusers_config" in state:
+            state["_diffusers_config"] = None
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore state while ensuring lazy-loaded configs are reset.
 
-        `_huggingface_config` and `_diffusers_repo_config` are restored as
+        `_huggingface_config` and `_diffusers_config` are restored as
         None to preserve the lazy loading behavior.
         """
         self.__dict__.update(state)
         if "_huggingface_config" not in self.__dict__:
             self._huggingface_config = None
-        if "_diffusers_repo_config" not in self.__dict__:
-            self._diffusers_repo_config = None
+        if "_diffusers_config" not in self.__dict__:
+            self._diffusers_config = None
 
     # TODO(zheng): This can't just be a __post_init__ method, because we need to
     # it also sets and updates other fields which may not be determined /
@@ -385,27 +385,31 @@ class MAXModelConfig(MAXModelConfigBase):
         """Lazy-load diffusers config from model_index.json.
 
         Returns:
-            DiffusersRepoConfig if this is a diffusers-style model, else None.
+            DiffusersConfig if this is a diffusers-style model, else None.
         """
-        if self._diffusers_repo_config is None:
+        if self._diffusers_config is None:
+            from .diffusers_config import DiffusersConfig
             # Try local path
             model_path = Path(self.model_path)
             if (model_path / "model_index.json").exists():
-                from .diffusers_config import DiffusersRepoConfig
                 try:
-                    self._diffusers_repo_config = DiffusersRepoConfig.from_model_path(model_path)
+                    self._diffusers_config = DiffusersConfig.from_model_path(model_path)
+                    self.model_path = str(Path(self.model_path) / "text_encoder")
+                    self._huggingface_config = self.huggingface_config
+                    self.model_path = self.model_path.split("/")[:-1].merge()  # TODO
                 except Exception:
                     pass
             # Try HuggingFace
             elif "/" in self.model_path:
                 try:
-                    from .diffusers_config import DiffusersRepoConfig
-                    self._diffusers_repo_config = DiffusersRepoConfig.from_huggingface_repo(
+                    self._diffusers_config = DiffusersConfig.from_huggingface_repo(
                         self.model_path, revision=self.huggingface_model_revision
                     )
+                    # TODO
+                    self._huggingface_config = self.huggingface_config
                 except Exception:
                     pass
-        return self._diffusers_repo_config
+        return self._diffusers_config
 
     @property
     def is_diffusers_model(self) -> bool:

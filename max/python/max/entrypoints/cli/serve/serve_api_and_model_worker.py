@@ -62,7 +62,7 @@ def serve_api_server_and_model_worker(
 
     if pipeline_task == PipelineTask.PIXEL_GENERATION:
         assert isinstance(pipeline_config, PixelGenerationConfig)
-        override_architecture = pipeline_config._diffusers_repo_config.pipeline_class
+        override_architecture = pipeline_config._diffusers_config.pipeline_class
 
     # Load tokenizer and pipeline from PIPELINE_REGISTRY.
     tokenizer, pipeline_factory = PIPELINE_REGISTRY.retrieve_factory(

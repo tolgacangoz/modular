@@ -32,7 +32,7 @@ from max.graph.quantization import QuantizationEncoding
 from max.serve.queue.zmq_queue import generate_zmq_ipc_path
 
 from .config_enums import PipelineRole, PixelGenerationType
-from .diffusers_config import DiffusersRepoConfig
+from .diffusers_config import DiffusersConfig
 from .kv_cache_config import KVCacheConfig
 from .lora_config import LoRAConfig
 from .memory_estimation import MemoryEstimator, to_human_readable_bytes
@@ -1412,10 +1412,10 @@ class PixelGenerationConfig(PipelineConfig):
     """Optional negative prompt for classifier-free guidance."""
 
     # Spatial dimensions
-    height: int = 512
+    height: int = 1024
     """Output image/video height in pixels."""
 
-    width: int = 512
+    width: int = 1024
     """Output image/video width in pixels."""
 
     # Video-specific parameters (only used when generation_type.outputs_video)
@@ -1462,7 +1462,7 @@ class PixelGenerationConfig(PipelineConfig):
     """Optional scheduler override. Uses model default if not specified."""
 
     # Parsed diffusers repository config
-    _diffusers_repo_config: DiffusersRepoConfig | None = None
+    _diffusers_config: DiffusersConfig | None = None
     """Parsed model_index.json from a diffusers-style repository."""
 
     def __init__(
@@ -1471,8 +1471,8 @@ class PixelGenerationConfig(PipelineConfig):
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         negative_prompt: str | None = None,
-        height: int = 512,
-        width: int = 512,
+        height: int = 1024,
+        width: int = 1024,
         # Video params (optional)
         num_frames: int | None = None,
         fps: int | None = None,
@@ -1529,26 +1529,26 @@ class PixelGenerationConfig(PipelineConfig):
         # Check for local diffusers repo
         if model_path.exists() and (model_path / "model_index.json").exists():
             try:
-                self._diffusers_repo_config = DiffusersRepoConfig.from_model_path(
+                self._diffusers_config = DiffusersConfig.from_model_path(
                     model_path
                 )
                 logger.info(
-                    f"Parsed diffusers repo: {self._diffusers_repo_config.pipeline_class} "
-                    f"with components: {self._diffusers_repo_config.component_names}"
+                    f"Parsed diffusers repo: {self._diffusers_config.pipeline_class} "
+                    f"with components: {self._diffusers_config.component_names}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to parse diffusers repo: {e}")
         # Check if it's a HuggingFace repo ID
         elif "/" in self._model_config.model_path and not model_path.exists():
             try:
-                self._diffusers_repo_config = (
-                    DiffusersRepoConfig.from_huggingface_repo(
+                self._diffusers_config = (
+                    DiffusersConfig.from_huggingface_repo(
                         self._model_config.model_path
                     )
                 )
                 logger.info(
-                    f"Parsed diffusers repo from HF: {self._diffusers_repo_config.pipeline_class} "
-                    f"with components: {self._diffusers_repo_config.component_names}"
+                    f"Parsed diffusers repo from HF: {self._diffusers_config.pipeline_class} "
+                    f"with components: {self._diffusers_config.component_names}"
                 )
             except Exception as e:
                 logger.debug(
@@ -1606,9 +1606,9 @@ class PixelGenerationConfig(PipelineConfig):
         return self.generation_type.requires_input_image
 
     @property
-    def diffusers_repo_config(self) -> DiffusersRepoConfig | None:
+    def diffusers_repo_config(self) -> DiffusersConfig | None:
         """Get the parsed diffusers repository config."""
-        return self._diffusers_repo_config
+        return self._diffusers_config
 
     @staticmethod
     def help() -> dict[str, str]:

@@ -43,7 +43,7 @@ class PixelGenerationRequest(Request):
     """
     prompt: str | None = None
     """
-    The text to generate images for. The maximum length is 4096 characters.
+    The text to generate pixels for. The maximum length is 4096 characters.
     """
     negative_prompt: str | None = None
     """
@@ -57,7 +57,7 @@ class PixelGenerationRequest(Request):
     """
     image: bytes | None = None
     """
-    The prompt image to use for image generation.
+    The prompt image to use for pixel generation.
     """
     guidance_scale: float = 7.5
     """
@@ -65,11 +65,11 @@ class PixelGenerationRequest(Request):
     """
     height: int | None = 1024
     """
-    Height of generated image in pixels. Defaults to model's default (typically 1024).
+    Height of generated image/frame in pixels. Defaults to model's default (typically 1024).
     """
     width: int | None = 1024
     """
-    Width of generated image in pixels. Defaults to model's default (typically 1024).
+    Width of generated image/frame in pixels. Defaults to model's default (typically 1024).
     """
     num_inference_steps: int = 50
     """
@@ -132,26 +132,26 @@ PixelGenerationContextType = TypeVar(
 """Type variable for pixel generation context types.
 
 This type variable is bound to BaseContext and represents the specific context
-type used in image generation pipelines. It allows for type-safe generic
+type used in pixel generation pipelines. It allows for type-safe generic
 programming while ensuring that all context types inherit from BaseContext
-and maintain the required interface for image generation operations.
+and maintain the required interface for pixel generation operations.
 """
 
 
 @dataclass
 class PixelGenerationContext:
-    """Context for image generation requests.
+    """Context for pixel generation requests.
 
     This is a simple context that implements BaseContext protocol for diffusion
-    model pipelines. It includes fields for both image generation parameters
+    model pipelines. It includes fields for both pixel generation parameters
     and compatibility with the text generation scheduler.
 
     Attributes:
         request_id: Unique identifier for this request.
-        prompt: Text prompt for image generation.
+        prompt: Text prompt for pixel generation.
         max_length: Maximum sequence length for tokenization (required for msgspec).
-        height: Height of generated image in pixels.
-        width: Width of generated image in pixels.
+        height: Height of generated pixel in pixels.
+        width: Width of generated pixel in pixels.
         num_inference_steps: Number of denoising steps.
         guidance_scale: Classifier-free guidance scale (0 to disable CFG).
         negative_prompt: Negative prompt for what NOT to generate.

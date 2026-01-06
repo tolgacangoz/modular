@@ -65,10 +65,10 @@ from max.serve.config import Settings
 from max.serve.parser import LlamaToolParser, parse_json_from_text
 from max.serve.pipelines.llm import (
     AudioGeneratorPipeline,
-    PixelGeneratorPipeline,
     TokenGeneratorOutput,
     TokenGeneratorPipeline,
 )
+from max.serve.pipelines.pixel import PixelGeneratorPipeline
 from max.serve.schemas.openai import (
     ChatCompletionMessageToolCall,
     ChatCompletionResponseMessage,
@@ -1547,6 +1547,7 @@ async def openai_create_image(
             request_id=RequestID(request_id),
             model=image_request.model,
             prompt=image_request.prompt,
+            messages=image_request.messages,
             height=height,
             width=width,
             num_images_per_prompt=image_request.n,

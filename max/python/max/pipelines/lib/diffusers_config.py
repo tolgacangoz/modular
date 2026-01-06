@@ -43,6 +43,7 @@ from typing import Any
 
 import huggingface_hub
 from transformers import AutoConfig
+from .hf_utils import HuggingFaceRepo
 
 logger = logging.getLogger("max.pipelines")
 
@@ -73,7 +74,7 @@ class DiffusersComponentConfig:
     weight_paths: list[Path] = field(default_factory=list)
     """List of safetensor/pytorch weight files for this component."""
 
-    config_dict: dict[str, Any] = field(default_factory=dict)
+    config_dict: HuggingFaceRepo | dict[str, Any] = field(default_factory=dict)
     """Parsed contents of the component's config.json."""
 
     @classmethod
@@ -105,8 +106,12 @@ class DiffusersComponentConfig:
             if possible_config.exists():
                 config_path = possible_config
                 try:
-                    with open(config_path, "r", encoding="utf-8") as f:
-                        config_dict = json.load(f)
+                    if name == "text_encoder":
+                        # TODO: Build with HuggingFaceRepo class
+                        ...
+                    else:
+                        with open(config_path, "r", encoding="utf-8") as f:
+                            config_dict = json.load(f)
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
                         f"Failed to parse config for {name}: {e}"
@@ -143,7 +148,7 @@ class DiffusersComponentConfig:
 
 
 @dataclass
-class DiffusersRepoConfig:
+class DiffusersConfig:
     """Parsed representation of a diffusers repository's model_index.json.
 
     This class parses the model_index.json file and provides access to all
@@ -166,14 +171,14 @@ class DiffusersRepoConfig:
     """Raw contents of model_index.json."""
 
     @classmethod
-    def from_model_path(cls, model_path: str | Path) -> DiffusersRepoConfig:
+    def from_model_path(cls, model_path: str | Path) -> DiffusersConfig:
         """Parse a local diffusers repository.
 
         Args:
             model_path: Path to the root of the diffusers model repository.
 
         Returns:
-            A populated DiffusersRepoConfig.
+            A populated DiffusersConfig.
 
         Raises:
             FileNotFoundError: If model_index.json doesn't exist.
@@ -205,7 +210,7 @@ class DiffusersRepoConfig:
         revision: str | None = None,
         cache_dir: str | Path | None = None,
         token: str | None = None,
-    ) -> DiffusersRepoConfig:
+    ) -> DiffusersConfig:
         """Download and parse model_index.json from a HuggingFace repository.
 
         Args:
@@ -215,7 +220,7 @@ class DiffusersRepoConfig:
             token: HuggingFace API token for private repos.
 
         Returns:
-            A populated DiffusersRepoConfig.
+            A populated DiffusersConfig.
 
         Raises:
             EnvironmentError: If the repository or model_index.json cannot be found.
@@ -257,15 +262,15 @@ class DiffusersRepoConfig:
         cls,
         raw_config: dict[str, Any],
         model_path: Path,
-    ) -> DiffusersRepoConfig:
-        """Create a DiffusersRepoConfig from a parsed model_index.json dict.
+    ) -> DiffusersConfig:
+        """Create a DiffusersConfig from a parsed model_index.json dict.
 
         Args:
             raw_config: Parsed model_index.json contents.
             model_path: Root path of the model repository.
 
         Returns:
-            A populated DiffusersRepoConfig.
+            A populated DiffusersConfig.
         """
         pipeline_class = raw_config.get("_class_name", "Unknown")
         diffusers_version = raw_config.get("_diffusers_version", "Unknown")
@@ -364,7 +369,7 @@ class DiffusersRepoConfig:
 
     def __repr__(self) -> str:
         return (
-            f"DiffusersRepoConfig("
+            f"DiffusersConfig("
             f"pipeline_class={self.pipeline_class!r}, "
             f"components={list(self.components.keys())!r})"
         )

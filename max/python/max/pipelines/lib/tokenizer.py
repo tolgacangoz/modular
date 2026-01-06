@@ -490,7 +490,7 @@ class TextTokenizer(
         return eos_token_ids, eos_sequences
 
     async def new_context(self, request: TextGenerationRequest | PixelGenerationRequest) -> TextContext | PixelContext:
-        """Create a new TextContext object, leveraging necessary information from TextGenerationRequest."""
+        """Create a new TextContext or PixelContext object, leveraging necessary information from TextGenerationRequest or PixelGenerationRequest."""
         # Encode Prompt / Messages
         _prompt, token_ids = await self._generate_prompt_and_token_ids(
             prompt=request.prompt,
@@ -505,22 +505,22 @@ class TextTokenizer(
             else None
         )
 
-        eos_token_ids, eos_sequences = await self._get_eos_variables(
-            request.sampling_params.ignore_eos,
-            request.sampling_params.stop_token_ids,
-            request.sampling_params.stop,
-        )
-
-        # Calculate Max Length
-        max_new_tokens = None
-        if request.sampling_params.max_new_tokens is not None:
-            max_new_tokens = request.sampling_params.max_new_tokens
-
-        max_gen_tokens = max_tokens_to_generate(
-            len(token_ids), self.max_length, max_new_tokens
-        )
-
         if isinstance(request, TextGenerationRequest):
+            eos_token_ids, eos_sequences = await self._get_eos_variables(
+                request.sampling_params.ignore_eos,
+                request.sampling_params.stop_token_ids,
+                request.sampling_params.stop,
+            )
+
+            # Calculate Max Length
+            max_new_tokens = None
+            if request.sampling_params.max_new_tokens is not None:
+                max_new_tokens = request.sampling_params.max_new_tokens
+
+            max_gen_tokens = max_tokens_to_generate(
+                len(token_ids), self.max_length, max_new_tokens
+            )
+
             context = TextContext(
                 request_id=request.request_id,
                 eos_token_ids=eos_token_ids,
