@@ -30,6 +30,8 @@ from max.interfaces.request import Request, RequestID
 from max.interfaces.status import GenerationStatus
 from typing_extensions import TypeVar
 
+from .text_generation import TextGenerationRequestMessage, TextGenerationRequestTool
+
 
 @dataclass(frozen=True)
 class PixelGenerationRequest(Request):
@@ -46,6 +48,12 @@ class PixelGenerationRequest(Request):
     negative_prompt: str | None = None
     """
     Negative prompt to guide what NOT to generate.
+    """
+    messages: list[TextGenerationRequestMessage] | None = None
+    """
+    A list of messages for chat-based interactions. This is used in chat
+    completion APIs, where each message represents a turn in the conversation.
+    If provided, the model will generate responses based on these messages.
     """
     image: bytes | None = None
     """
@@ -71,6 +79,16 @@ class PixelGenerationRequest(Request):
     """
     Number of images to generate per prompt.
     """
+    chat_template_options: dict[str, Any] | None = None
+    """
+    Optional dictionary of options to pass when applying the chat template.
+    """
+    tools: list[TextGenerationRequestTool] | None = None
+    """
+    A list of tools that can be invoked during the generation process. This
+    allows the model to utilize external functionalities or APIs to enhance its
+    responses.
+    """
     def __post_init__(self) -> None:
         if self.prompt is None:
             raise RuntimeError("prompt must be provided.")
@@ -80,11 +98,11 @@ class PixelGenerationMetadata(
     msgspec.Struct, tag=True, omit_defaults=True, kw_only=True
 ):
     """
-    Represents metadata associated with image generation.
+    Represents metadata associated with pixel generation.
 
     This class will eventually replace the metadata dictionary used throughout
     the PixelGenerationOutput object, providing a structured and type-safe
-    alternative for image generation metadata.
+    alternative for pixel generation metadata.
 
     Configuration:
         model_name: Name of the model used for generation.
@@ -111,7 +129,7 @@ class PixelGenerationMetadata(
 PixelGenerationContextType = TypeVar(
     "PixelGenerationContextType", bound=BaseContext
 )
-"""Type variable for image generation context types.
+"""Type variable for pixel generation context types.
 
 This type variable is bound to BaseContext and represents the specific context
 type used in image generation pipelines. It allows for type-safe generic
@@ -250,7 +268,7 @@ class PixelGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
         return self.final_status.is_done
 
 
-def _check_image_generator_output_implements_pipeline_output(
+def _check_pixel_generator_output_implements_pipeline_output(
     x: PixelGenerationOutput,
 ) -> PipelineOutput:
     return x

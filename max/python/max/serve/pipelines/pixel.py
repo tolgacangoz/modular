@@ -81,10 +81,11 @@ class PixelGeneratorPipeline(
             with record_ms(METRICS.input_time):
                 # context = await self.tokenizer.new_context(request)
                 # For image generation, create context directly from request
-                # since Qwen-3-4B isn't working now.
-                context = PixelGenerationContext(
+                # since Qwen-3-4B haven't worked.
+                context = PixelContext(
                     request_id=request.request_id,
                     prompt=request.prompt,
+                    messages=request.messages,
                     height=request.height,
                     width=request.width,
                     num_inference_steps=request.num_inference_steps,
