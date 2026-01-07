@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from huggingface_hub import constants as hf_hub_constants
 from max.config import MAXConfig
@@ -40,6 +40,9 @@ from .hf_utils import (
 from .kv_cache_config import KVCacheConfig
 from .registry import PIPELINE_REGISTRY
 from .weight_path_parser import WeightPathParser
+
+if TYPE_CHECKING:
+    from .diffusers_config import DiffusersConfig
 
 logger = logging.getLogger("max.pipelines")
 
@@ -140,7 +143,7 @@ class MAXModelConfig(MAXModelConfigBase):
     _huggingface_config: AutoConfig | None = None
     """Hugging Face config. This should only be set by internal code."""
 
-    _diffusers_config: DiffusersConfig = None
+    _diffusers_config: DiffusersConfig | None = None
     """Diffusers repo config (parsed from model_index.json). This should only be set by internal code."""
 
     _weights_repo_id: str | None = None
