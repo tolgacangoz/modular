@@ -99,6 +99,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         mid_block_add_attention: bool = True,
     ):
         super().__init__()
+        print("[DEBUG AutoencoderKL] Starting init...")
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.down_block_types = down_block_types
@@ -117,6 +118,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         self.use_quant_conv = use_quant_conv
         self.use_post_quant_conv = use_post_quant_conv
         self.mid_block_add_attention = mid_block_add_attention
+        print("[DEBUG AutoencoderKL] Creating Encoder...")
         # pass init params to Encoder
         self.encoder = Encoder(
             in_channels=in_channels,
@@ -129,6 +131,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             double_z=True,
             mid_block_add_attention=mid_block_add_attention,
         )
+        print("[DEBUG AutoencoderKL] Encoder created. Creating Decoder...")
 
         # pass init params to Decoder
         self.decoder = Decoder(
@@ -141,6 +144,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             act_fn=act_fn,
             mid_block_add_attention=mid_block_add_attention,
         )
+        print("[DEBUG AutoencoderKL] Decoder created. Creating conv layers...")
 
         self.quant_conv = (
             Conv2d(2 * latent_channels, 2 * latent_channels, 1)
@@ -167,6 +171,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             sample_size / (2 ** (len(block_out_channels) - 1))
         )
         self.tile_overlap_factor = 0.25
+        print("[DEBUG AutoencoderKL] Init complete.")
 
     def _encode(self, x: Tensor) -> Tensor:
         _, _, height, width = x.shape
