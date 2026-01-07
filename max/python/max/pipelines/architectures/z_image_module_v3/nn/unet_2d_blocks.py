@@ -285,9 +285,11 @@ class DownEncoderBlock2D(nn.Module):
         add_downsample: bool = True,
         downsample_padding: int = 1,
     ):
+        print(f"[DEBUG DownEncoderBlock2D] Starting init (in={in_channels}, out={out_channels}, layers={num_layers})...")
         resnets = []
 
         for i in range(num_layers):
+            print(f"[DEBUG DownEncoderBlock2D] Creating resnet {i}...")
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
                 ResnetBlock2D(
@@ -303,10 +305,12 @@ class DownEncoderBlock2D(nn.Module):
                     pre_norm=resnet_pre_norm,
                 )
             )
+            print(f"[DEBUG DownEncoderBlock2D] resnet {i} created.")
 
         self.resnets = ModuleList(resnets)
 
         if add_downsample:
+            print("[DEBUG DownEncoderBlock2D] Creating downsamplers...")
             self.downsamplers = ModuleList(
                 [
                     Downsample2D(
@@ -318,8 +322,10 @@ class DownEncoderBlock2D(nn.Module):
                     )
                 ]
             )
+            print("[DEBUG DownEncoderBlock2D] downsamplers created.")
         else:
             self.downsamplers = None
+        print("[DEBUG DownEncoderBlock2D] Init complete.")
 
     def __call__(
         self, hidden_states: Tensor, temb: Tensor | None = None
