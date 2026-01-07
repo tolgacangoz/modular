@@ -31,7 +31,6 @@ from max.pipelines.lib import PIPELINE_REGISTRY, PipelineConfig
 from max.serve.config import APIType, MetricRecordingMethod, Settings
 from max.serve.pipelines.llm import (
     AudioGeneratorPipeline,
-    ImageGeneratorPipeline,
     TokenGeneratorPipeline,
 )
 from max.serve.pipelines.model_worker import start_model_worker

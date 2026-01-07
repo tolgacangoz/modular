@@ -19,7 +19,6 @@ import max.experimental.functional as F
 import max.nn.module_v3 as nn
 from max.driver import Device
 from max.dtype import DType
-from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.nn.attention.mask_config import MHAMaskVariant
 from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
@@ -120,10 +119,15 @@ class Conv2d(nn.Module):
         # The weights will be moved to GPU during .to(device) call
         # and overwritten by load_state_dict anyway.
         from max.driver import CPU
-        self.weight = Tensor.zeros(weight_shape, dtype=weight_dtype, device=CPU())
+
+        self.weight = Tensor.zeros(
+            weight_shape, dtype=weight_dtype, device=CPU()
+        )
 
         if bias:
-            self.bias = Tensor.zeros([out_channels], dtype=weight_dtype, device=CPU())
+            self.bias = Tensor.zeros(
+                [out_channels], dtype=weight_dtype, device=CPU()
+            )
         else:
             self.bias = None
 
@@ -211,7 +215,9 @@ class GroupNorm(nn.Module):
         eps: float = 1e-5,
         affine: bool = True,
     ):
-        print(f"[DEBUG GroupNorm] Starting init (groups={num_groups}, channels={num_channels})...")
+        print(
+            f"[DEBUG GroupNorm] Starting init (groups={num_groups}, channels={num_channels})..."
+        )
         self.num_groups = num_groups
         self.num_channels = num_channels
         self.eps = eps
@@ -221,10 +227,15 @@ class GroupNorm(nn.Module):
             # Use bfloat16 to match checkpoint weights
             # Create on CPU to avoid GPU resource accumulation during init
             from max.driver import CPU
+
             print("[DEBUG GroupNorm] Creating weight...")
-            self.weight = Tensor.ones([num_channels], dtype=DType.bfloat16, device=CPU())
+            self.weight = Tensor.ones(
+                [num_channels], dtype=DType.bfloat16, device=CPU()
+            )
             print("[DEBUG GroupNorm] Creating bias...")
-            self.bias = Tensor.zeros([num_channels], dtype=DType.bfloat16, device=CPU())
+            self.bias = Tensor.zeros(
+                [num_channels], dtype=DType.bfloat16, device=CPU()
+            )
         else:
             self.weight = None
             self.bias = None

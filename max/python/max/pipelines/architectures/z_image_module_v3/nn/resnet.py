@@ -93,7 +93,9 @@ class ResnetBlock2D(nn.Module):
         conv_shortcut_bias: bool = True,
         conv_2d_out_channels: int | None = None,
     ):
-        print(f"[DEBUG ResnetBlock2D] Starting init (in={in_channels}, out={out_channels})...")
+        print(
+            f"[DEBUG ResnetBlock2D] Starting init (in={in_channels}, out={out_channels})..."
+        )
         if time_embedding_norm == "ada_group":
             raise ValueError(
                 "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
@@ -151,7 +153,9 @@ class ResnetBlock2D(nn.Module):
         print("[DEBUG ResnetBlock2D] Creating dropout...")
         self.dropout = Dropout(dropout)
         conv_2d_out_channels = conv_2d_out_channels or out_channels
-        print(f"[DEBUG ResnetBlock2D] Creating conv2 ({out_channels}->{conv_2d_out_channels})...")
+        print(
+            f"[DEBUG ResnetBlock2D] Creating conv2 ({out_channels}->{conv_2d_out_channels})..."
+        )
         self.conv2 = Conv2d(
             out_channels,
             conv_2d_out_channels,

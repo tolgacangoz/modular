@@ -12,6 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 
 """Types to interface with ML pipelines such as text/token/pixel generation."""
+
 """Types to interface with ML pipelines such as text/token/image generation."""
 
 from .architectures import register_all_models

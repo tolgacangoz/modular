@@ -285,7 +285,9 @@ class DownEncoderBlock2D(nn.Module):
         add_downsample: bool = True,
         downsample_padding: int = 1,
     ):
-        print(f"[DEBUG DownEncoderBlock2D] Starting init (in={in_channels}, out={out_channels}, layers={num_layers})...")
+        print(
+            f"[DEBUG DownEncoderBlock2D] Starting init (in={in_channels}, out={out_channels}, layers={num_layers})..."
+        )
         resnets = []
 
         for i in range(num_layers):
