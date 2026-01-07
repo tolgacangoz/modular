@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from huggingface_hub import constants as hf_hub_constants
 from max.config import MAXConfig
@@ -37,12 +37,10 @@ from .hf_utils import (
     try_to_load_from_cache,
     validate_hf_repo_access,
 )
+from .diffusers_config import DiffusersConfig
 from .kv_cache_config import KVCacheConfig
 from .registry import PIPELINE_REGISTRY
 from .weight_path_parser import WeightPathParser
-
-if TYPE_CHECKING:
-    from .diffusers_config import DiffusersConfig
 
 logger = logging.getLogger("max.pipelines")
 
