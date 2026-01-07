@@ -210,6 +210,7 @@ class GroupNorm(nn.Module):
         eps: float = 1e-5,
         affine: bool = True,
     ):
+        print(f"[DEBUG GroupNorm] Starting init (groups={num_groups}, channels={num_channels})...")
         self.num_groups = num_groups
         self.num_channels = num_channels
         self.eps = eps
@@ -217,11 +218,14 @@ class GroupNorm(nn.Module):
 
         if affine:
             # Use bfloat16 to match checkpoint weights
+            print("[DEBUG GroupNorm] Creating weight...")
             self.weight = Tensor.ones([num_channels], dtype=DType.bfloat16)
+            print("[DEBUG GroupNorm] Creating bias...")
             self.bias = Tensor.zeros([num_channels], dtype=DType.bfloat16)
         else:
             self.weight = None
             self.bias = None
+        print("[DEBUG GroupNorm] Init complete.")
 
     def __call__(self, input: Tensor) -> Tensor:
         # Input: (N, C, H, W)
