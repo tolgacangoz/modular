@@ -464,7 +464,9 @@ class ZImageModel(
         # Instantiate ZImage container to build sub-models
         # Pass device for RoPE embedding precomputation on GPU
         device0 = self.devices[0]
+        print(f"[DEBUG] Creating ZImage model container on device: {device0}")
         nn_model: Module = ZImage(self.model_config, device=device0)
+        print("[DEBUG] ZImage model container created successfully")
 
         # graph_inputs = nn_model.text_encoder.input_types(
         #     nn_model.text_encoder.kv_params
@@ -507,9 +509,11 @@ class ZImageModel(
         nn_model.transformer.to(self.devices[0])
         nn_model.vae.to(self.devices[0])
 
+        print("[DEBUG] About to compile VAE decoder...")
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
         compiled_vae_decoder_model = nn_model.vae.decoder.compile(sample_type)
+        print("[DEBUG] VAE decoder compilation finished")
         after_vae_decode_build = time.perf_counter()
         logger.info(
             f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
@@ -526,6 +530,7 @@ class ZImageModel(
             DType.bfloat16, shape=(cap_seq_len, 2560), device=device_ref
         )
 
+        print("[DEBUG] About to compile backbone transformer...")
         logger.info("Building and compiling the backbone transformer...")
         before_transformer_build = time.perf_counter()
         compiled_transformer_model = nn_model.transformer.compile(
@@ -533,6 +538,7 @@ class ZImageModel(
             t_type,
             cap_feats_type,
         )
+        print("[DEBUG] Backbone transformer compilation finished")
         after_transformer_build = time.perf_counter()
         logger.info(
             f"Building and compiling the backbone transformer took {after_transformer_build - before_transformer_build:.6f} seconds"
