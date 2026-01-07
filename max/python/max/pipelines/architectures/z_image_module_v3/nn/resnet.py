@@ -148,9 +148,10 @@ class ResnetBlock2D(nn.Module):
             affine=True,
         )
 
-        print("[DEBUG ResnetBlock2D] Creating dropout and conv2...")
+        print("[DEBUG ResnetBlock2D] Creating dropout...")
         self.dropout = Dropout(dropout)
         conv_2d_out_channels = conv_2d_out_channels or out_channels
+        print(f"[DEBUG ResnetBlock2D] Creating conv2 ({out_channels}->{conv_2d_out_channels})...")
         self.conv2 = Conv2d(
             out_channels,
             conv_2d_out_channels,
@@ -158,6 +159,7 @@ class ResnetBlock2D(nn.Module):
             stride=1,
             padding=1,
         )
+        print("[DEBUG ResnetBlock2D] conv2 created.")
 
         print("[DEBUG ResnetBlock2D] Creating nonlinearity...")
         self.nonlinearity = get_activation(non_linearity)
