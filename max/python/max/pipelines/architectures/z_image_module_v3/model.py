@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import inspect
-import json
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -103,6 +102,9 @@ class ZImageInputs(ModelInputs):
     """ The prompt or prompts not to guide the image generation. If not defined, one has to pass
     `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
     less than `1`)."""
+
+    token_ids: list[int] | None = None
+    """ Tokenized prompt IDs from TextTokenizer. Used for text encoder input."""
 
     num_images_per_prompt: int | None = 1
     """ The number of images to generate per prompt."""
@@ -264,10 +266,6 @@ class ZImageModel(
         devices: list[Device],
         kv_cache_config: KVCacheConfig,
         weights: Weights,
-        scheduler_config: SchedulerConfig,
-        vae_config: VAEConfig,
-        text_encoder_config: AutoConfig,
-        transformer_config: TransformerConfig,
         adapter: WeightsAdapter | None = None,
         return_logits: ReturnLogits = ReturnLogits.LAST_TOKEN,
     ) -> None:
@@ -281,74 +279,44 @@ class ZImageModel(
             weights,
             adapter,
             return_logits,
-            scheduler_config,
-            vae_config,
-            text_encoder_config,
-            transformer_config,
         )
 
-        # For Z-Image, the Hugging Face repository is a diffusers pipeline with
-        # separate subfolders for scheduler, VAE, transformer, and text_encoder.
-        # The base PipelineModel only knows about the main huggingface_config
-        # (the text encoder). Here we explicitly load the configs for the
-        # scheduler, VAE, and transformer components so ZImageConfig.generate
-        # can build the full MAX configuration.
-
+        # Use DiffusersConfig for component configs - already parsed in MAXModelConfig
         model_config = self.pipeline_config.model_config
-        repo_id = model_config.model_path
-        model_revision = model_config.huggingface_model_revision
-        trust_remote_code = model_config.trust_remote_code
+        diffusers_config = model_config.diffusers_config
 
-        # Scheduler config is a diffusers-style `scheduler_config.json` that is
-        # not a standard Transformers model config (no `model_type` field).
-        # Load it directly as JSON and wrap it in a SimpleNamespace so
-        # SchedulerConfig.generate can access attributes.
-        from huggingface_hub import hf_hub_download
+        if diffusers_config is None:
+            raise ValueError(
+                f"Model '{model_config.model_path}' does not appear to be a diffusers-style model. "
+                "Expected model_index.json in the repository."
+            )
 
-        scheduler_config_path = hf_hub_download(
-            repo_id,
-            filename="scheduler/scheduler_config.json",
-            revision=model_revision,
-        )
-        with open(scheduler_config_path, encoding="utf-8") as f:
-            scheduler_dict = json.load(f)
-        self.scheduler_config = SimpleNamespace(**scheduler_dict)
+        # Get component configs from DiffusersConfig
+        # These are already parsed from the component config.json files
+        scheduler_component = diffusers_config.get_component("scheduler")
+        vae_component = diffusers_config.get_component("vae")
+        transformer_component = diffusers_config.get_component("transformer")
 
-        # VAE and transformer are also diffusers components with their own
-        # `config.json` files that are not standard Transformers model configs
-        # (no `model_type`). Load them similarly via JSON.
-        vae_config_path = hf_hub_download(
-            repo_id,
-            filename="vae/config.json",
-            revision=model_revision,
-        )
-        with open(vae_config_path, encoding="utf-8") as f:
-            vae_dict = json.load(f)
-        self.vae_config = SimpleNamespace(**vae_dict)
+        if scheduler_component is None:
+            raise ValueError("Scheduler component not found in diffusers config")
+        if vae_component is None:
+            raise ValueError("VAE component not found in diffusers config")
+        if transformer_component is None:
+            raise ValueError("Transformer component not found in diffusers config")
 
-        self.text_encoder_config = AutoConfig.from_pretrained(
-            repo_id,
-            subfolder="text_encoder",
-            revision=model_revision,
-            trust_remote_code=trust_remote_code,
-        )
+        # Wrap config dicts in SimpleNamespace for attribute access
+        self.scheduler_config = SimpleNamespace(**scheduler_component.config_dict)
+        self.vae_config = SimpleNamespace(**vae_component.config_dict)
+        self.transformer_config = SimpleNamespace(**transformer_component.config_dict)
 
-        transformer_config_path = hf_hub_download(
-            repo_id,
-            filename="transformer/config.json",
-            revision=model_revision,
-        )
-        with open(transformer_config_path, encoding="utf-8") as f:
-            transformer_dict = json.load(f)
-        self.transformer_config = SimpleNamespace(**transformer_dict)
+        # Text encoder config uses standard HuggingFace AutoConfig
+        # Already available via model_config.huggingface_config (which returns text_encoder config for diffusers)
+        self.text_encoder_config = model_config.huggingface_config
 
         self.model_config = None
         self._session = session  # Reuse for on-device casts
 
-        self.scheduler = None
-        self.vae.decoder, self.text_encoder, self.transformer = self.load_model(
-            session
-        )
+        self.model = self.load_model(session)
 
         self.vae_scale_factor = 2 ** (
             len(self.model_config.vae_config.block_out_channels) - 1
@@ -488,12 +456,12 @@ class ZImageModel(
         # Instantiate ZImage container to build sub-models
         # Pass device for RoPE embedding precomputation on GPU
         device0 = self.devices[0]
-        self.model: Module = ZImage(self.model_config, device=device0)
+        nn_model: Module = ZImage(self.model_config, device=device0)
 
-        graph_inputs = self.model.text_encoder.input_types(
-            self.model.text_encoder.kv_params
+        graph_inputs = nn_model.text_encoder.input_types(
+            nn_model.text_encoder.kv_params
         )
-        # self.model.text_encoder.load_state_dict(
+        # nn_model.text_encoder.load_state_dict(
         #     text_encoder_llm_state_dict,
         #     override_quantization_encoding=True,
         #     weight_alignment=1,
@@ -507,7 +475,7 @@ class ZImageModel(
         # )
         device0 = self.devices[0]
 
-        self.model.to(device0)
+        nn_model.to(device0)
         device_ref = DeviceRef(device0.label, device0.id)
         sample_type = TensorType(
             DType.bfloat16, shape=(1, 16, 128, 128), device=device_ref
@@ -522,29 +490,18 @@ class ZImageModel(
             if key.startswith("decoder.")
         }
 
-        self.vae = self.model.vae
-        self.transformer = self.model.transformer
-        # Ensure decoder is set correctly for uncompiled use
-        self.vae.decoder = self.model.vae.decoder
-        self.scheduler = self.model.scheduler
-
         # Load weights into the models before compiling
         # (This works around an issue where compile(weights=...) doesn't load correctly)
-        self.model.transformer.load_state_dict(transformer_state_dict)
-        self.model.vae.decoder.load_state_dict(decoder_weights)
+        nn_model.transformer.load_state_dict(transformer_state_dict)
+        nn_model.vae.decoder.load_state_dict(decoder_weights)
 
         # Move to device for compilation
-        self.model.transformer.to(self.devices[0])
-        self.model.vae.decoder.to(self.devices[0])
-        self.model.vae.to(self.devices[0])
-        self.transformer.to(self.devices[0])
+        nn_model.transformer.to(self.devices[0])
+        nn_model.vae.to(self.devices[0])
 
         logger.info("Building and compiling VAE's decoder...")
         before_vae_decode_build = time.perf_counter()
-        compiled_vae_decoder_model = self.model.vae.decoder.compile(
-            sample_type,
-            # weights loaded via load_state_dict() above
-        )
+        compiled_vae_decoder_model = nn_model.vae.decoder.compile(sample_type)
         after_vae_decode_build = time.perf_counter()
         logger.info(
             f"Building and compiling VAE's decoder took {after_vae_decode_build - before_vae_decode_build:.6f} seconds"
@@ -563,11 +520,10 @@ class ZImageModel(
 
         logger.info("Building and compiling the backbone transformer...")
         before_transformer_build = time.perf_counter()
-        compiled_transformer_model = self.model.transformer.compile(
+        compiled_transformer_model = nn_model.transformer.compile(
             hidden_states_type,
             t_type,
             cap_feats_type,
-            # weights loaded via load_state_dict() above
         )
         after_transformer_build = time.perf_counter()
         logger.info(
@@ -588,6 +544,7 @@ class ZImageModel(
         #     text_encoder_graph,
         #     weights_registry=text_encoder_llm_state_dict,
         # )
+        # nn_model.text_encoder = compiled_text_encoder_model
         after = time.perf_counter()
 
         # logger.info(
@@ -596,11 +553,7 @@ class ZImageModel(
         logger.info(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
-        return (
-            compiled_vae_decoder_model,
-            None,  # compiled_text_encoder_model,
-            compiled_transformer_model,
-        )
+        return nn_model
 
     def _build_text_encoder_graph(
         self, graph_inputs: tuple[TensorType, ...]
@@ -630,7 +583,7 @@ class ZImageModel(
             )
             # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST returns
             # (logits, second_to_last_hidden_states) directly
-            outputs = self.text_encoder(
+            outputs = self.model.text_encoder(
                 tokens.tensor,
                 kv_collection,
                 return_n_logits.tensor,
@@ -721,7 +674,7 @@ class ZImageModel(
             text_input_ids = text_inputs.input_ids.to(device)
             prompt_masks = text_inputs.attention_mask.to(device).bool()
 
-        prompt_embeds = self.text_encoder(
+        prompt_embeds = self.model.text_encoder(
             input_ids=text_input_ids,
             attention_mask=prompt_masks,
             output_hidden_states=True,
@@ -913,7 +866,7 @@ class ZImageModel(
         )
 
         # 4. Prepare latent variables
-        num_channels_latents = self.transformer.in_channels
+        num_channels_latents = self.model.transformer.in_channels
 
         # Extract seed for reproducible latent generation
         seed = model_inputs.seed
@@ -950,15 +903,15 @@ class ZImageModel(
         # 5. Prepare timesteps
         mu = calculate_shift(
             image_seq_len,
-            self.scheduler.base_image_seq_len,
-            self.scheduler.max_image_seq_len,
-            self.scheduler.base_shift,
-            self.scheduler.max_shift,
+            self.model.scheduler.base_image_seq_len,
+            self.model.scheduler.max_image_seq_len,
+            self.model.scheduler.base_shift,
+            self.model.scheduler.max_shift,
         )
-        self.scheduler.sigma_min = 0.0
+        self.model.scheduler.sigma_min = 0.0
         scheduler_kwargs = {"mu": mu}
         timesteps, num_inference_steps = retrieve_timesteps(
-            self.scheduler,
+            self.model.scheduler,
             num_inference_steps,
             device,
             sigmas=sigmas,
@@ -966,13 +919,13 @@ class ZImageModel(
         )
         # Use Python int from retrieve_timesteps instead of tensor.shape to avoid sync
         num_warmup_steps = max(
-            num_inference_steps - num_inference_steps * self.scheduler.order,
+            num_inference_steps - num_inference_steps * self.model.scheduler.order,
             0,
         )
         self._num_timesteps = num_inference_steps
 
         # Pre-set step index to avoid expensive lookup on each step
-        self.scheduler._step_index = 0
+        self.model.scheduler._step_index = 0
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1020,7 +973,7 @@ class ZImageModel(
 
                 x_in = F.squeeze(latent_model_input, 0)
 
-                model_out = self.transformer(
+                model_out = self.model.transformer(
                     x_in,
                     timestep_model_input,
                     prompt_embeds_model_input,
@@ -1063,7 +1016,7 @@ class ZImageModel(
                 noise_pred = -F.squeeze(noise_pred, 2)
 
                 # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(
+                latents = self.model.scheduler.step(
                     noise_pred.cast(DType.float32),
                     t,
                     latents,
@@ -1088,7 +1041,7 @@ class ZImageModel(
                 # call the callback, if provided
                 if i == self._num_timesteps - 1 or (
                     (i + 1) > num_warmup_steps
-                    and (i + 1) % self.scheduler.order == 0
+                    and (i + 1) % self.model.scheduler.order == 0
                 ):
                     progress_bar.update()
 
@@ -1097,10 +1050,10 @@ class ZImageModel(
         else:
             latents = latents.cast(DType.bfloat16)
             latents = (
-                latents / self.vae.scaling_factor
-            ) + self.vae.shift_factor
+                latents / self.model.vae.scaling_factor
+            ) + self.model.vae.shift_factor
 
-            image = self.vae.decoder(latents)  # .sample
+            image = self.model.vae.decoder(latents)  # .sample
 
         # Offload all models
         # self.maybe_free_model_hooks()
@@ -1109,6 +1062,7 @@ class ZImageModel(
             hidden_states=cast(DriverTensor, image.driver_tensor), logits=None
         )
 
+    # TODO: Replace this with prepare_latents of diffusers
     def prepare_initial_token_inputs(
         self,
         replica_batches: Sequence[Sequence[TextContext]],

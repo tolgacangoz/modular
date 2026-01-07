@@ -548,6 +548,7 @@ class TextTokenizer(
                 negative_prompt=request.negative_prompt,
                 num_images_per_prompt=request.num_images_per_prompt,
                 model_name=request.model,
+                token_ids=prompt_token_ids,
             )
 
         for validator in self._context_validators:

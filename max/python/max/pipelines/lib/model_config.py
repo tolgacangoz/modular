@@ -369,15 +369,30 @@ class MAXModelConfig(MAXModelConfigBase):
 
     @property
     def huggingface_config(self) -> AutoConfig:
-        # Note: For multiprocessing, __getstate__ clears _huggingface_config
-        # before pickling. Each worker process will reload the config fresh,
-        # which properly handles trust_remote_code dynamic class loading.
+        """Get HuggingFace config - for diffusers models, returns text encoder config.
+
+        Note: For multiprocessing, __getstate__ clears _huggingface_config
+        before pickling. Each worker process will reload the config fresh,
+        which properly handles trust_remote_code dynamic class loading.
+        """
         if self._huggingface_config is None:
-            self._huggingface_config = (
-                PIPELINE_REGISTRY.get_active_huggingface_config(
-                    huggingface_repo=self.huggingface_model_repo
+            # For diffusers models, use text encoder's config via PIPELINE_REGISTRY
+            if self.is_diffusers_model:
+                text_encoder_repo = self.diffusers_config.text_encoder_repo
+                if text_encoder_repo is not None:
+                    self._huggingface_config = (
+                        PIPELINE_REGISTRY.get_active_huggingface_config(
+                            huggingface_repo=text_encoder_repo
+                        )
+                    )
+
+            # Fallback to standard model repo
+            if self._huggingface_config is None:
+                self._huggingface_config = (
+                    PIPELINE_REGISTRY.get_active_huggingface_config(
+                        huggingface_repo=self.huggingface_model_repo
+                    )
                 )
-            )
         return self._huggingface_config
 
     @property
@@ -394,9 +409,6 @@ class MAXModelConfig(MAXModelConfigBase):
             if (model_path / "model_index.json").exists():
                 try:
                     self._diffusers_config = DiffusersConfig.from_model_path(model_path)
-                    self.model_path = str(Path(self.model_path) / "text_encoder")
-                    self._huggingface_config = self.huggingface_config
-                    self.model_path = self.model_path.split("/")[:-1].merge()  # TODO
                 except Exception:
                     pass
             # Try HuggingFace
@@ -405,8 +417,6 @@ class MAXModelConfig(MAXModelConfigBase):
                     self._diffusers_config = DiffusersConfig.from_huggingface_repo(
                         self.model_path, revision=self.huggingface_model_revision
                     )
-                    # TODO
-                    self._huggingface_config = self.huggingface_config
                 except Exception:
                     pass
         return self._diffusers_config

@@ -101,17 +101,17 @@ class DiffusersComponentConfig:
         weight_paths = []
 
         if subfolder.exists() and subfolder.is_dir():
-            # Look for config file
+            # Look for config file - try config.json first, then scheduler_config.json
+            # (schedulers in diffusers use scheduler_config.json)
             possible_config = subfolder / "config.json"
+            if not possible_config.exists():
+                possible_config = subfolder / "scheduler_config.json"
+
             if possible_config.exists():
                 config_path = possible_config
                 try:
-                    if name == "text_encoder":
-                        # TODO: Build with HuggingFaceRepo class
-                        ...
-                    else:
-                        with open(config_path, "r", encoding="utf-8") as f:
-                            config_dict = json.load(f)
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config_dict = json.load(f)
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
                         f"Failed to parse config for {name}: {e}"
@@ -335,10 +335,64 @@ class DiffusersConfig:
             return []
         return component.weight_paths
 
+    def get_component_config(self, component_name: str) -> AutoConfig | None:
+        """Get the HuggingFace AutoConfig for a specific component.
+
+        Uses the same pattern as PIPELINE_REGISTRY.get_active_huggingface_config
+        but for component subfolders.
+
+        Args:
+            component_name: Name of the component (e.g., 'text_encoder').
+
+        Returns:
+            AutoConfig for the component, or None if not found.
+        """
+        component = self.get_component(component_name)
+        if component is None or component.config_path is None:
+            return None
+
+        try:
+            # Use same pattern as rest of codebase - AutoConfig.from_pretrained
+            # with the subfolder path (works for local repos)
+            return AutoConfig.from_pretrained(str(component.subfolder))
+        except Exception as e:
+            logger.warning(f"Failed to load config for {component_name}: {e}")
+            return None
+
+    def get_component_repo(self, component_name: str) -> HuggingFaceRepo | None:
+        """Get a HuggingFaceRepo for a specific component subfolder.
+
+        This allows using the standard Modular patterns for accessing
+        component configs and tokenizers via PIPELINE_REGISTRY.
+
+        Args:
+            component_name: Name of the component (e.g., 'text_encoder').
+
+        Returns:
+            HuggingFaceRepo pointing to the component subfolder, or None.
+        """
+        component = self.get_component(component_name)
+        if component is None:
+            return None
+
+        try:
+            return HuggingFaceRepo(
+                repo_id=str(component.subfolder),
+                trust_remote_code=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create repo for {component_name}: {e}")
+            return None
+
     @property
-    def get_config(self, component_name:str) -> AutoConfig:
-        if component_name == 'text_encoder':
-            return AutoConfig.from_pretrained(self.components['text_encoder'].config_path)
+    def text_encoder_config(self) -> AutoConfig | None:
+        """Convenience property to get text encoder's HuggingFace config."""
+        return self.get_component_config("text_encoder")
+
+    @property
+    def text_encoder_repo(self) -> HuggingFaceRepo | None:
+        """Convenience property to get HuggingFaceRepo for text encoder."""
+        return self.get_component_repo("text_encoder")
 
     @property
     def component_names(self) -> list[str]:
