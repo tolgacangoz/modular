@@ -419,11 +419,11 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         # Create Qwen3Config for the text encoder
         # Use ReturnHiddenStates.SECOND_TO_LAST to get hidden_states[-2]
         # (second-to-last layer) for Z-Image conditioning - matching diffusers behavior
-        from max.nn import ReturnHiddenStates
-
         # Disable prefix caching for diffusion model text encoders
         # since they don't use autoregressive KV caching
         from dataclasses import replace
+
+        from max.nn import ReturnHiddenStates
 
         text_encoder_kv_cache_config = replace(
             kv_cache_config,

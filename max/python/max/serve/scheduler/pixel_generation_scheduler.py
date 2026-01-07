@@ -54,7 +54,9 @@ class PixelGenerationScheduler(Scheduler):
     def __init__(
         self,
         scheduler_config: PixelGenerationSchedulerConfig,
-        pipeline: Pipeline[PixelGenerationInputs[PixelContext], PixelGenerationOutput],
+        pipeline: Pipeline[
+            PixelGenerationInputs[PixelContext], PixelGenerationOutput
+        ],
         request_queue: MAXPullQueue[PixelContext],
         response_queue: MAXPushQueue[
             dict[RequestID, SchedulerResult[PixelGenerationOutput]]
@@ -156,7 +158,9 @@ class PixelGenerationScheduler(Scheduler):
 
 
 def load_pixel_generation_scheduler(
-    pipeline: Pipeline[PixelGenerationInputs[PixelContext], PixelGenerationOutput],
+    pipeline: Pipeline[
+        PixelGenerationInputs[PixelContext], PixelGenerationOutput
+    ],
     pipeline_config: PipelineConfig,
     request_queue: MAXPullQueue[PixelContext],
     response_queue: MAXPushQueue[

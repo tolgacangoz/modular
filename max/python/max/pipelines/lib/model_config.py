@@ -32,12 +32,12 @@ from transformers import AutoConfig
 from transformers.generation import GenerationConfig
 
 from .config_enums import RepoType, RopeType, SupportedEncoding
+from .diffusers_config import DiffusersConfig
 from .hf_utils import (
     HuggingFaceRepo,
     try_to_load_from_cache,
     validate_hf_repo_access,
 )
-from .diffusers_config import DiffusersConfig
 from .kv_cache_config import KVCacheConfig
 from .registry import PIPELINE_REGISTRY
 from .weight_path_parser import WeightPathParser

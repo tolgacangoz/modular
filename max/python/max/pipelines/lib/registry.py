@@ -509,10 +509,8 @@ class PipelineRegistry:
 
         # Load HuggingFace Config (of the text encoder)
         if pipeline_config.model_config.is_diffusers_model:
-            huggingface_config = (
-                pipeline_config.model_config.diffusers_config.get_component_config(
-                    "text_encoder"
-                )
+            huggingface_config = pipeline_config.model_config.diffusers_config.get_component_config(
+                "text_encoder"
             )
         else:
             huggingface_config = pipeline_config.model_config.huggingface_config
