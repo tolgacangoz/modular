@@ -116,13 +116,14 @@ class Conv2d(nn.Module):
 
         # Weight shape: (out_channels, in_channels // groups, *kernel_size)
         weight_shape = [out_channels, in_channels // groups, *kernel_size]
-        # self.weight = random.normal(weight_shape, dtype=weight_dtype)
-        # Note: Using Tensor.zeros instead of random.normal to avoid GPU blocking
-        # The weights will be overwritten by load_state_dict anyway
-        self.weight = Tensor.zeros(weight_shape, dtype=weight_dtype)
+        # Create weight on CPU to avoid GPU resource accumulation during init.
+        # The weights will be moved to GPU during .to(device) call
+        # and overwritten by load_state_dict anyway.
+        from max.driver import CPU
+        self.weight = Tensor.zeros(weight_shape, dtype=weight_dtype, device=CPU())
 
         if bias:
-            self.bias = Tensor.zeros([out_channels], dtype=weight_dtype)
+            self.bias = Tensor.zeros([out_channels], dtype=weight_dtype, device=CPU())
         else:
             self.bias = None
 
@@ -218,10 +219,12 @@ class GroupNorm(nn.Module):
 
         if affine:
             # Use bfloat16 to match checkpoint weights
+            # Create on CPU to avoid GPU resource accumulation during init
+            from max.driver import CPU
             print("[DEBUG GroupNorm] Creating weight...")
-            self.weight = Tensor.ones([num_channels], dtype=DType.bfloat16)
+            self.weight = Tensor.ones([num_channels], dtype=DType.bfloat16, device=CPU())
             print("[DEBUG GroupNorm] Creating bias...")
-            self.bias = Tensor.zeros([num_channels], dtype=DType.bfloat16)
+            self.bias = Tensor.zeros([num_channels], dtype=DType.bfloat16, device=CPU())
         else:
             self.weight = None
             self.bias = None
