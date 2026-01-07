@@ -122,7 +122,7 @@ class ZImageSingleStreamAttention(nn.Module):
         key = self.to_k(hidden_states)
         value = self.to_v(hidden_states)
 
-        B, S, C = hidden_states.shape
+        B, S, _C = hidden_states.shape
 
         query = query.reshape((B, S, self.heads, self.head_dim))
         key = key.reshape((B, S, self.heads, self.head_dim))

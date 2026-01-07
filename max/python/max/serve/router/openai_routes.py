@@ -44,11 +44,11 @@ from httpx import AsyncClient
 from max.interfaces import (
     AudioGenerationRequest,
     GenerationStatus,
-    PixelGenerationRequest,
     LoRAOperation,
     LoRARequest,
     LoRAStatus,
     PipelineTokenizer,
+    PixelGenerationRequest,
     RequestID,
     SamplingParams,
     SamplingParamsInput,
@@ -184,9 +184,9 @@ def get_pipeline(
     request: Request, model_name: str
 ) -> TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline:
     app_state: State = request.app.state
-    pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-        app_state.pipeline
-    )
+    pipeline: (
+        TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline
+    ) = app_state.pipeline
 
     models = [pipeline.model_name]
 
@@ -617,17 +617,17 @@ class OpenAIPixelResponseGenerator:
         return base64.b64encode(buffer.read()).decode("utf-8")
 
     async def generate_videos(
-        self, requests: list["VideoGenerationRequest"]
-    ) -> "VideosResponse":
-        raise("Not implemented yet!")
+        self, requests: list[VideoGenerationRequest]
+    ) -> VideosResponse:
+        raise NotImplementedError("Not implemented yet!")
         self.logger.debug("Video generation: Start: %s", requests[0])
         output = await self.pipeline.generate_full_video(requests[0])
         assert output.pixel_data is not None
 
     async def stream_video(
-        self, request: "VideoGenerationRequest"
+        self, request: VideoGenerationRequest
     ) -> AsyncGenerator[str | ErrorResponse | JSONResponse, None]:
-        raise("Not implemented yet!")
+        raise NotImplementedError("Not implemented yet!")
         self.logger.debug("Streaming: Start: %s", request)
         record_request_start()
         request_timer = StopWatch(start_ns=request.timestamp_ns)
@@ -816,9 +816,11 @@ async def openai_create_chat_completion(
         completion_request = CreateChatCompletionRequest.model_validate_json(
             await request.body()
         )
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-            get_pipeline(request, completion_request.model)
-        )
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        ) = get_pipeline(request, completion_request.model)
         assert isinstance(pipeline, TokenGeneratorPipeline)
 
         logger.debug(
@@ -992,9 +994,11 @@ async def openai_create_embeddings(
         embeddings_request = CreateEmbeddingRequest.model_validate_json(
             await request.body()
         )
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-            get_pipeline(request, embeddings_request.model)
-        )
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        ) = get_pipeline(request, embeddings_request.model)
         assert isinstance(pipeline, TokenGeneratorPipeline)
 
         logger.debug(
@@ -1316,9 +1320,11 @@ async def openai_create_completion(
             await request.body()
         )
 
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-            get_pipeline(request, completion_request.model)
-        )
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        ) = get_pipeline(request, completion_request.model)
         assert isinstance(pipeline, TokenGeneratorPipeline)
 
         logger.debug(
@@ -1458,9 +1464,11 @@ async def create_streaming_audio_speech(
                 await request.body()
             )
         )
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-            get_pipeline(request, audio_generation_request.model)
-        )
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        ) = get_pipeline(request, audio_generation_request.model)
         assert isinstance(pipeline, AudioGeneratorPipeline)
         sampling_params = SamplingParams.from_input_and_generation_config(
             SamplingParamsInput(
@@ -1526,9 +1534,11 @@ async def openai_create_image(
         image_request = CreateImageRequest.model_validate_json(
             await request.body()
         )
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline = (
-            get_pipeline(request, completion_request.model)
-        )
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        ) = get_pipeline(request, completion_request.model)
         assert isinstance(pipeline, PixelGeneratorPipeline)
 
         logger.debug(

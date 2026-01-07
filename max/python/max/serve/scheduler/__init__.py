@@ -100,7 +100,9 @@ def load_scheduler(
         )
     elif pipeline.__class__.__name__ == "PixelGenerationPipeline":
         pixel_pipeline = cast(
-            Pipeline[PixelGenerationInputs[PixelContext], PixelGenerationOutput],
+            Pipeline[
+                PixelGenerationInputs[PixelContext], PixelGenerationOutput
+            ],
             pipeline,
         )
         return load_pixel_generation_scheduler(

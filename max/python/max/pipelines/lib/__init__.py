@@ -22,7 +22,7 @@ from max.config import (
 )
 
 from .bfloat16_utils import float32_to_bfloat16_as_uint16
-from .config import AudioGenerationConfig, PixelGenerationConfig, PipelineConfig
+from .config import AudioGenerationConfig, PipelineConfig, PixelGenerationConfig
 from .config_enums import (
     PipelineRole,
     PixelGenerationType,
@@ -91,7 +91,6 @@ __all__ = [
     "EmbeddingsPipelineType",
     "HuggingFaceRepo",
     "IdentityPipelineTokenizer",
-    "PixelGenerationPipeline",
     "KVCacheConfig",
     "KVCacheMixin",
     "LoRAConfig",
@@ -107,6 +106,7 @@ __all__ = [
     "PipelineModel",
     "PipelineRole",
     "PixelGenerationConfig",
+    "PixelGenerationPipeline",
     "PixelGenerationType",
     "PreTrainedPipelineTokenizer",
     "ProfilingConfig",

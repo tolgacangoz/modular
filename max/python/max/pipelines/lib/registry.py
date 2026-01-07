@@ -33,13 +33,13 @@ from max.interfaces import (
     Pipeline,
     PipelineTask,
     PipelineTokenizer,
+    PixelGenerationContext,
+    PixelGenerationRequest,
     TextGenerationContext,
     TextGenerationRequest,
-    PixelGenerationRequest,
-    PixelGenerationContext,
 )
 from max.nn.kv_cache import KVCacheStrategy
-from max.pipelines.core import TextAndVisionContext, TextContext, PixelContext
+from max.pipelines.core import PixelContext, TextAndVisionContext, TextContext
 from transformers import (
     AutoConfig,
     AutoTokenizer,
@@ -179,7 +179,11 @@ class SupportedArchitecture:
     default_weights_format: WeightsFormat
     """The weights format expected by the `pipeline_model`."""
 
-    context_type: type[TextGenerationContext] | type[EmbeddingsContext] | type[PixelGenerationContext]
+    context_type: (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[PixelGenerationContext]
+    )
     """The context class type that this architecture uses for managing request state and inputs.
 
     This should be a class (not an instance) that implements either the `TextGenerationContext`,
@@ -505,7 +509,11 @@ class PipelineRegistry:
 
         # Load HuggingFace Config (of the text encoder)
         if pipeline_config.model_config.is_diffusers_model:
-            huggingface_config = pipeline_config.model_config.diffusers_config.get_config('text_encoder')
+            huggingface_config = (
+                pipeline_config.model_config.diffusers_config.get_config(
+                    "text_encoder"
+                )
+            )
         else:
             huggingface_config = pipeline_config.model_config.huggingface_config
 
@@ -549,7 +557,11 @@ class PipelineRegistry:
         # Cast tokenizer to the proper type for text generation pipeline compatibility
         typed_tokenizer = cast(
             PipelineTokenizer[
-                Any, npt.NDArray[np.integer[Any]], TextGenerationRequest if not pipeline_config.model_config.is_diffusers_model else PixelGenerationRequest
+                Any,
+                npt.NDArray[np.integer[Any]],
+                TextGenerationRequest
+                if not pipeline_config.model_config.is_diffusers_model
+                else PixelGenerationRequest,
             ],
             tokenizer,
         )
@@ -593,7 +605,11 @@ class PipelineRegistry:
 
     def retrieve_context_type(
         self, pipeline_config: PipelineConfig
-    ) -> type[TextGenerationContext] | type[EmbeddingsContext] | type[PixelGenerationContext]:
+    ) -> (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[PixelGenerationContext]
+    ):
         """Retrieve the context class type associated with the architecture for the given pipeline configuration.
 
         The context type defines how the pipeline manages request state and inputs during

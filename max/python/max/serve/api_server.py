@@ -137,7 +137,11 @@ async def lifespan(
             serving_settings.pipeline_config.model_config.model_name
         )
 
-        pipeline: TokenGeneratorPipeline | AudioGeneratorPipeline | PixelGeneratorPipeline
+        pipeline: (
+            TokenGeneratorPipeline
+            | AudioGeneratorPipeline
+            | PixelGeneratorPipeline
+        )
         if serving_settings.pipeline_task in (
             PipelineTask.TEXT_GENERATION,
             PipelineTask.EMBEDDINGS_GENERATION,

@@ -43,6 +43,7 @@ from typing import Any
 
 import huggingface_hub
 from transformers import AutoConfig
+
 from .hf_utils import HuggingFaceRepo
 
 logger = logging.getLogger("max.pipelines")
@@ -110,12 +111,10 @@ class DiffusersComponentConfig:
             if possible_config.exists():
                 config_path = possible_config
                 try:
-                    with open(config_path, "r", encoding="utf-8") as f:
+                    with open(config_path, encoding="utf-8") as f:
                         config_dict = json.load(f)
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(
-                        f"Failed to parse config for {name}: {e}"
-                    )
+                    logger.warning(f"Failed to parse config for {name}: {e}")
 
             # Collect weight files (safetensors preferred, then pytorch)
             safetensor_files = list(subfolder.glob("*.safetensors"))
@@ -194,7 +193,7 @@ class DiffusersConfig:
             )
 
         try:
-            with open(model_index_path, "r", encoding="utf-8") as f:
+            with open(model_index_path, encoding="utf-8") as f:
                 raw_config = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(
@@ -235,12 +234,12 @@ class DiffusersConfig:
                 token=token,
             )
         except Exception as e:
-            raise EnvironmentError(
+            raise OSError(
                 f"Failed to download model_index.json from {repo_id}: {e}"
             ) from e
 
         # Parse the config
-        with open(model_index_file, "r", encoding="utf-8") as f:
+        with open(model_index_file, encoding="utf-8") as f:
             raw_config = json.load(f)
 
         # Determine the cache directory for this repo
@@ -402,9 +401,7 @@ class DiffusersConfig:
     @property
     def has_text_encoder(self) -> bool:
         """Whether this pipeline has a text encoder component."""
-        return any(
-            "text_encoder" in name for name in self.components.keys()
-        )
+        return any("text_encoder" in name for name in self.components)
 
     @property
     def has_vae(self) -> bool:

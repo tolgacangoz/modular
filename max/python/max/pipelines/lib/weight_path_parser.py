@@ -150,7 +150,6 @@ class WeightPathParser:
 
         return path, None
 
-
     @staticmethod
     def parse_diffusers_component(
         model_path: str,
@@ -251,9 +250,10 @@ class WeightPathParser:
         # Return False for now - actual check should use huggingface_hub.file_exists
         if "/" in model_path:
             try:
-                return huggingface_hub.file_exists(model_path, "model_index.json")
+                return huggingface_hub.file_exists(
+                    model_path, "model_index.json"
+                )
             except Exception:
                 return False
 
         return False
-

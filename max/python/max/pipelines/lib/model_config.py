@@ -404,18 +404,24 @@ class MAXModelConfig(MAXModelConfigBase):
         """
         if self._diffusers_config is None:
             from .diffusers_config import DiffusersConfig
+
             # Try local path
             model_path = Path(self.model_path)
             if (model_path / "model_index.json").exists():
                 try:
-                    self._diffusers_config = DiffusersConfig.from_model_path(model_path)
+                    self._diffusers_config = DiffusersConfig.from_model_path(
+                        model_path
+                    )
                 except Exception:
                     pass
             # Try HuggingFace
             elif "/" in self.model_path:
                 try:
-                    self._diffusers_config = DiffusersConfig.from_huggingface_repo(
-                        self.model_path, revision=self.huggingface_model_revision
+                    self._diffusers_config = (
+                        DiffusersConfig.from_huggingface_repo(
+                            self.model_path,
+                            revision=self.huggingface_model_revision,
+                        )
                     )
                 except Exception:
                     pass

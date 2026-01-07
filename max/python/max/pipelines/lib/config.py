@@ -1541,19 +1541,15 @@ class PixelGenerationConfig(PipelineConfig):
         # Check if it's a HuggingFace repo ID
         elif "/" in self._model_config.model_path and not model_path.exists():
             try:
-                self._diffusers_config = (
-                    DiffusersConfig.from_huggingface_repo(
-                        self._model_config.model_path
-                    )
+                self._diffusers_config = DiffusersConfig.from_huggingface_repo(
+                    self._model_config.model_path
                 )
                 logger.info(
                     f"Parsed diffusers repo from HF: {self._diffusers_config.pipeline_class} "
                     f"with components: {self._diffusers_config.component_names}"
                 )
             except Exception as e:
-                logger.debug(
-                    f"Model path is not a diffusers-style repo: {e}"
-                )
+                logger.debug(f"Model path is not a diffusers-style repo: {e}")
 
     def _validate_pixel_config(self) -> None:
         """Validate configuration based on generation type."""
@@ -1678,40 +1674,58 @@ class PixelGenerationConfig(PipelineConfig):
 
         # Video params (optional)
         num_frames_str = pixel_flags.pop("num_frames", None)
-        num_frames = _parse_flag_int(num_frames_str, "num_frames") if num_frames_str else None
+        num_frames = (
+            _parse_flag_int(num_frames_str, "num_frames")
+            if num_frames_str
+            else None
+        )
 
         fps_str = pixel_flags.pop("fps", None)
         fps = _parse_flag_int(fps_str, "fps") if fps_str else None
 
         num_videos_per_prompt = _parse_flag_int(
-            pixel_flags.pop("num_videos_per_prompt", "1"), "num_videos_per_prompt"
+            pixel_flags.pop("num_videos_per_prompt", "1"),
+            "num_videos_per_prompt",
         )
 
         motion_bucket_id_str = pixel_flags.pop("motion_bucket_id", None)
-        motion_bucket_id = _parse_flag_int(motion_bucket_id_str, "motion_bucket_id") if motion_bucket_id_str else None
+        motion_bucket_id = (
+            _parse_flag_int(motion_bucket_id_str, "motion_bucket_id")
+            if motion_bucket_id_str
+            else None
+        )
 
         guidance_scale_2_str = pixel_flags.pop("guidance_scale_2", None)
-        guidance_scale_2 = float(guidance_scale_2_str) if guidance_scale_2_str else None
+        guidance_scale_2 = (
+            float(guidance_scale_2_str) if guidance_scale_2_str else None
+        )
 
-        use_dynamic_cfg = pixel_flags.pop("use_dynamic_cfg", "false").lower() == "true"
+        use_dynamic_cfg = (
+            pixel_flags.pop("use_dynamic_cfg", "false").lower() == "true"
+        )
 
         # I2V params
         last_image = pixel_flags.pop("last_image", "false").lower() == "true"
 
         # V2V params
         video_strength_str = pixel_flags.pop("video_strength", None)
-        video_strength = float(video_strength_str) if video_strength_str else None
+        video_strength = (
+            float(video_strength_str) if video_strength_str else None
+        )
 
         # Image editing params
         true_cfg_scale_str = pixel_flags.pop("true_cfg_scale", None)
-        true_cfg_scale = float(true_cfg_scale_str) if true_cfg_scale_str else None
+        true_cfg_scale = (
+            float(true_cfg_scale_str) if true_cfg_scale_str else None
+        )
 
         # Conditioning params
         strength = float(pixel_flags.pop("strength", "0.8"))
 
         # Image params
         num_images_per_prompt = _parse_flag_int(
-            pixel_flags.pop("num_images_per_prompt", "1"), "num_images_per_prompt"
+            pixel_flags.pop("num_images_per_prompt", "1"),
+            "num_images_per_prompt",
         )
 
         scheduler_type = pixel_flags.pop("scheduler_type", None)
@@ -1744,5 +1758,3 @@ class PixelGenerationConfig(PipelineConfig):
             scheduler_type=scheduler_type,
             **config_flags,
         )
-
-

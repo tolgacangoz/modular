@@ -298,16 +298,24 @@ class ZImageModel(
         transformer_component = diffusers_config.get_component("transformer")
 
         if scheduler_component is None:
-            raise ValueError("Scheduler component not found in diffusers config")
+            raise ValueError(
+                "Scheduler component not found in diffusers config"
+            )
         if vae_component is None:
             raise ValueError("VAE component not found in diffusers config")
         if transformer_component is None:
-            raise ValueError("Transformer component not found in diffusers config")
+            raise ValueError(
+                "Transformer component not found in diffusers config"
+            )
 
         # Wrap config dicts in SimpleNamespace for attribute access
-        self.scheduler_config = SimpleNamespace(**scheduler_component.config_dict)
+        self.scheduler_config = SimpleNamespace(
+            **scheduler_component.config_dict
+        )
         self.vae_config = SimpleNamespace(**vae_component.config_dict)
-        self.transformer_config = SimpleNamespace(**transformer_component.config_dict)
+        self.transformer_config = SimpleNamespace(
+            **transformer_component.config_dict
+        )
 
         # Text encoder config uses standard HuggingFace AutoConfig
         # Already available via model_config.huggingface_config (which returns text_encoder config for diffusers)
@@ -919,7 +927,8 @@ class ZImageModel(
         )
         # Use Python int from retrieve_timesteps instead of tensor.shape to avoid sync
         num_warmup_steps = max(
-            num_inference_steps - num_inference_steps * self.model.scheduler.order,
+            num_inference_steps
+            - num_inference_steps * self.model.scheduler.order,
             0,
         )
         self._num_timesteps = num_inference_steps

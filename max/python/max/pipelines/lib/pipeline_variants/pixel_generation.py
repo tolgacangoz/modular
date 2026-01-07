@@ -23,13 +23,13 @@ import numpy.typing as npt
 from max.driver import load_devices
 from max.graph.weights import WeightsAdapter, WeightsFormat
 from max.interfaces import (
+    Pipeline,
+    PipelineOutputsDict,
+    PipelineTokenizer,
     PixelGenerationContextType,
     PixelGenerationInputs,
     PixelGenerationOutput,
     PixelGenerationRequest,
-    Pipeline,
-    PipelineOutputsDict,
-    PipelineTokenizer,
     RequestID,
 )
 

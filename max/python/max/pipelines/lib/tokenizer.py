@@ -33,7 +33,7 @@ from max.interfaces import (
     TextGenerationRequestMessage,
     TextGenerationRequestTool,
 )
-from max.pipelines.core import TextAndVisionContext, TextContext, PixelContext
+from max.pipelines.core import PixelContext, TextAndVisionContext, TextContext
 from max.support.image import find_contiguous_ranges, hash_image
 from PIL import Image
 from transformers import (
@@ -206,7 +206,9 @@ async def run_with_default_executor(
 
 class TextTokenizer(
     PipelineTokenizer[
-        TextContext | PixelContext, npt.NDArray[np.integer[Any]], TextGenerationRequest | PixelGenerationRequest
+        TextContext | PixelContext,
+        npt.NDArray[np.integer[Any]],
+        TextGenerationRequest | PixelGenerationRequest,
     ]
 ):
     """Encapsulates creation of TextContext or PixelContext and specific token encode/decode logic.
@@ -233,7 +235,8 @@ class TextTokenizer(
         enable_llama_whitespace_fix: bool = False,
         pipeline_config: PipelineConfig | None = None,
         chat_template: str | None = None,
-        context_validators: list[Callable[[TextContext | PixelContext], None]] | None = None,
+        context_validators: list[Callable[[TextContext | PixelContext], None]]
+        | None = None,
         subfolder: str | None = None,
         **unused_kwargs,
     ) -> None:
@@ -489,7 +492,9 @@ class TextTokenizer(
 
         return eos_token_ids, eos_sequences
 
-    async def new_context(self, request: TextGenerationRequest | PixelGenerationRequest) -> TextContext | PixelContext:
+    async def new_context(
+        self, request: TextGenerationRequest | PixelGenerationRequest
+    ) -> TextContext | PixelContext:
         """Create a new TextContext or PixelContext object, leveraging necessary information from TextGenerationRequest or PixelGenerationRequest."""
         # Encode Prompt / Messages
         _prompt, token_ids = await self._generate_prompt_and_token_ids(
@@ -537,18 +542,27 @@ class TextTokenizer(
                 target_endpoint=request.target_endpoint,
             )
         else:
+            # Tokenize negative prompt if provided
+            negative_tokens = np.array([], dtype=np.int64)
+            if request.negative_prompt:
+                negative_token_ids = self.delegate.encode(
+                    request.negative_prompt, add_special_tokens=True
+                )
+                negative_tokens = np.array(negative_token_ids, dtype=np.int64)
+
             context = PixelContext(
                 request_id=request.request_id,
                 prompt=request.prompt,
                 max_length=self.max_length,
-                height=request.height,
-                width=request.width,
-                num_inference_steps=request.num_inference_steps,
-                guidance_scale=request.guidance_scale,
+                tokens=np.array(token_ids, dtype=np.int64),
+                negative_tokens=negative_tokens,
+                height=request.height or 1024,
+                width=request.width or 1024,
+                num_inference_steps=request.num_inference_steps or 50,
+                guidance_scale=request.guidance_scale or 0.0,
                 negative_prompt=request.negative_prompt,
-                num_images_per_prompt=request.num_images_per_prompt,
-                model_name=request.model,
-                token_ids=prompt_token_ids,
+                num_images_per_prompt=request.num_images_per_prompt or 1,
+                model_name=request.model or "",
             )
 
         for validator in self._context_validators:
@@ -901,211 +915,3 @@ def _convert_image_mode(image: Image.Image, to_mode: str):  # noqa: ANN202
         return _rgba_to_rgb(image)
     else:
         return image.convert(to_mode)
-
-
-class PixelGenerationTextTokenizer(
-    PipelineTokenizer[
-        PixelContext,
-        npt.NDArray[np.integer[Any]],
-        PixelGenerationRequest,
-    ]
-):
-    """Tokenizer for diffusion models' text encoders with dual encoder support.
-
-    This tokenizer handles both single and dual text encoder models:
-    - Single encoder: T5/UMT5 for models like Wan
-    - Dual encoder: CLIP + T5 for models like Flux
-    - NOTE: Stable Diffusion 3 has three and HiDream-I1 has 4 text encoders and tokenizers,
-    - but they are uncommon
-
-    Args:
-        model_path: Path to the diffusers model (HF repo or local path)
-        revision: Git revision/branch to use
-        max_length: Maximum sequence length for primary tokenizer (default 512 for T5/UMT5)
-        trust_remote_code: Whether to trust remote code from the model
-        pipeline_config: Optional pipeline configuration for accessing diffusers config
-    """
-
-    def __init__(
-        self,
-        model_path: str,
-        *,
-        revision: str | None = None,
-        max_length: int | None = None,
-        trust_remote_code: bool = False,
-        pipeline_config: PipelineConfig | None = None,
-        context_validators: list[Callable[[PixelContext], None]] | None = None,
-        **unused_kwargs,
-    ) -> None:
-        self.model_path = model_path
-
-        # Determine tokenizer subfolders from diffusers config
-        primary_subfolder = "tokenizer"
-        secondary_subfolder: str | None = None
-
-        if pipeline_config and hasattr(pipeline_config, "model_config"):
-            model_config = pipeline_config.model_config
-            if hasattr(model_config, "diffusers_config") and model_config.diffusers_config:
-                diffusers_cfg = model_config.diffusers_config
-                if hasattr(diffusers_cfg, "components"):
-                    if "tokenizer" in diffusers_cfg.components:
-                        primary_subfolder = str(diffusers_cfg.components["tokenizer"].subfolder)
-                    if "tokenizer_2" in diffusers_cfg.components:
-                        secondary_subfolder = str(diffusers_cfg.components["tokenizer_2"].subfolder)
-
-        self.delegate = AutoTokenizer.from_pretrained(
-            model_path,
-            subfolder=primary_subfolder,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            # If `max_length` is None, the max length will be taken
-            # from the HuggingFace tokenizer_config.
-            model_max_length=max_length,
-        )
-
-        # Secondary tokenizer (optional)
-        self.delegate_2: PreTrainedTokenizer | PreTrainedTokenizerFast | None = None
-        if secondary_subfolder:
-            self.delegate_2 = AutoTokenizer.from_pretrained(
-                model_path,
-                subfolder=secondary_subfolder,
-                revision=revision,
-                trust_remote_code=trust_remote_code,
-            )
-        self.max_length = max_length or self.delegate.model_max_length
-
-        config = AutoConfig.from_pretrained(
-            model_path,
-            subfolder=secondary_subfolder,
-            revision=revision,
-            trust_remote_code=trust_remote_code
-        )
-
-    @property
-    def eos(self) -> int:
-        """The end of sequence token for the primary tokenizer."""
-        return self.delegate.eos_token_id or 0
-
-    @property
-    def expects_content_wrapping(self) -> bool:
-        """Pixel generation does not use content wrapping."""
-        return False
-
-    async def encode(
-        self, prompt: str, add_special_tokens: bool = True
-    ) -> npt.NDArray[np.integer[Any]]:
-        """Encode text with the primary tokenizer (T5/UMT5).
-
-        Args:
-            prompt: Text to encode
-            add_special_tokens: Whether to add special tokens
-
-        Returns:
-            Encoded token IDs as numpy array
-        """
-        encoded = await run_with_default_executor(
-            functools.partial(
-                self.delegate.encode,
-                prompt,
-                max_length=self.max_length,
-                truncation=True,
-                add_special_tokens=add_special_tokens,
-            )
-        )
-        return np.array(encoded)
-
-    def apply_chat_template(
-        self,
-        messages: list[TextGenerationRequestMessage],
-        tools: list[TextGenerationRequestTool] | None,
-        chat_template_options: dict[str, Any] | None = None,
-    ) -> str:
-        chat_template_options = chat_template_options or {
-            "add_generation_prompt": True
-        }
-
-        flattened_messages = self._flatten_text_generation_request_message(
-            messages
-        )
-
-        try:
-            templated_message = self.delegate.apply_chat_template(
-                flattened_messages,
-                tokenize=False,
-                tools=tools,
-                **chat_template_options,
-            )
-        except Exception as e:
-            if self._custom_template_provided:
-                # Provide additional context when a custom template is used
-                error_msg = (
-                    f"Failed to apply custom chat template. This may indicate an issue "
-                    f"with your custom prompt template. Please check your template syntax "
-                    f"and ensure it properly handles the provided messages and tools.\n\n"
-                    f"Template variables available:\n"
-                    f"- messages: List of conversation messages with 'role' and 'content' fields\n"
-                    f"- tools: List of available tools (if provided)\n"
-                    f"- add_generation_prompt: Boolean for adding generation prompt\n\n"
-                    f"Original error: {type(e).__name__}: {str(e)}"
-                )
-                raise ValueError(error_msg) from e
-            else:
-                # Re-raise the original error for default templates
-                raise
-
-        assert isinstance(templated_message, str)
-        return templated_message
-
-    async def _generate_prompt_and_token_ids(
-        self,
-        prompt: Sequence[int] | str | None,
-        chat_template_options: dict[str, Any] | None = None,
-    ) -> tuple[str | list[int], npt.NDArray[np.integer[Any]]]:
-        if prompt is not None and messages is not None:
-            raise ValueError("both prompt and messages cannot be provided.")
-
-        if isinstance(prompt, str):
-            return prompt, await self.encode(prompt, add_special_tokens=True)
-        elif isinstance(prompt, list):
-            return prompt, await self.encode(prompt, add_special_tokens=True)
-        elif isinstance(messages, list):
-            prompt = self.apply_chat_template(
-                messages, chat_template_options
-            )
-            return prompt, await self.encode(prompt, add_special_tokens=False)
-        else:
-            raise ValueError(
-                "either prompt must be provided as a list[int] or str, or messages must be provided as a list[TextGenerationRequestMessage]"
-            )
-
-    async def new_context(self, request: PixelGenerationRequest) -> PixelContext:
-        """Create a new PixelContext from a PixelGenerationRequest.
-
-        Args:
-            request: PixelGenerationRequest instance
-
-        Returns:
-            PixelContext instance
-        """
-        _prompt, token_ids = await self._generate_prompt_and_token_ids(
-            prompt=request.prompt,
-            chat_template_options=request.chat_template_options,
-        )
-
-        context = PixelContext(
-            request_id=request.request_id,
-            prompt=request.prompt,
-            max_length=self.max_length,
-            height=request.height,
-            width=request.width,
-            num_inference_steps=request.num_inference_steps,
-            guidance_scale=request.guidance_scale,
-            negative_prompt=request.negative_prompt,
-            num_images_per_prompt=request.num_images_per_prompt,
-            model_name=request.model,
-        )
-
-        for validator in self._context_validators:
-            validator(context)
-
-        return context

@@ -24,13 +24,16 @@ from typing import Generic
 import msgspec
 import numpy as np
 import numpy.typing as npt
-from max.interfaces.context import BaseContext, SamplingParams
+from max.interfaces.context import BaseContext
 from max.interfaces.pipeline import PipelineInputs, PipelineOutput
 from max.interfaces.request import Request, RequestID
 from max.interfaces.status import GenerationStatus
 from typing_extensions import TypeVar
 
-from .text_generation import TextGenerationRequestMessage, TextGenerationRequestTool
+from .text_generation import (
+    TextGenerationRequestMessage,
+    TextGenerationRequestTool,
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,7 @@ class PixelGenerationRequest(Request):
     allows the model to utilize external functionalities or APIs to enhance its
     responses.
     """
+
     def __post_init__(self) -> None:
         if self.prompt is None:
             raise RuntimeError("prompt must be provided.")

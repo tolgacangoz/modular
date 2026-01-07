@@ -924,60 +924,54 @@ def reserve_token_space_for_batch(
 
 @dataclass(kw_only=True)
 class PixelContext:
-    prompt: str = Field(
-        ...,
-        description='A text description of the desired image(s). The maximum length is 1000 characters for `dall-e-2` and 4000 characters for `dall-e-3`.',
-        examples=['A cute baby sea otter'],
+    """A context class for pixel/image generation requests.
+
+    This class manages the state and parameters for image generation,
+    including prompt tokenization, generation parameters, and request tracking.
+
+    Configuration:
+        request_id: A unique identifier for this generation request.
+        prompt: Text description of the desired image(s).
+        max_length: Maximum sequence length for tokenization.
+        tokens: NumPy array containing the tokenized prompt IDs.
+        negative_tokens: NumPy array containing the tokenized negative prompt IDs.
+        height: Height of the generated image in pixels.
+        width: Width of the generated image in pixels.
+        num_inference_steps: Number of denoising steps.
+        guidance_scale: Guidance scale for classifier-free guidance.
+        negative_prompt: Negative prompt to guide what NOT to generate.
+        num_images_per_prompt: Number of images to generate per prompt.
+        model_name: Name of the model being used.
+    """
+
+    # Required fields
+    prompt: str
+    max_length: int
+
+    # Request identification
+    request_id: RequestID = field(default_factory=RequestID)
+    model_name: str = field(default="")
+
+    # Tokenized prompts (populated by TextTokenizer)
+    tokens: TokenSlice = field(
+        default_factory=lambda: np.array([], dtype=np.int64)
     )
-    model: Optional[Union[str, Literal['dall-e-2', 'dall-e-3']]] = Field(
-        'dall-e-2',
-        description='The model to use for image generation.',
-        examples=['dall-e-3'],
+    negative_tokens: TokenSlice = field(
+        default_factory=lambda: np.array([], dtype=np.int64)
     )
-    num_images_per_prompt: Optional[Annotated[int, Field(ge=1, le=10)]] = Field(
-        1,
-        description='The number of images to generate. Must be between 1 and 10. For `dall-e-3`, only `n=1` is supported.',
-        examples=[1],
-    )
-    quality: Optional[Literal['standard', 'hd']] = Field(
-        'standard',
-        description='The quality of the image that will be generated. `hd` creates images with finer details and greater consistency across the image. This param is only supported for `dall-e-3`.',
-        examples=['standard'],
-    )
-    response_format: Optional[Literal['url', 'b64_json']] = Field(
-        'url',
-        description='The format in which the generated images are returned. Must be one of `url` or `b64_json`. URLs are only valid for 60 minutes after the image has been generated.',
-        examples=['url'],
-    )
-    size: Optional[
-        Literal['256x256', '512x512', '1024x1024', '1792x1024', '1024x1792']
-    ] = Field(
-        '1024x1024',
-        description='The size of the generated images. Must be one of `256x256`, `512x512`, or `1024x1024` for `dall-e-2`. Must be one of `1024x1024`, `1792x1024`, or `1024x1792` for `dall-e-3` models.',
-        examples=['1024x1024'],
-    )
-    style: Optional[Literal['vivid', 'natural']] = Field(
-        'vivid',
-        description='The style of the generated images. Must be one of `vivid` or `natural`. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images. This param is only supported for `dall-e-3`.',
-        examples=['vivid'],
-    )
-    user: Optional[str] = Field(
-        None,
-        description='A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse. [Learn more](/docs/guides/safety-best-practices/end-user-ids).\n',
-        examples=['user-1234'],
-    )
-    guidance_scale: Optional[float] = Field(
-        None,
-        description='Guidance scale for classifier-free guidance. Set to 0 to disable CFG. Typical values: 5.0-7.5. If not set, uses model default.',
-        examples=[5.0, 0.0],
-    )
-    negative_prompt: Optional[str] = Field(
-        None,
-        description='Negative prompt to guide what NOT to generate.',
-        examples=['blurry, low quality'],
-    )
-    num_inference_steps: Optional[int] = Field(
-        None,
-        description='Number of denoising steps. More steps = higher quality but slower. If not set, uses model default.',
-        examples=[9, 50],
-    )
+
+    # Image generation parameters
+    height: int = field(default=1024)
+    width: int = field(default=1024)
+    num_inference_steps: int = field(default=50)
+    guidance_scale: float = field(default=0.0)
+    negative_prompt: str | None = field(default=None)
+    num_images_per_prompt: int = field(default=1)
+
+    # Additional parameters
+    seed: int | None = field(default=None)
+    size: str = field(default="1024x1024")
+    quality: str = field(default="standard")
+    style: str = field(default="vivid")
+    response_format: str = field(default="url")
+    user: str | None = field(default=None)

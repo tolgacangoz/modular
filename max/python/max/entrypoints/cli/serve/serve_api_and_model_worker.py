@@ -22,8 +22,8 @@ from max.interfaces import PipelineTask
 from max.pipelines import (
     PIPELINE_REGISTRY,
     AudioGenerationConfig,
-    PixelGenerationConfig,
     PipelineConfig,
+    PixelGenerationConfig,
 )
 from max.profiler import Tracer
 from max.serve.api_server import (

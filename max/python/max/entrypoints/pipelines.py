@@ -233,7 +233,11 @@ def cli_serve(
     from max.entrypoints.cli.config import parse_task_flags
     from max.entrypoints.workers import start_workers
     from max.interfaces import PipelineTask, SamplingParams, SamplingParamsInput
-    from max.pipelines import AudioGenerationConfig, PipelineConfig, PixelGenerationConfig
+    from max.pipelines import (
+        AudioGenerationConfig,
+        PipelineConfig,
+        PixelGenerationConfig,
+    )
     from max.serve.config import Settings
     from max.serve.telemetry.common import configure_logging
 

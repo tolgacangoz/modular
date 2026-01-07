@@ -13,44 +13,32 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
-from collections.abc import AsyncGenerator, Coroutine
-from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from collections.abc import AsyncGenerator
+from typing import Any, TypeVar
 
 import numpy as np
 import numpy.typing as npt
 from max.interfaces import (
-    AudioGenerationOutput,
-    AudioGenerationRequest,
     BaseContext,
-    EmbeddingsGenerationOutput,
     GenerationStatus,
-    LogProbabilities,
     PipelineOutput,
-    PipelineTokenizer,
-    Request,
-    TextGenerationOutput,
-    TextGenerationRequest,
-    PixelGenerationRequest,
     PixelGenerationOutput,
+    PixelGenerationRequest,
+    Request,
 )
-from max.pipelines.core import TextAndVisionContext, TextContext, TTSContext, PixelContext
-from max.profiler import Tracer
-from max.serve.pipelines.stop_detection import StopDetector
-from max.serve.queue.lora_queue import LoRAQueue
-from max.serve.scheduler.queues import EngineQueue, SchedulerZmqConfigs
+from max.pipelines.core import (
+    PixelContext,
+)
+from max.serve.pipelines.llm import BasePipeline
 from max.serve.telemetry.metrics import METRICS
 from max.serve.telemetry.stopwatch import StopWatch, record_ms
-from max.serve.pipelines.llm import BasePipeline
-from typing_extensions import Self
 
 if sys.version_info < (3, 11):
-    from taskgroup import TaskGroup
+    pass
 else:
-    from asyncio import TaskGroup
+    pass
 
 logger = logging.getLogger("max.serve")
 
@@ -68,7 +56,6 @@ class PixelGeneratorPipeline(
         self, request: PixelGenerationRequest
     ) -> AsyncGenerator[PixelGenerationOutput, None]:
         """Generates and streams images or videos for the provided request."""
-        from max.interfaces import PixelGenerationContext
 
         total_sw = StopWatch()
         self.logger.debug(
@@ -102,7 +89,10 @@ class PixelGeneratorPipeline(
 
                     # Postprocess image: normalize [-1,1] → [0,1] and transpose NCHW → NHWC
                     # This is analogous to tokenizer.decode() in text generation
-                    if response.pixel_data is not None and response.pixel_data.size > 0:
+                    if (
+                        response.pixel_data is not None
+                        and response.pixel_data.size > 0
+                    ):
                         image_np = response.pixel_data
                         image_np = (image_np * 0.5 + 0.5).clip(min=0.0, max=1.0)
                         image_np = image_np.transpose(0, 2, 3, 1)  # NCHW → NHWC
@@ -160,4 +150,4 @@ class PixelGeneratorPipeline(
     async def generate_full_video(
         self, request: PixelGenerationRequest
     ) -> PixelGenerationOutput:
-        raise("Not implemented yet!")
+        raise NotImplementedError("Not implemented yet!")

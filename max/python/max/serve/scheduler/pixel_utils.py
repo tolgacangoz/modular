@@ -21,7 +21,6 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 
-from max.interfaces import RequestID
 from max.serve.telemetry.metrics import METRICS
 from max.support.human_readable_formatter import to_human_readable_latency
 

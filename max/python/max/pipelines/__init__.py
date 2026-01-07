@@ -40,7 +40,10 @@ from .lib.kv_cache_config import KVCacheConfig
 from .lib.lora import ADAPTER_CONFIG_FILE
 from .lib.memory_estimation import MemoryEstimator
 from .lib.model_config import MAXModelConfig
-from .lib.pipeline_variants import TextGenerationPipeline, PixelGenerationPipeline
+from .lib.pipeline_variants import (
+    PixelGenerationPipeline,
+    TextGenerationPipeline,
+)
 from .lib.profiling_config import ProfilingConfig
 from .lib.registry import PIPELINE_REGISTRY, SupportedArchitecture
 from .lib.sampling.sampling_config import SamplingConfig
@@ -64,16 +67,16 @@ __all__ = [
     "EmbeddingsPipelineType",
     "GenerateMixin",
     "IdentityPipelineTokenizer",
-    "PixelGenerationPipeline",
     "KVCacheConfig",
     "MAXModelConfig",
-    "PixelGenerationConfig",
     "MemoryEstimator",
     "ModelInputs",
     "ModelOutputs",
     "PipelineConfig",
     "PipelineModel",
     "PipelineRole",
+    "PixelGenerationConfig",
+    "PixelGenerationPipeline",
     "PreTrainedPipelineTokenizer",
     "PrependPromptSpeechTokens",
     "ProfilingConfig",
