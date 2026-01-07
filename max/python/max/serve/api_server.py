@@ -31,9 +31,9 @@ from max.pipelines.lib import PIPELINE_REGISTRY, PipelineConfig
 from max.serve.config import APIType, MetricRecordingMethod, Settings
 from max.serve.pipelines.llm import (
     AudioGeneratorPipeline,
-    PixelGeneratorPipeline,
     TokenGeneratorPipeline,
 )
+from max.serve.pipelines.pixel import PixelGeneratorPipeline
 from max.serve.pipelines.model_worker import start_model_worker
 from max.serve.pipelines.reset_prefix_cache import ResetPrefixCacheFrontend
 from max.serve.pipelines.telemetry_worker import start_telemetry_consumer
