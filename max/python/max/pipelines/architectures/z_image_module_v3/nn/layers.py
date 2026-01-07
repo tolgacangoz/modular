@@ -116,7 +116,10 @@ class Conv2d(nn.Module):
 
         # Weight shape: (out_channels, in_channels // groups, *kernel_size)
         weight_shape = [out_channels, in_channels // groups, *kernel_size]
-        self.weight = random.normal(weight_shape, dtype=weight_dtype)
+        # self.weight = random.normal(weight_shape, dtype=weight_dtype)
+        # Note: Using Tensor.zeros instead of random.normal to avoid GPU blocking
+        # The weights will be overwritten by load_state_dict anyway
+        self.weight = Tensor.zeros(weight_shape, dtype=weight_dtype)
 
         if bias:
             self.bias = Tensor.zeros([out_channels], dtype=weight_dtype)
