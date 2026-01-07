@@ -38,7 +38,7 @@ class ZImage(Module):
         self.device = device
         self.scheduler = self.build_scheduler()
         self.vae = self.build_vae()
-        self.text_encoder = self.build_text_encoder()
+        # self.text_encoder = self.build_text_encoder()
         self.transformer = self.build_transformer()
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:

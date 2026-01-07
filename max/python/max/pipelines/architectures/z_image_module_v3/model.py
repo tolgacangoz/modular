@@ -466,9 +466,9 @@ class ZImageModel(
         device0 = self.devices[0]
         nn_model: Module = ZImage(self.model_config, device=device0)
 
-        graph_inputs = nn_model.text_encoder.input_types(
-            nn_model.text_encoder.kv_params
-        )
+        # graph_inputs = nn_model.text_encoder.input_types(
+        #     nn_model.text_encoder.kv_params
+        # )
         # nn_model.text_encoder.load_state_dict(
         #     text_encoder_llm_state_dict,
         #     override_quantization_encoding=True,
