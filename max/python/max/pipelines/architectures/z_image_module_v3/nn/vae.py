@@ -31,11 +31,12 @@ from dataclasses import dataclass
 
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
-from max.experimental import random
+import torch
+from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.nn.module_v3.sequential import ModuleList
 
-from .layers import Conv2d, GroupNorm, SiLU, SpatialNorm
+from .layers import Conv2d, GroupNorm, SiLU
 from .unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
 
 
@@ -102,8 +103,10 @@ class Encoder(nn.Module):
         double_z: bool = True,
         mid_block_add_attention: bool = True,
     ):
+        print("[DEBUG Encoder] Starting init...")
         self.layers_per_block = layers_per_block
 
+        print("[DEBUG Encoder] Creating conv_in...")
         self.conv_in = Conv2d(
             in_channels,
             block_out_channels[0],
@@ -111,12 +114,14 @@ class Encoder(nn.Module):
             stride=1,
             padding=1,
         )
+        print("[DEBUG Encoder] conv_in created. Creating down_blocks...")
 
         self.down_blocks = ModuleList([])
 
         # down
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
+            print(f"[DEBUG Encoder] Creating down_block {i}...")
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
@@ -135,8 +140,10 @@ class Encoder(nn.Module):
                 temb_channels=None,
             )
             self.down_blocks.append(down_block)
+            print(f"[DEBUG Encoder] down_block {i} created.")
 
         # mid
+        print("[DEBUG Encoder] Creating mid_block...")
         self.mid_block = UNetMidBlock2D(
             in_channels=block_out_channels[-1],
             resnet_eps=1e-6,
@@ -148,6 +155,7 @@ class Encoder(nn.Module):
             temb_channels=None,
             add_attention=mid_block_add_attention,
         )
+        print("[DEBUG Encoder] mid_block created. Creating output layers...")
 
         # out
         self.conv_norm_out = GroupNorm(
@@ -163,6 +171,7 @@ class Encoder(nn.Module):
         )
 
         self.gradient_checkpointing = False
+        print("[DEBUG Encoder] Init complete.")
 
     def __call__(self, sample: Tensor) -> Tensor:
         r"""The forward method of the `Encoder` class."""
@@ -316,7 +325,7 @@ class Decoder(nn.Module):
         sample = self.conv_act(sample)
         sample = self.conv_out(sample)
 
-        return sample
+        return sample.cast(DType.float32)
 
 
 class DiagonalGaussianDistribution:
@@ -348,16 +357,29 @@ class DiagonalGaussianDistribution:
 
     def sample(
         self,
-        #    generator: "Generator" | None = None
+        seed: int | None = None,
     ) -> Tensor:
-        # make sure sample is on the same device as the parameters and has same dtype
-        sample = random.normal(
-            self.mean.shape,
-            # generator=generator,  # TODO: implement generator
-            device=self.parameters.device,
-            mean=0.0,
-            std=1.0,
-            dtype=self.parameters.dtype,
+        """Sample from the distribution.
+
+        Args:
+            seed: Optional seed for reproducible random sampling.
+                If None, uses random seed (non-deterministic).
+
+        Returns:
+            A sample from the Gaussian distribution.
+        """
+        # Use PyTorch for random generation to match diffusers exactly
+        generator = torch.Generator("cpu")
+        if seed is not None:
+            generator.manual_seed(seed)
+        shape = tuple(int(d) for d in self.mean.shape)
+        sample_torch = torch.randn(
+            shape, generator=generator, dtype=torch.float32
+        )
+        sample = (
+            Tensor.from_dlpack(sample_torch.numpy())
+            .to(self.parameters.device)
+            .cast(self.parameters.dtype)
         )
         x = self.mean + self.std * sample
         return x

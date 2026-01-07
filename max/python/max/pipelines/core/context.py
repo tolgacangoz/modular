@@ -881,6 +881,16 @@ if TYPE_CHECKING:
             images=[],
         )
 
+    def _verify_pixel_context_protocol() -> PixelGenerationContext:
+        return PixelContext(
+            request_id=RequestID(),
+            max_length=5,
+            tokens=np.array([], dtype=np.int32),
+            eos_token_ids=set(),
+            vision_token_ids=[],
+            images=[],
+        )
+
 
 @contextmanager
 def reserve_token_space_for_batch(
@@ -910,3 +920,58 @@ def reserve_token_space_for_batch(
         for ctx in batch:
             ctx._active_idx = saved_indices[ctx.request_id][0]
             ctx._end_idx = saved_indices[ctx.request_id][1]
+
+
+@dataclass(kw_only=True)
+class PixelContext:
+    """A context class for pixel/image generation requests.
+
+    This class manages the state and parameters for image generation,
+    including prompt tokenization, generation parameters, and request tracking.
+
+    Configuration:
+        request_id: A unique identifier for this generation request.
+        prompt: Text description of the desired image(s).
+        max_length: Maximum sequence length for tokenization.
+        tokens: NumPy array containing the tokenized prompt IDs.
+        negative_tokens: NumPy array containing the tokenized negative prompt IDs.
+        height: Height of the generated image in pixels.
+        width: Width of the generated image in pixels.
+        num_inference_steps: Number of denoising steps.
+        guidance_scale: Guidance scale for classifier-free guidance.
+        negative_prompt: Negative prompt to guide what NOT to generate.
+        num_images_per_prompt: Number of images to generate per prompt.
+        model_name: Name of the model being used.
+    """
+
+    # Required fields
+    prompt: str
+    max_length: int
+
+    # Request identification
+    request_id: RequestID = field(default_factory=RequestID)
+    model_name: str = field(default="")
+
+    # Tokenized prompts (populated by TextTokenizer)
+    tokens: TokenSlice = field(
+        default_factory=lambda: np.array([], dtype=np.int64)
+    )
+    negative_tokens: TokenSlice = field(
+        default_factory=lambda: np.array([], dtype=np.int64)
+    )
+
+    # Image generation parameters
+    height: int = field(default=1024)
+    width: int = field(default=1024)
+    num_inference_steps: int = field(default=50)
+    guidance_scale: float = field(default=0.0)
+    negative_prompt: str | None = field(default=None)
+    num_images_per_prompt: int = field(default=1)
+
+    # Additional parameters
+    seed: int | None = field(default=None)
+    size: str = field(default="1024x1024")
+    quality: str = field(default="standard")
+    style: str = field(default="vivid")
+    response_format: str = field(default="url")
+    user: str | None = field(default=None)

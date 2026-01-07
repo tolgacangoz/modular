@@ -36,10 +36,14 @@ class ZImage(Module):
     ) -> None:
         self.config = config
         self.device = device
+        print("[DEBUG ZImage] Starting build_scheduler...")
         self.scheduler = self.build_scheduler()
+        print("[DEBUG ZImage] Scheduler built. Starting build_vae...")
         self.vae = self.build_vae()
-        self.text_encoder = self.build_text_encoder()
+        print("[DEBUG ZImage] VAE built. Starting build_transformer...")
+        # self.text_encoder = self.build_text_encoder()
         self.transformer = self.build_transformer()
+        print("[DEBUG ZImage] Transformer built. ZImage init complete.")
 
     def build_scheduler(self) -> FlowMatchEulerDiscreteScheduler:
         """Build the scheduler component."""

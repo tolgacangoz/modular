@@ -20,12 +20,14 @@ from max.interfaces import (
     Pipeline,
     PipelineInputsType,
     PipelineOutputType,
+    PixelGenerationInputs,
+    PixelGenerationOutput,
     Scheduler,
     TextGenerationInputs,
     TextGenerationOutput,
 )
 from max.kv_cache import PagedKVCacheManager
-from max.pipelines.core import TextContext
+from max.pipelines.core import PixelContext, TextContext
 from max.pipelines.lib import (
     EmbeddingsPipelineType,
     PipelineConfig,
@@ -45,6 +47,11 @@ from .base import CancelRequest, PrefillRequest, PrefillResponse
 from .config import TokenGenerationSchedulerConfig
 from .decode_scheduler import load_decode_scheduler
 from .embeddings_scheduler import EmbeddingsScheduler, EmbeddingsSchedulerConfig
+from .pixel_generation_scheduler import (
+    PixelGenerationScheduler,
+    PixelGenerationSchedulerConfig,
+    load_pixel_generation_scheduler,
+)
 from .prefill_scheduler import load_prefill_scheduler
 from .text_generation_scheduler import load_text_generation_scheduler
 
@@ -54,6 +61,8 @@ __all__ = [
     "CancelRequest",
     "EmbeddingsScheduler",
     "EmbeddingsSchedulerConfig",
+    "PixelGenerationScheduler",
+    "PixelGenerationSchedulerConfig",
     "PrefillRequest",
     "PrefillResponse",
     "TokenGenerationSchedulerConfig",
@@ -88,6 +97,20 @@ def load_scheduler(
             response_queue=response_queue,
             cancel_queue=cancel_queue,
             offload_queue_draining=pipeline_config.experimental_background_queue,
+        )
+    elif pipeline.__class__.__name__ == "PixelGenerationPipeline":
+        pixel_pipeline = cast(
+            Pipeline[
+                PixelGenerationInputs[PixelContext], PixelGenerationOutput
+            ],
+            pipeline,
+        )
+        return load_pixel_generation_scheduler(
+            pixel_pipeline,
+            pipeline_config,
+            request_queue=cast(MAXPullQueue[PixelContext], request_queue),
+            response_queue=response_queue,
+            cancel_queue=cancel_queue,
         )
     elif pipeline.__class__.__name__ == "AudioGeneratorPipeline":
         assert hasattr(pipeline, "kv_manager")

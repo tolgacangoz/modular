@@ -28,11 +28,12 @@ import numpy.typing as npt
 from max.interfaces import (
     ImageMetadata,
     PipelineTokenizer,
+    PixelGenerationRequest,
     TextGenerationRequest,
     TextGenerationRequestMessage,
     TextGenerationRequestTool,
 )
-from max.pipelines.core import TextAndVisionContext, TextContext
+from max.pipelines.core import PixelContext, TextAndVisionContext, TextContext
 from max.support.image import find_contiguous_ranges, hash_image
 from PIL import Image
 from transformers import (
@@ -205,10 +206,12 @@ async def run_with_default_executor(
 
 class TextTokenizer(
     PipelineTokenizer[
-        TextContext, npt.NDArray[np.integer[Any]], TextGenerationRequest
+        TextContext | PixelContext,
+        npt.NDArray[np.integer[Any]],
+        TextGenerationRequest | PixelGenerationRequest,
     ]
 ):
-    """Encapsulates creation of TextContext and specific token encode/decode logic.
+    """Encapsulates creation of TextContext or PixelContext and specific token encode/decode logic.
 
     Args:
         model_path: Path to the model/tokenizer
@@ -232,7 +235,8 @@ class TextTokenizer(
         enable_llama_whitespace_fix: bool = False,
         pipeline_config: PipelineConfig | None = None,
         chat_template: str | None = None,
-        context_validators: list[Callable[[TextContext], None]] | None = None,
+        context_validators: list[Callable[[TextContext | PixelContext], None]]
+        | None = None,
         subfolder: str | None = None,
         **unused_kwargs,
     ) -> None:
@@ -488,8 +492,10 @@ class TextTokenizer(
 
         return eos_token_ids, eos_sequences
 
-    async def new_context(self, request: TextGenerationRequest) -> TextContext:
-        """Create a new TextContext object, leveraging necessary information from TextGenerationRequest."""
+    async def new_context(
+        self, request: TextGenerationRequest | PixelGenerationRequest
+    ) -> TextContext | PixelContext:
+        """Create a new TextContext or PixelContext object, leveraging necessary information from TextGenerationRequest or PixelGenerationRequest."""
         # Encode Prompt / Messages
         _prompt, token_ids = await self._generate_prompt_and_token_ids(
             prompt=request.prompt,
@@ -504,36 +510,60 @@ class TextTokenizer(
             else None
         )
 
-        eos_token_ids, eos_sequences = await self._get_eos_variables(
-            request.sampling_params.ignore_eos,
-            request.sampling_params.stop_token_ids,
-            request.sampling_params.stop,
-        )
+        if isinstance(request, TextGenerationRequest):
+            eos_token_ids, eos_sequences = await self._get_eos_variables(
+                request.sampling_params.ignore_eos,
+                request.sampling_params.stop_token_ids,
+                request.sampling_params.stop,
+            )
 
-        # Calculate Max Length
-        max_new_tokens = None
-        if request.sampling_params.max_new_tokens is not None:
-            max_new_tokens = request.sampling_params.max_new_tokens
+            # Calculate Max Length
+            max_new_tokens = None
+            if request.sampling_params.max_new_tokens is not None:
+                max_new_tokens = request.sampling_params.max_new_tokens
 
-        max_gen_tokens = max_tokens_to_generate(
-            len(token_ids), self.max_length, max_new_tokens
-        )
+            max_gen_tokens = max_tokens_to_generate(
+                len(token_ids), self.max_length, max_new_tokens
+            )
 
-        context = TextContext(
-            request_id=request.request_id,
-            eos_token_ids=eos_token_ids,
-            eos_sequences=eos_sequences,
-            max_length=len(token_ids) + max_gen_tokens
-            if max_gen_tokens is not None
-            else self.max_length,
-            tokens=np.array(token_ids),
-            log_probabilities=request.logprobs,
-            log_probabilities_echo=request.echo,
-            json_schema=json_schema,
-            sampling_params=request.sampling_params,
-            model_name=request.model_name,
-            target_endpoint=request.target_endpoint,
-        )
+            context = TextContext(
+                request_id=request.request_id,
+                eos_token_ids=eos_token_ids,
+                eos_sequences=eos_sequences,
+                max_length=len(token_ids) + max_gen_tokens
+                if max_gen_tokens is not None
+                else self.max_length,
+                tokens=np.array(token_ids),
+                log_probabilities=request.logprobs,
+                log_probabilities_echo=request.echo,
+                json_schema=json_schema,
+                sampling_params=request.sampling_params,
+                model_name=request.model_name,
+                target_endpoint=request.target_endpoint,
+            )
+        else:
+            # Tokenize negative prompt if provided
+            negative_tokens = np.array([], dtype=np.int64)
+            if request.negative_prompt:
+                negative_token_ids = self.delegate.encode(
+                    request.negative_prompt, add_special_tokens=True
+                )
+                negative_tokens = np.array(negative_token_ids, dtype=np.int64)
+
+            context = PixelContext(
+                request_id=request.request_id,
+                prompt=request.prompt,
+                max_length=self.max_length,
+                tokens=np.array(token_ids, dtype=np.int64),
+                negative_tokens=negative_tokens,
+                height=request.height or 1024,
+                width=request.width or 1024,
+                num_inference_steps=request.num_inference_steps or 50,
+                guidance_scale=request.guidance_scale or 0.0,
+                negative_prompt=request.negative_prompt,
+                num_images_per_prompt=request.num_images_per_prompt or 1,
+                model_name=request.model or "",
+            )
 
         for validator in self._context_validators:
             validator(context)
@@ -589,7 +619,7 @@ class TextAndVisionTokenizer(
         TextGenerationRequest,
     ],
 ):
-    """Encapsulates creation of TextContext and specific token encode/decode logic."""
+    """Encapsulates creation of TextAndVisionContext and specific token encode/decode logic."""
 
     def __init__(
         self,

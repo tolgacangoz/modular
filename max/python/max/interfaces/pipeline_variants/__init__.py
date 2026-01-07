@@ -24,12 +24,13 @@ from .embeddings_generation import (
     EmbeddingsGenerationInputs,
     EmbeddingsGenerationOutput,
 )
-from .image_generation import (
-    ImageGenerationContextType,
-    ImageGenerationInputs,
-    ImageGenerationMetadata,
-    ImageGenerationOutput,
-    ImageGenerationRequest,
+from .pixel_generation import (
+    PixelGenerationContext,
+    PixelGenerationContextType,
+    PixelGenerationInputs,
+    PixelGenerationMetadata,
+    PixelGenerationOutput,
+    PixelGenerationRequest,
 )
 from .text_generation import (
     BatchType,
@@ -63,6 +64,12 @@ __all__ = [
     "ImageGenerationOutput",
     "ImageGenerationRequest",
     "ImageMetadata",
+    "PixelGenerationContext",
+    "PixelGenerationContextType",
+    "PixelGenerationInputs",
+    "PixelGenerationMetadata",
+    "PixelGenerationOutput",
+    "PixelGenerationRequest",
     "TextGenerationContext",
     "TextGenerationContextType",
     "TextGenerationInputs",

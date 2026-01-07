@@ -31,7 +31,8 @@ from max.engine import InferenceSession
 from max.graph.quantization import QuantizationEncoding
 from max.serve.queue.zmq_queue import generate_zmq_ipc_path
 
-from .config_enums import PipelineRole
+from .config_enums import PipelineRole, PixelGenerationType
+from .diffusers_config import DiffusersConfig
 from .kv_cache_config import KVCacheConfig
 from .lora_config import LoRAConfig
 from .memory_estimation import MemoryEstimator, to_human_readable_bytes
@@ -1383,5 +1384,377 @@ class AudioGenerationConfig(PipelineConfig):
             prepend_prompt_speech_tokens_causal=prepend_prompt_speech_tokens_causal,
             run_model_test_mode=run_model_test_mode,
             prometheus_metrics_mode=prometheus_metrics_mode,
+            **config_flags,
+        )
+
+
+@dataclass
+class PixelGenerationConfig(PipelineConfig):
+    """Configuration for image and video generation pipelines.
+
+    This config extends PipelineConfig to support diffusers-style pipelines
+    with multi-folder repository structures and diffusion-specific parameters.
+    """
+
+    # Generation mode
+    generation_type: PixelGenerationType = PixelGenerationType.TEXT_TO_IMAGE
+    """The type of pixel generation to perform."""
+
+    # Diffusion-specific parameters
+    num_inference_steps: int = 50
+    """Number of denoising steps."""
+
+    guidance_scale: float = 7.5
+    """Classifier-free guidance scale. Higher values produce outputs more
+    aligned with the prompt but less diverse."""
+
+    negative_prompt: str | None = None
+    """Optional negative prompt for classifier-free guidance."""
+
+    # Spatial dimensions
+    height: int = 1024
+    """Output image/video height in pixels."""
+
+    width: int = 1024
+    """Output image/video width in pixels."""
+
+    # Video-specific parameters (only used when generation_type.outputs_video)
+    num_frames: int | None = None
+    """Number of frames for video generation. None = image mode (single frame)."""
+
+    fps: int | None = None
+    """Frames per second for video output. Only used for video generation."""
+
+    num_videos_per_prompt: int = 1
+    """Number of videos to generate per prompt (for video modes)."""
+
+    motion_bucket_id: int | None = None
+    """Motion strength for SVD-style video generation."""
+
+    guidance_scale_2: float | None = None
+    """Secondary guidance scale for two-stage models (e.g., Wan 2.2)."""
+
+    use_dynamic_cfg: bool = False
+    """Enable dynamic CFG for CogVideoX-style models."""
+
+    # I2V-specific parameters (image-to-video)
+    last_image: bool = False
+    """Whether to use a last frame image for I2V generation (Wan I2V)."""
+
+    # V2V-specific parameters (video-to-video)
+    video_strength: float | None = None
+    """Denoising strength for V2V. Higher = more change from input video."""
+
+    # Image editing parameters (QwenImageEdit, etc.)
+    true_cfg_scale: float | None = None
+    """True CFG scale for image editing models (e.g., QwenImageEdit uses 4.0)."""
+
+    # Conditioning parameters (img2img, inpainting)
+    strength: float = 0.8
+    """Denoising strength for img2img/inpainting. 1.0 = full denoise."""
+
+    # Image-specific parameters
+    num_images_per_prompt: int = 1
+    """Number of images to generate per prompt."""
+
+    # Scheduler
+    scheduler_type: str | None = None
+    """Optional scheduler override. Uses model default if not specified."""
+
+    # Parsed diffusers repository config
+    _diffusers_config: DiffusersConfig | None = None
+    """Parsed model_index.json from a diffusers-style repository."""
+
+    def __init__(
+        self,
+        generation_type: PixelGenerationType = PixelGenerationType.TEXT_TO_IMAGE,
+        num_inference_steps: int = 50,
+        guidance_scale: float = 7.5,
+        negative_prompt: str | None = None,
+        height: int = 1024,
+        width: int = 1024,
+        # Video params (optional)
+        num_frames: int | None = None,
+        fps: int | None = None,
+        num_videos_per_prompt: int = 1,
+        motion_bucket_id: int | None = None,
+        guidance_scale_2: float | None = None,
+        use_dynamic_cfg: bool = False,
+        # I2V params
+        last_image: bool = False,
+        # V2V params
+        video_strength: float | None = None,
+        # Image editing params
+        true_cfg_scale: float | None = None,
+        # Conditioning params
+        strength: float = 0.8,
+        # Image params
+        num_images_per_prompt: int = 1,
+        scheduler_type: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        # Must call the superclass's __init__ first
+        PipelineConfig.__init__(self, **kwargs)
+
+        self.generation_type = generation_type
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = guidance_scale
+        self.negative_prompt = negative_prompt
+        self.height = height
+        self.width = width
+        self.num_frames = num_frames
+        self.fps = fps
+        self.num_videos_per_prompt = num_videos_per_prompt
+        self.motion_bucket_id = motion_bucket_id
+        self.guidance_scale_2 = guidance_scale_2
+        self.use_dynamic_cfg = use_dynamic_cfg
+        self.last_image = last_image
+        self.video_strength = video_strength
+        self.true_cfg_scale = true_cfg_scale
+        self.strength = strength
+        self.num_images_per_prompt = num_images_per_prompt
+        self.scheduler_type = scheduler_type
+
+        # Try to parse diffusers repo config if model_path points to one
+        self._parse_diffusers_repo_if_needed()
+        self._validate_pixel_config()
+
+    def _parse_diffusers_repo_if_needed(self) -> None:
+        """Parse model_index.json if the model_path is a diffusers-style repo."""
+        if not self._model_config or not self._model_config.model_path:
+            return
+
+        model_path = Path(self._model_config.model_path)
+
+        # Check for local diffusers repo
+        if model_path.exists() and (model_path / "model_index.json").exists():
+            try:
+                self._diffusers_config = DiffusersConfig.from_model_path(
+                    model_path
+                )
+                logger.info(
+                    f"Parsed diffusers repo: {self._diffusers_config.pipeline_class} "
+                    f"with components: {self._diffusers_config.component_names}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to parse diffusers repo: {e}")
+        # Check if it's a HuggingFace repo ID
+        elif "/" in self._model_config.model_path and not model_path.exists():
+            try:
+                self._diffusers_config = DiffusersConfig.from_huggingface_repo(
+                    self._model_config.model_path
+                )
+                logger.info(
+                    f"Parsed diffusers repo from HF: {self._diffusers_config.pipeline_class} "
+                    f"with components: {self._diffusers_config.component_names}"
+                )
+            except Exception as e:
+                logger.debug(f"Model path is not a diffusers-style repo: {e}")
+
+    def _validate_pixel_config(self) -> None:
+        """Validate configuration based on generation type."""
+        # Video generation requires num_frames to be set and > 1
+        if self.generation_type.outputs_video:
+            if self.num_frames is None or self.num_frames < 2:
+                raise ValueError(
+                    f"{self.generation_type.value} requires num_frames >= 2, "
+                    f"got {self.num_frames}"
+                )
+
+        # V2V requires video_strength
+        if self.generation_type == PixelGenerationType.VIDEO_TO_VIDEO:
+            if self.video_strength is None:
+                self.video_strength = 0.8  # Set default for V2V
+            if not (0.0 < self.video_strength <= 1.0):
+                raise ValueError(
+                    f"video_strength must be in (0.0, 1.0] for V2V, "
+                    f"got {self.video_strength}"
+                )
+
+        # Conditioning modes require valid strength
+        if self.generation_type.requires_input_image:
+            if not (0.0 < self.strength <= 1.0):
+                raise ValueError(
+                    f"strength must be in (0.0, 1.0] for {self.generation_type.value}, "
+                    f"got {self.strength}"
+                )
+
+        # Image editing may use true_cfg_scale
+        if self.generation_type == PixelGenerationType.IMAGE_EDITING:
+            if self.true_cfg_scale is None:
+                self.true_cfg_scale = 4.0  # QwenImageEdit default
+
+        # Guidance scale validation
+        if self.guidance_scale < 1.0:
+            logger.warning(
+                f"guidance_scale < 1.0 disables classifier-free guidance. "
+                f"Current value: {self.guidance_scale}"
+            )
+
+    @property
+    def is_video(self) -> bool:
+        """Whether this config produces video output."""
+        return self.generation_type.outputs_video
+
+    @property
+    def requires_input_image(self) -> bool:
+        """Whether this config requires an input image."""
+        return self.generation_type.requires_input_image
+
+    @property
+    def diffusers_repo_config(self) -> DiffusersConfig | None:
+        """Get the parsed diffusers repository config."""
+        return self._diffusers_config
+
+    @staticmethod
+    def help() -> dict[str, str]:
+        # Get the parent class help first
+        pixel_help = PipelineConfig.help()
+
+        # Add PixelGenerationConfig-specific fields
+        pixel_specific_help = {
+            "generation_type": "The type of pixel generation: text_to_image, text_to_video, image_to_image, image_to_video, image_editing, video_to_video, inpainting, outpainting, or controlnet.",
+            "num_inference_steps": "Number of denoising steps. More steps generally produce better quality but take longer. Default is 50.",
+            "guidance_scale": "Classifier-free guidance scale. Higher values (7-15) produce outputs more aligned with the prompt. Default is 7.5.",
+            "negative_prompt": "Optional negative prompt to guide generation away from certain concepts.",
+            "height": "Output image/video height in pixels. Default is 512.",
+            "width": "Output image/video width in pixels. Default is 512.",
+            # Video params
+            "num_frames": "Number of frames for video generation. Not used for image modes.",
+            "fps": "Frames per second for video output. Only used for video modes.",
+            "num_videos_per_prompt": "Number of videos to generate per prompt. Default is 1.",
+            "motion_bucket_id": "Motion strength for SVD-style video generation.",
+            "guidance_scale_2": "Secondary guidance scale for two-stage models (e.g., Wan 2.2).",
+            "use_dynamic_cfg": "Enable dynamic CFG for CogVideoX-style models.",
+            # I2V params
+            "last_image": "Whether to use a last frame image for I2V generation.",
+            # V2V params
+            "video_strength": "Denoising strength for V2V. Higher = more change from input video.",
+            # Image editing params
+            "true_cfg_scale": "True CFG scale for image editing models (e.g., QwenImageEdit uses 4.0).",
+            # Conditioning params
+            "strength": "Denoising strength for img2img/inpainting. 1.0 means full denoise. Default is 0.8.",
+            # Image params
+            "num_images_per_prompt": "Number of images to generate per prompt. Default is 1.",
+            "scheduler_type": "Optional scheduler override (e.g., 'ddim', 'euler'). Uses model default if not specified.",
+        }
+
+        # Check for conflicts
+        for key in pixel_specific_help:
+            if key in pixel_help:
+                raise ValueError(
+                    f"Duplicate help key '{key}' found in PixelGenerationConfig"
+                )
+
+        # Merge the help dictionaries
+        pixel_help.update(pixel_specific_help)
+        return pixel_help
+
+    @classmethod
+    def from_flags(
+        cls, pixel_flags: dict[str, str], **config_flags: Any
+    ) -> PixelGenerationConfig:
+        """Create a PixelGenerationConfig from CLI flags."""
+        generation_type = PixelGenerationType(
+            pixel_flags.pop("generation_type", "text_to_image")
+        )
+
+        num_inference_steps = _parse_flag_int(
+            pixel_flags.pop("num_inference_steps", "50"), "num_inference_steps"
+        )
+
+        guidance_scale = float(pixel_flags.pop("guidance_scale", "7.5"))
+
+        negative_prompt = pixel_flags.pop("negative_prompt", None)
+        if negative_prompt == "":
+            negative_prompt = None
+
+        height = _parse_flag_int(pixel_flags.pop("height", "512"), "height")
+        width = _parse_flag_int(pixel_flags.pop("width", "512"), "width")
+
+        # Video params (optional)
+        num_frames_str = pixel_flags.pop("num_frames", None)
+        num_frames = (
+            _parse_flag_int(num_frames_str, "num_frames")
+            if num_frames_str
+            else None
+        )
+
+        fps_str = pixel_flags.pop("fps", None)
+        fps = _parse_flag_int(fps_str, "fps") if fps_str else None
+
+        num_videos_per_prompt = _parse_flag_int(
+            pixel_flags.pop("num_videos_per_prompt", "1"),
+            "num_videos_per_prompt",
+        )
+
+        motion_bucket_id_str = pixel_flags.pop("motion_bucket_id", None)
+        motion_bucket_id = (
+            _parse_flag_int(motion_bucket_id_str, "motion_bucket_id")
+            if motion_bucket_id_str
+            else None
+        )
+
+        guidance_scale_2_str = pixel_flags.pop("guidance_scale_2", None)
+        guidance_scale_2 = (
+            float(guidance_scale_2_str) if guidance_scale_2_str else None
+        )
+
+        use_dynamic_cfg = (
+            pixel_flags.pop("use_dynamic_cfg", "false").lower() == "true"
+        )
+
+        # I2V params
+        last_image = pixel_flags.pop("last_image", "false").lower() == "true"
+
+        # V2V params
+        video_strength_str = pixel_flags.pop("video_strength", None)
+        video_strength = (
+            float(video_strength_str) if video_strength_str else None
+        )
+
+        # Image editing params
+        true_cfg_scale_str = pixel_flags.pop("true_cfg_scale", None)
+        true_cfg_scale = (
+            float(true_cfg_scale_str) if true_cfg_scale_str else None
+        )
+
+        # Conditioning params
+        strength = float(pixel_flags.pop("strength", "0.8"))
+
+        # Image params
+        num_images_per_prompt = _parse_flag_int(
+            pixel_flags.pop("num_images_per_prompt", "1"),
+            "num_images_per_prompt",
+        )
+
+        scheduler_type = pixel_flags.pop("scheduler_type", None)
+        if scheduler_type == "":
+            scheduler_type = None
+
+        if pixel_flags:
+            raise ValueError(
+                f"Unknown pixel generation option(s): {pixel_flags}"
+            )
+
+        return cls(
+            generation_type=generation_type,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            fps=fps,
+            num_videos_per_prompt=num_videos_per_prompt,
+            motion_bucket_id=motion_bucket_id,
+            guidance_scale_2=guidance_scale_2,
+            use_dynamic_cfg=use_dynamic_cfg,
+            last_image=last_image,
+            video_strength=video_strength,
+            true_cfg_scale=true_cfg_scale,
+            strength=strength,
+            num_images_per_prompt=num_images_per_prompt,
+            scheduler_type=scheduler_type,
             **config_flags,
         )

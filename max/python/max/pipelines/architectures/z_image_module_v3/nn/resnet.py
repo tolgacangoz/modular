@@ -35,166 +35,8 @@ import max.nn.module_v3 as nn
 from max.experimental.tensor import Tensor
 
 from .downsampling import Downsample2D, downsample_2d
-from .layers import Conv2d, Dropout, GroupNorm, SpatialNorm, get_activation
+from .layers import Conv2d, Dropout, GroupNorm, get_activation
 from .upsampling import Upsample2D, upsample_2d
-
-
-class ResnetBlockCondNorm2D(nn.Module):
-    r"""
-    A Resnet block that use normalization layer that incorporate conditioning information.
-
-    Parameters:
-        in_channels (`int`): The number of channels in the input.
-        out_channels (`int`, *optional*, default to be `None`):
-            The number of output channels for the first conv2d layer. If None, same as `in_channels`.
-        dropout (`float`, *optional*, defaults to `0.0`): The dropout probability to use.
-        temb_channels (`int`, *optional*, default to `512`): the number of channels in timestep embedding.
-        groups (`int`, *optional*, default to `32`): The number of groups to use for the first normalization layer.
-        groups_out (`int`, *optional*, default to None):
-            The number of groups to use for the second normalization layer. if set to None, same as `groups`.
-        eps (`float`, *optional*, defaults to `1e-6`): The epsilon to use for the normalization.
-        non_linearity (`str`, *optional*, default to `"swish"`): the activation function to use.
-        time_embedding_norm (`str`, *optional*, default to `"ada_group"` ):
-            The normalization layer for time embedding `temb`. Currently only support "ada_group" or "spatial".
-        kernel (`Tensor`, optional, default to None): FIR filter, see
-            [`~models.resnet.FirUpsample2D`] and [`~models.resnet.FirDownsample2D`].
-        output_scale_factor (`float`, *optional*, default to be `1.0`): the scale factor to use for the output.
-        use_in_shortcut (`bool`, *optional*, default to `True`):
-            If `True`, add a 1x1 nn.conv2d layer for skip-connection.
-        up (`bool`, *optional*, default to `False`): If `True`, add an upsample layer.
-        down (`bool`, *optional*, default to `False`): If `True`, add a downsample layer.
-        conv_shortcut_bias (`bool`, *optional*, default to `True`):  If `True`, adds a learnable bias to the
-            `conv_shortcut` output.
-        conv_2d_out_channels (`int`, *optional*, default to `None`): the number of channels in the output.
-            If None, same as `out_channels`.
-    """
-
-    def __init__(
-        self,
-        *,
-        in_channels: int,
-        out_channels: int | None = None,
-        conv_shortcut: bool = False,
-        dropout: float = 0.0,
-        temb_channels: int = 512,
-        groups: int = 32,
-        groups_out: int | None = None,
-        eps: float = 1e-6,
-        non_linearity: str = "swish",
-        time_embedding_norm: str = "ada_group",  # ada_group, spatial
-        output_scale_factor: float = 1.0,
-        use_in_shortcut: bool | None = None,
-        up: bool = False,
-        down: bool = False,
-        conv_shortcut_bias: bool = True,
-        conv_2d_out_channels: int | None = None,
-    ):
-        self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
-        self.out_channels = out_channels
-        self.use_conv_shortcut = conv_shortcut
-        self.up = up
-        self.down = down
-        self.output_scale_factor = output_scale_factor
-        self.time_embedding_norm = time_embedding_norm
-
-        if groups_out is None:
-            groups_out = groups
-
-        if self.time_embedding_norm == "spatial":
-            self.norm1 = SpatialNorm(in_channels, temb_channels)
-        else:
-            raise ValueError(
-                f" unsupported time_embedding_norm: {self.time_embedding_norm}"
-            )
-
-        self.conv1 = Conv2d(
-            in_channels, out_channels, kernel_size=3, stride=1, padding=1
-        )
-
-        if self.time_embedding_norm == "spatial":  # spatial
-            self.norm2 = SpatialNorm(out_channels, temb_channels)
-        else:
-            raise ValueError(
-                f" unsupported time_embedding_norm: {self.time_embedding_norm}"
-            )
-
-        self.dropout = Dropout(dropout)
-
-        conv_2d_out_channels = conv_2d_out_channels or out_channels
-        self.conv2 = Conv2d(
-            out_channels,
-            conv_2d_out_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-        )
-
-        self.nonlinearity = get_activation(non_linearity)
-
-        self.upsample = self.downsample = None
-        if self.up:
-            self.upsample = Upsample2D(in_channels, use_conv=False)
-        elif self.down:
-            self.downsample = Downsample2D(
-                in_channels, use_conv=False, padding=1, name="op"
-            )
-
-        self.use_in_shortcut = (
-            self.in_channels != conv_2d_out_channels
-            if use_in_shortcut is None
-            else use_in_shortcut
-        )
-
-        self.conv_shortcut = None
-        if self.use_in_shortcut:
-            self.conv_shortcut = Conv2d(
-                in_channels,
-                conv_2d_out_channels,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-                bias=conv_shortcut_bias,
-            )
-
-    def __call__(
-        self, input_tensor: Tensor, temb: Tensor, *args, **kwargs
-    ) -> Tensor:
-        hidden_states = input_tensor
-
-        hidden_states = self.norm1(hidden_states, temb)
-
-        hidden_states = self.nonlinearity(hidden_states)
-
-        if self.upsample is not None:
-            # upsample_nearest_nhwc fails with large batch sizes. see https://github.com/huggingface/diffusers/issues/984
-            if hidden_states.shape[0] >= 64:
-                # .contiguous() not needed in MAX - tensors are already contiguous
-                pass
-            input_tensor = self.upsample(input_tensor)
-            hidden_states = self.upsample(hidden_states)
-
-        elif self.downsample is not None:
-            input_tensor = self.downsample(input_tensor)
-            hidden_states = self.downsample(hidden_states)
-
-        hidden_states = self.conv1(hidden_states)
-
-        hidden_states = self.norm2(hidden_states, temb)
-
-        hidden_states = self.nonlinearity(hidden_states)
-
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.conv2(hidden_states)
-
-        if self.conv_shortcut is not None:
-            input_tensor = self.conv_shortcut(input_tensor)
-
-        output_tensor = (
-            input_tensor + hidden_states
-        ) / self.output_scale_factor
-
-        return output_tensor
 
 
 class ResnetBlock2D(nn.Module):
@@ -251,6 +93,7 @@ class ResnetBlock2D(nn.Module):
         conv_shortcut_bias: bool = True,
         conv_2d_out_channels: int | None = None,
     ):
+        print(f"[DEBUG ResnetBlock2D] Starting init (in={in_channels}, out={out_channels})...")
         if time_embedding_norm == "ada_group":
             raise ValueError(
                 "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
@@ -274,14 +117,17 @@ class ResnetBlock2D(nn.Module):
         if groups_out is None:
             groups_out = groups
 
+        print("[DEBUG ResnetBlock2D] Creating norm1...")
         self.norm1 = GroupNorm(
             num_groups=groups, num_channels=in_channels, eps=eps, affine=True
         )
 
+        print("[DEBUG ResnetBlock2D] Creating conv1...")
         self.conv1 = Conv2d(
             in_channels, out_channels, kernel_size=3, stride=1, padding=1
         )
 
+        print("[DEBUG ResnetBlock2D] Creating time_emb_proj...")
         if temb_channels is not None:
             if self.time_embedding_norm == "default":
                 self.time_emb_proj = nn.Linear(temb_channels, out_channels)
@@ -294,6 +140,7 @@ class ResnetBlock2D(nn.Module):
         else:
             self.time_emb_proj = None
 
+        print("[DEBUG ResnetBlock2D] Creating norm2...")
         self.norm2 = GroupNorm(
             num_groups=groups_out,
             num_channels=out_channels,
@@ -301,8 +148,10 @@ class ResnetBlock2D(nn.Module):
             affine=True,
         )
 
+        print("[DEBUG ResnetBlock2D] Creating dropout...")
         self.dropout = Dropout(dropout)
         conv_2d_out_channels = conv_2d_out_channels or out_channels
+        print(f"[DEBUG ResnetBlock2D] Creating conv2 ({out_channels}->{conv_2d_out_channels})...")
         self.conv2 = Conv2d(
             out_channels,
             conv_2d_out_channels,
@@ -310,7 +159,9 @@ class ResnetBlock2D(nn.Module):
             stride=1,
             padding=1,
         )
+        print("[DEBUG ResnetBlock2D] conv2 created.")
 
+        print("[DEBUG ResnetBlock2D] Creating nonlinearity...")
         self.nonlinearity = get_activation(non_linearity)
 
         self.upsample = self.downsample = None
@@ -319,9 +170,12 @@ class ResnetBlock2D(nn.Module):
                 fir_kernel = (1, 3, 3, 1)
                 self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
             elif kernel == "sde_vp":
-                self.upsample = partial(
-                    F.interpolate, scale_factor=2.0, mode="nearest"
+                raise NotImplementedError(
+                    "sde_vp kernel not implemented since F.interpolate not implemented"
                 )
+                # self.upsample = partial(
+                #     F.interpolate, scale_factor=2.0, mode="nearest"
+                # )
             else:
                 self.upsample = Upsample2D(in_channels, use_conv=False)
         elif self.down:
@@ -341,8 +195,10 @@ class ResnetBlock2D(nn.Module):
             else use_in_shortcut
         )
 
+        print(f"[DEBUG ResnetBlock2D] use_in_shortcut={self.use_in_shortcut}")
         self.conv_shortcut = None
         if self.use_in_shortcut:
+            print("[DEBUG ResnetBlock2D] Creating conv_shortcut...")
             self.conv_shortcut = Conv2d(
                 in_channels,
                 conv_2d_out_channels,
@@ -351,6 +207,7 @@ class ResnetBlock2D(nn.Module):
                 padding=0,
                 bias=conv_shortcut_bias,
             )
+        print("[DEBUG ResnetBlock2D] Init complete.")
 
     def __call__(
         self, input_tensor: Tensor, temb: Tensor, *args, **kwargs

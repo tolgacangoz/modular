@@ -10,10 +10,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
+"""Tests for PixelGenerationConfig."""
 
-from .arch import z_image_module_v3_arch
-from .model_config import ZImageConfig
+from max.pipelines.lib import PixelGenerationConfig
 
-ARCHITECTURES = [z_image_module_v3_arch]
 
-__all__ = ["ARCHITECTURES", "ZImageConfig", "z_image_module_v3_arch"]
+def test_pixel_generation_config_missing_help_method() -> None:
+    """Test that PixelGenerationConfig is missing a help() method and should have one."""
+
+    # Check if PixelGenerationConfig has its own help method or inherits from PipelineConfig
+    assert "help" in PixelGenerationConfig.__dict__, (
+        "PixelGenerationConfig should have its own help() method"
+    )

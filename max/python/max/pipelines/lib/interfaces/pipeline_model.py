@@ -165,12 +165,14 @@ class PipelineModel(ABC, Generic[BaseContextType]):
         return_hidden_states: ReturnHiddenStates = ReturnHiddenStates.NONE,
         scheduler_config: SchedulerConfig | None = None,
         vae_config: VAEConfig | None = None,
+        text_encoder_config: AutoConfig | None = None,
         transformer_config: TransformerConfig | None = None,
     ) -> None:
         self.pipeline_config = pipeline_config
         self.huggingface_config = huggingface_config
         self.scheduler_config = scheduler_config
         self.vae_config = vae_config
+        self.text_encoder_config = text_encoder_config
         self.transformer_config = transformer_config
         self.encoding = encoding
         self.devices = devices

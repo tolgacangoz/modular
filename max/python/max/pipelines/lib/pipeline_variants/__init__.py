@@ -11,5 +11,5 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from .image_generation import ImageGenerationPipeline
+from .pixel_generation import PixelGenerationPipeline
 from .text_generation import TextGenerationPipeline

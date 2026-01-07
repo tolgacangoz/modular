@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
+from max.dtype import DType
 from max.experimental.tensor import Tensor
 
 from .layers import AutoencoderKLOutput, Conv2d
@@ -97,6 +98,27 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         use_post_quant_conv: bool = True,
         mid_block_add_attention: bool = True,
     ):
+        super().__init__()
+        print("[DEBUG AutoencoderKL] Starting init...")
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.down_block_types = down_block_types
+        self.up_block_types = up_block_types
+        self.block_out_channels = block_out_channels
+        self.layers_per_block = layers_per_block
+        self.act_fn = act_fn
+        self.latent_channels = latent_channels
+        self.norm_num_groups = norm_num_groups
+        self.sample_size = sample_size
+        self.scaling_factor = scaling_factor
+        self.shift_factor = shift_factor
+        self.latents_mean = latents_mean
+        self.latents_std = latents_std
+        self.force_upcast = force_upcast
+        self.use_quant_conv = use_quant_conv
+        self.use_post_quant_conv = use_post_quant_conv
+        self.mid_block_add_attention = mid_block_add_attention
+        print("[DEBUG AutoencoderKL] Creating Encoder...")
         # pass init params to Encoder
         self.encoder = Encoder(
             in_channels=in_channels,
@@ -109,6 +131,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             double_z=True,
             mid_block_add_attention=mid_block_add_attention,
         )
+        print("[DEBUG AutoencoderKL] Encoder created. Creating Decoder...")
 
         # pass init params to Decoder
         self.decoder = Decoder(
@@ -121,6 +144,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             act_fn=act_fn,
             mid_block_add_attention=mid_block_add_attention,
         )
+        print("[DEBUG AutoencoderKL] Decoder created. Creating conv layers...")
 
         self.quant_conv = (
             Conv2d(2 * latent_channels, 2 * latent_channels, 1)
@@ -147,6 +171,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             sample_size / (2 ** (len(block_out_channels) - 1))
         )
         self.tile_overlap_factor = 0.25
+        print("[DEBUG AutoencoderKL] Init complete.")
 
     def _encode(self, x: Tensor) -> Tensor:
         _, _, height, width = x.shape
@@ -163,20 +188,15 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
 
         return enc
 
-    def encode(
-        self, x: Tensor, return_dict: bool = True
-    ) -> AutoencoderKLOutput | tuple[DiagonalGaussianDistribution]:
+    def encode(self, x: Tensor) -> AutoencoderKLOutput:
         """
         Encode a batch of images into latents.
 
         Args:
             x (`Tensor`): Input batch of images.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether to return a [`~models.autoencoder_kl.AutoencoderKLOutput`] instead of a plain tuple.
 
         Returns:
-                The latent representations of the encoded images. If `return_dict` is True, a
-                [`~models.autoencoder_kl.AutoencoderKLOutput`] is returned, otherwise a plain `tuple` is returned.
+            The latent representations of the encoded images.
         """
         if self.use_slicing and x.shape[0] > 1:
             encoded_slices = [self._encode(x_slice) for x_slice in x.split(1)]
@@ -186,48 +206,35 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
 
         posterior = DiagonalGaussianDistribution(h)
 
-        if not return_dict:
-            return (posterior,)
-
         return AutoencoderKLOutput(latent_dist=posterior)
 
-    def _decode(
-        self, z: Tensor, return_dict: bool = True
-    ) -> DecoderOutput | Tensor:
+    def _decode(self, z: Tensor) -> DecoderOutput:
         if self.use_tiling and (
             z.shape[-1] > self.tile_latent_min_size
             or z.shape[-2] > self.tile_latent_min_size
         ):
-            return self.tiled_decode(z, return_dict=return_dict)
+            return self.tiled_decode(z).sample
 
         if self.post_quant_conv is not None:
             z = self.post_quant_conv(z)
 
         dec = self.decoder(z)
 
-        if not return_dict:
-            return (dec,)
-
         return DecoderOutput(sample=dec)
 
     def decode(
         self,
         z: Tensor,
-        return_dict: bool = True,
-        # generator=None
-    ) -> DecoderOutput | Tensor:
+        seed: int | None = None,
+    ) -> DecoderOutput:
         """
         Decode a batch of images.
 
         Args:
             z (`Tensor`): Input batch of latent vectors.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether to return a [`~models.vae.DecoderOutput`] instead of a plain tuple.
 
         Returns:
-            [`~models.vae.DecoderOutput`] or `tuple`:
-                If return_dict is True, a [`~models.vae.DecoderOutput`] is returned, otherwise a plain `tuple` is
-                returned.
+            [`~models.vae.DecoderOutput`]: The decoded images.
 
         """
         if self.use_slicing and z.shape[0] > 1:
@@ -238,10 +245,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         else:
             decoded = self._decode(z).sample
 
-        if not return_dict:
-            return (decoded,)
-
-        return DecoderOutput(sample=decoded)
+        return DecoderOutput(sample=decoded.cast(DType.float32))
 
     def blend_v(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         """Blend two tensors vertically using slice/concat (no item assignment)."""
@@ -346,9 +350,7 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         enc = F.concat(result_rows, axis=2)
         return enc
 
-    def tiled_encode(
-        self, x: Tensor, return_dict: bool = True
-    ) -> AutoencoderKLOutput:
+    def tiled_encode(self, x: Tensor) -> AutoencoderKLOutput:
         r"""Encode a batch of images using a tiled encoder.
 
         When this option is enabled, the VAE will split the input tensor into tiles to compute encoding in several
@@ -359,13 +361,9 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
 
         Args:
             x (`Tensor`): Input batch of images.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.autoencoder_kl.AutoencoderKLOutput`] instead of a plain tuple.
 
         Returns:
-            [`~models.autoencoder_kl.AutoencoderKLOutput`] or `tuple`:
-                If return_dict is True, a [`~models.autoencoder_kl.AutoencoderKLOutput`] is returned, otherwise a plain
-                `tuple` is returned.
+            [`~models.autoencoder_kl.AutoencoderKLOutput`]: The encoded images.
         """
 
         overlap_size = int(
@@ -406,26 +404,17 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         moments = F.concat(result_rows, axis=2)
         posterior = DiagonalGaussianDistribution(moments)
 
-        if not return_dict:
-            return (posterior,)
-
         return AutoencoderKLOutput(latent_dist=posterior)
 
-    def tiled_decode(
-        self, z: Tensor, return_dict: bool = True
-    ) -> DecoderOutput | Tensor:
+    def tiled_decode(self, z: Tensor) -> DecoderOutput:
         r"""
         Decode a batch of images using a tiled decoder.
 
         Args:
             z (`Tensor`): Input batch of latent vectors.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.vae.DecoderOutput`] instead of a plain tuple.
 
         Returns:
-            [`~models.vae.DecoderOutput`] or `tuple`:
-                If return_dict is True, a [`~models.vae.DecoderOutput`] is returned, otherwise a plain `tuple` is
-                returned.
+            [`~models.vae.DecoderOutput`]: The decoded images.
         """
         overlap_size = int(
             self.tile_latent_min_size * (1 - self.tile_overlap_factor)
@@ -464,8 +453,6 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
             result_rows.append(F.concat(result_row, axis=3))
 
         dec = F.concat(result_rows, axis=2)
-        if not return_dict:
-            return (dec,)
 
         return DecoderOutput(sample=dec)
 
@@ -473,28 +460,22 @@ class AutoencoderKL(nn.Module, AutoencoderMixin):
         self,
         sample: Tensor,
         sample_posterior: bool = False,
-        return_dict: bool = True,
-        # generator: Generator | None = None,
-    ) -> DecoderOutput | Tensor:
+        seed: int | None = None,
+    ) -> DecoderOutput:
         r"""
         Args:
             sample (`Tensor`): Input sample.
             sample_posterior (`bool`, *optional*, defaults to `False`):
                 Whether to sample from the posterior.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`DecoderOutput`] instead of a plain tuple.
+            seed (`int`, *optional*, defaults to `None`):
+                Seed for reproducible random sampling from posterior.
         """
         x = sample
         posterior = self.encode(x).latent_dist
         if sample_posterior:
-            z = posterior.sample(
-                # generator=generator
-            )
+            z = posterior.sample(seed=seed)
         else:
             z = posterior.mode()
         dec = self.decode(z).sample
-
-        if not return_dict:
-            return (dec,)
 
         return DecoderOutput(sample=dec)

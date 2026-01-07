@@ -31,7 +31,6 @@ from .layers import (
     ModuleDict,
     RMSNorm,
     SiLU,
-    Transformer2DModelOutput,
 )
 
 ADALN_EMBED_DIM = 256
@@ -83,17 +82,12 @@ class TimestepEmbedder(nn.Module):
 
     def __call__(self, t: Tensor) -> Tensor:
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        # t_freq = t_freq.cast(self.mlp[0].weight.dtype)
+        # TODO: Verify that self.mlp[0].weight.dtype==t_freq.dtype
         t_emb = self.mlp(t_freq)
         return t_emb
 
 
 class ZImageSingleStreamAttention(nn.Module):
-    """
-    Z-Image specific attention module.
-    Stateless implementation using flash_attention_ragged_gpu.
-    """
-
     def __init__(
         self,
         dim: int,
@@ -110,7 +104,9 @@ class ZImageSingleStreamAttention(nn.Module):
         self.to_q = nn.Linear(dim, self.inner_dim, bias=False)
         self.to_k = nn.Linear(dim, self.kv_inner_dim, bias=False)
         self.to_v = nn.Linear(dim, self.kv_inner_dim, bias=False)
-        self.to_out = nn.Linear(self.inner_dim, dim, bias=False)
+        # Use ModuleList to match Diffusers checkpoint naming: `to_out.0.weight`.
+        # `to_out.1` is a Dropout layer, so we can skip it.
+        self.to_out = ModuleList([nn.Linear(self.inner_dim, dim, bias=False)])
 
         self.norm_q = RMSNorm(dim // heads, eps)
         self.norm_k = RMSNorm(dim // heads, eps)
@@ -126,10 +122,7 @@ class ZImageSingleStreamAttention(nn.Module):
         key = self.to_k(hidden_states)
         value = self.to_v(hidden_states)
 
-        # Z-Image always uses rank-3 inputs: (B, S, C)
-        # Get shapes using symbolic dimensions (graph-safe)
-        B = hidden_states.shape[0]
-        S = hidden_states.shape[1]
+        B, S, _C = hidden_states.shape
 
         query = query.reshape((B, S, self.heads, self.head_dim))
         key = key.reshape((B, S, self.heads, self.head_dim))
@@ -140,21 +133,15 @@ class ZImageSingleStreamAttention(nn.Module):
         key = self.norm_k(key)
 
         # Apply RoPE
-        # Note: This implementation avoids list(tensor.shape) which causes sync issues
         def apply_rotary_emb(
             x_in: Tensor, freqs_cis: Tensor, b: int, s: int, h: int, d: int
         ) -> Tensor:
-            # x_in shape: (B, S, H, D)
             # Reshape for complex interpretation: (B, S, H, D) -> (B, S, H, D/2, 2)
-            half_d = d // 2
-            x_complex = x_in.cast(DType.float32).reshape((b, s, h, half_d, 2))
-
+            x_complex = x_in.cast(DType.float32).reshape((b, s, h, d // 2, 2))
             # Expand freqs_cis at dim 2 (heads) to broadcast: (B, S, 1, D/2, 2)
             freqs_cis_expanded = F.unsqueeze(freqs_cis, 2)
-
             # Apply complex multiplication
             x_rotated = F.complex_mul(x_complex, freqs_cis_expanded)
-
             # Reshape back to (B, S, H, D)
             x_out = x_rotated.reshape((b, s, h, d))
             return x_out.cast(x_in.dtype)
@@ -237,7 +224,7 @@ class ZImageTransformerBlock(nn.Module):
         x: Tensor,
         freqs_cis: Tensor,
         adaln_input: Tensor | None = None,
-        valid_length: Tensor | None = None,  # Always None for batch size 1
+        valid_length: Tensor | None = None,
     ) -> Tensor:
         if self.modulation:
             if adaln_input is None:
@@ -469,38 +456,11 @@ class ZImageTransformer2DModel(nn.Module):
         )
 
         # Fixed shape parameters for graph compilation (batch_size=1, 1024x1024 output)
-        # These avoid int(tensor.shape) during graph tracing
         self._compile_C = 16
         self._compile_F_dim = 1
         self._compile_H_dim = 128
         self._compile_W_dim = 128
-        self._compile_cap_seq_len = 101
-
-    def unpatchify(
-        self,
-        x: list[Tensor],
-        size: list[tuple],
-        patch_size: int,
-        f_patch_size: int,
-    ) -> list[Tensor]:
-        pH = pW = patch_size
-        pF = f_patch_size
-        bsz = len(x)
-        if len(size) != bsz:
-            raise ValueError("size must have the same length as batch size")
-        for i in range(bsz):
-            F, H, W = size[i]
-            ori_len = (F // pF) * (H // pH) * (W // pW)
-            # "f h w pf ph pw c -> c (f pf) (h ph) (w pw)"
-            x[i] = (
-                x[i][:ori_len]
-                .reshape(
-                    (F // pF, H // pH, W // pW, pF, pH, pW, self.out_channels)
-                )
-                .permute((6, 0, 3, 1, 4, 2, 5))
-                .reshape((self.out_channels, F, H, W))
-            )
-        return x
+        self._compile_cap_seq_len = 75
 
     @staticmethod
     def create_coordinate_grid(
@@ -551,188 +511,18 @@ class ZImageTransformer2DModel(nn.Module):
         # Stack along last dimension: (F, H, W, 3)
         return F.stack([f_grid, h_grid, w_grid], axis=-1)
 
-    def patchify_and_embed(
-        self,
-        all_image: list[Tensor],
-        all_cap_feats: list[Tensor],
-        patch_size: int,
-        f_patch_size: int,
-    ) -> tuple[
-        list[Tensor],
-        list[Tensor],
-        list[Tensor],
-        list[Tensor],
-        list[Tensor],
-        list[Tensor],
-        list[Tensor],
-    ]:
-        pH = pW = patch_size
-        pF = f_patch_size
-        device = all_image[0].device
-
-        all_image_out = []
-        all_image_size = []
-        all_image_pos_ids = []
-        all_image_pad_mask = []
-        all_cap_pos_ids = []
-        all_cap_pad_mask = []
-        all_cap_feats_out = []
-
-        for image, cap_feat in zip(all_image, all_cap_feats, strict=False):
-            ### Process Caption
-            # cap_ori_len = len(cap_feat)
-            cap_ori_len = int(cap_feat.shape[0])
-            cap_padding_len = (-cap_ori_len) % SEQ_MULTI_OF
-            # padded position ids
-            cap_padded_pos_ids = F.flatten(
-                self.create_coordinate_grid(
-                    size=(cap_ori_len + cap_padding_len, 1, 1),
-                    start=(1, 0, 0),
-                    device=device,
-                ),
-                0,
-                2,
-            )
-            all_cap_pos_ids.append(cap_padded_pos_ids)
-            # pad mask
-            cap_pad_mask = F.concat(
-                [
-                    Tensor.zeros(
-                        (cap_ori_len,), dtype=DType.bool, device=device
-                    ),
-                    Tensor.ones(
-                        (cap_padding_len,), dtype=DType.bool, device=device
-                    ),
-                ],
-                axis=0,
-            )
-            all_cap_pad_mask.append(
-                cap_pad_mask
-                if cap_padding_len > 0
-                else Tensor.zeros(
-                    (cap_ori_len,), dtype=DType.bool, device=device
-                )
-            )
-
-            # padded feature
-            if cap_padding_len > 0:
-                cap_feat_last = cap_feat[-1:]
-                cap_repeats = [cap_padding_len] + [1] * (cap_feat_last.rank - 1)
-                cap_padded_feat = F.concat(
-                    [cap_feat, F.tile(cap_feat_last, tuple(cap_repeats))],
-                    axis=0,
-                )
-            else:
-                cap_padded_feat = cap_feat
-
-            all_cap_feats_out.append(cap_padded_feat)
-
-            ### Process Image
-            C, F_dim, H_dim, W_dim = image.shape
-            C, F_dim, H_dim, W_dim = int(C), int(F_dim), int(H_dim), int(W_dim)
-            all_image_size.append((F_dim, H_dim, W_dim))
-            F_tokens, H_tokens, W_tokens = F_dim // pF, H_dim // pH, W_dim // pW
-
-            image = image.reshape((C, F_tokens, pF, H_tokens, pH, W_tokens, pW))
-            # "c f pf h ph w pw -> (f h w) (pf ph pw c)"
-            image = image.permute((1, 3, 5, 2, 4, 6, 0)).reshape(
-                (F_tokens * H_tokens * W_tokens, pF * pH * pW * C)
-            )
-
-            image_ori_len = int(image.shape[0])
-            image_padding_len = (-image_ori_len) % SEQ_MULTI_OF
-
-            image_ori_pos_ids = F.flatten(
-                self.create_coordinate_grid(
-                    size=(F_tokens, H_tokens, W_tokens),
-                    start=(cap_ori_len + cap_padding_len + 1, 0, 0),
-                    device=device,
-                ),
-                0,
-                2,
-            )
-            if image_padding_len > 0:
-                image_padded_pos_ids = F.concat(
-                    [
-                        image_ori_pos_ids,
-                        F.tile(
-                            F.flatten(
-                                self.create_coordinate_grid(
-                                    size=(1, 1, 1),
-                                    start=(0, 0, 0),
-                                    device=device,
-                                ),
-                                0,
-                                2,
-                            ),
-                            (image_padding_len, 1),
-                        ),
-                    ],
-                    axis=0,
-                )
-            else:
-                image_padded_pos_ids = image_ori_pos_ids
-            all_image_pos_ids.append(image_padded_pos_ids)
-            # pad mask
-            image_pad_mask = F.concat(
-                [
-                    Tensor.zeros(
-                        (image_ori_len,), dtype=DType.bool, device=device
-                    ),
-                    Tensor.ones(
-                        (image_padding_len,), dtype=DType.bool, device=device
-                    ),
-                ],
-                axis=0,
-            )
-            all_image_pad_mask.append(
-                image_pad_mask
-                if image_padding_len > 0
-                else Tensor.zeros(
-                    (image_ori_len,), dtype=DType.bool, device=device
-                )
-            )
-            # padded feature
-            if image_padding_len > 0:
-                image_last = image[-1:]
-                image_repeats = [image_padding_len] + [1] * (
-                    image_last.rank - 1
-                )
-                image_padded_feat = F.concat(
-                    [image, F.tile(image_last, tuple(image_repeats))],
-                    axis=0,
-                )
-                all_image_out.append(image_padded_feat)
-            else:
-                all_image_out.append(image)
-
-        return (
-            all_image_out,
-            all_cap_feats_out,
-            all_image_size,
-            all_image_pos_ids,
-            all_cap_pos_ids,
-            all_image_pad_mask,
-            all_cap_pad_mask,
-        )
-
     def __call__(
         self,
         x: Tensor,
         t: Tensor,
         cap_feats: Tensor,
-        return_dict: bool = False,
     ):
         """Graph-compilable forward pass for batch_size=1.
-
-        Uses fixed shape parameters stored in self._compile_* attributes
-        to avoid int(tensor.shape) during graph tracing.
 
         Args:
             x: Image latent tensor of shape (C, F_dim, H_dim, W_dim)
             t: Timestep tensor of shape (1,)
             cap_feats: Caption features tensor of shape (cap_seq_len, hidden_dim)
-            return_dict: Whether to return a dict (default False for compilation)
         """
         # Use fixed shape parameters from class attributes
         C = self._compile_C
@@ -751,7 +541,7 @@ class ZImageTransformer2DModel(nn.Module):
         t = self.t_embedder(t)
         adaln_input = t.cast(x.dtype)
 
-        # Patchify image - using class shape parameters (no int() on tensor.shape)
+        # Patchify image - using class shape parameters
         pF, pH, pW = f_patch_size, patch_size, patch_size
         x_size = (F_dim, H_dim, W_dim)
         F_tokens, H_tokens, W_tokens = F_dim // pF, H_dim // pH, W_dim // pW
@@ -839,7 +629,4 @@ class ZImageTransformer2DModel(nn.Module):
         )  # (out_channels, F_tokens, pF, H_tokens, pH, W_tokens, pW)
         x = x.reshape((out_channels, F_dim, H_dim, W_dim))
 
-        if not return_dict:
-            return x
-
-        return Transformer2DModelOutput(sample=x)
+        return x

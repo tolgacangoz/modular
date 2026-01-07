@@ -15,10 +15,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from max.driver import CPU, Device
+from max.driver import Device
 from max.dtype import DType
 from max.experimental import functional as F
-from max.experimental import random
 from max.experimental.tensor import Tensor
 
 # Note: scipy.stats.beta.ppf is used for beta sigmas but requires scipy
@@ -179,9 +178,7 @@ class FlowMatchEulerDiscreteScheduler:
 
         self._shift = shift
 
-        self.sigmas = sigmas.to(
-            CPU()
-        )  # to avoid too much CPU/GPU communication
+        self.sigmas = sigmas  # Keep on default device
         self.sigma_min = self.sigmas[-1].item()
         self.sigma_max = self.sigmas[0].item()
 
@@ -426,15 +423,31 @@ class FlowMatchEulerDiscreteScheduler:
         if schedule_timesteps is None:
             schedule_timesteps = self.timesteps
 
-        indices = (schedule_timesteps == timestep).nonzero()
+        # Get timestep value as scalar
+        timestep_val = (
+            timestep.item() if isinstance(timestep, Tensor) else float(timestep)
+        )
 
-        # The sigma index that is taken for the **very** first `step`
-        # is always the second index (or the last index if there is only 1)
-        # This way we can ensure we don't accidentally skip a sigma in
-        # case we start in the middle of the denoising schedule (e.g. for image-to-image)
-        pos = 1 if len(indices) > 1 else 0
+        # Create boolean mask where timesteps match (within tolerance)
+        mask = F.abs(schedule_timesteps - timestep_val) < 1e-5
+        mask_int = mask.cast(DType.int32)
 
-        return indices[pos].item()
+        # Count number of matches
+        num_matches = F.sum(mask_int).item()
+
+        # Use cumsum to find the nth match
+        # cumsum gives [0,0,1,1,2,2,...] where values increase at each True
+        cumsum = F.cumsum(mask_int, axis=0)
+
+        # We want the second match (pos=1) if num_matches > 1, else first (pos=0)
+        target_pos = (
+            2 if num_matches > 1 else 1
+        )  # cumsum value we're looking for
+
+        # Find first index where cumsum equals target_pos
+        # This is where the target_pos'th True occurs
+        diff = F.abs(cumsum - target_pos)
+        return F.argmin(diff).item()
 
     def _init_step_index(self, timestep: Tensor) -> None:
         if self.begin_index is None:
@@ -453,10 +466,9 @@ class FlowMatchEulerDiscreteScheduler:
         s_tmin: float = 0.0,
         s_tmax: float = float("inf"),
         s_noise: float = 1.0,
-        # generator: Generator | None = None,
+        seed: int | None = None,
         per_token_timesteps: Tensor | None = None,
-        return_dict: bool = True,
-    ) -> FlowMatchEulerDiscreteSchedulerOutput | tuple:
+    ) -> FlowMatchEulerDiscreteSchedulerOutput:
         """
         Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
         process from the learned model outputs (most often the predicted noise).
@@ -473,19 +485,14 @@ class FlowMatchEulerDiscreteScheduler:
             s_tmax  (`float`):
             s_noise (`float`, defaults to 1.0):
                 Scaling factor for noise added to the sample.
-            generator (`Generator`, *optional*):
-                A random number generator.
+            seed (`int`, *optional*):
+                Seed for reproducible random noise generation.
             per_token_timesteps (`Tensor`, *optional*):
                 The timesteps for each token in the sample.
-            return_dict (`bool`):
-                Whether or not to return a
-                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] or tuple.
 
         Returns:
-            [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] or `tuple`:
-                If return_dict is `True`,
-                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] is returned,
-                otherwise a tuple is returned where the first element is the sample tensor.
+            [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`]:
+                [`~schedulers.scheduling_flow_match_euler_discrete.FlowMatchEulerDiscreteSchedulerOutput`] is returned.
         """
 
         if self.step_index is None:
@@ -515,8 +522,18 @@ class FlowMatchEulerDiscreteScheduler:
             dt = sigma_next - sigma
 
         if self.stochastic_sampling:
+            import torch
+
             x0 = sample - current_sigma * model_output
-            noise = random.normal(sample)
+            # Use PyTorch for random generation to match diffusers exactly
+            generator = torch.Generator("cpu")
+            if seed is not None:
+                generator.manual_seed(seed)
+            shape = tuple(int(d) for d in sample.shape)
+            noise_torch = torch.randn(
+                shape, generator=generator, dtype=torch.float32
+            )
+            noise = Tensor.from_dlpack(noise_torch.numpy()).to(sample.device)
             prev_sample = (1.0 - next_sigma) * x0 + next_sigma * noise
         else:
             prev_sample = sample + dt * model_output
@@ -526,9 +543,6 @@ class FlowMatchEulerDiscreteScheduler:
         if per_token_timesteps is None:
             # Cast sample back to model compatible dtype
             prev_sample = prev_sample.cast(model_output.dtype)
-
-        if not return_dict:
-            return (prev_sample,)
 
         return FlowMatchEulerDiscreteSchedulerOutput(prev_sample=prev_sample)
 
