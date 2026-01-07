@@ -93,6 +93,7 @@ class ResnetBlock2D(nn.Module):
         conv_shortcut_bias: bool = True,
         conv_2d_out_channels: int | None = None,
     ):
+        print(f"[DEBUG ResnetBlock2D] Starting init (in={in_channels}, out={out_channels})...")
         if time_embedding_norm == "ada_group":
             raise ValueError(
                 "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
@@ -116,14 +117,17 @@ class ResnetBlock2D(nn.Module):
         if groups_out is None:
             groups_out = groups
 
+        print("[DEBUG ResnetBlock2D] Creating norm1...")
         self.norm1 = GroupNorm(
             num_groups=groups, num_channels=in_channels, eps=eps, affine=True
         )
 
+        print("[DEBUG ResnetBlock2D] Creating conv1...")
         self.conv1 = Conv2d(
             in_channels, out_channels, kernel_size=3, stride=1, padding=1
         )
 
+        print("[DEBUG ResnetBlock2D] Creating time_emb_proj...")
         if temb_channels is not None:
             if self.time_embedding_norm == "default":
                 self.time_emb_proj = nn.Linear(temb_channels, out_channels)
@@ -136,6 +140,7 @@ class ResnetBlock2D(nn.Module):
         else:
             self.time_emb_proj = None
 
+        print("[DEBUG ResnetBlock2D] Creating norm2...")
         self.norm2 = GroupNorm(
             num_groups=groups_out,
             num_channels=out_channels,
@@ -143,6 +148,7 @@ class ResnetBlock2D(nn.Module):
             affine=True,
         )
 
+        print("[DEBUG ResnetBlock2D] Creating dropout and conv2...")
         self.dropout = Dropout(dropout)
         conv_2d_out_channels = conv_2d_out_channels or out_channels
         self.conv2 = Conv2d(
@@ -153,6 +159,7 @@ class ResnetBlock2D(nn.Module):
             padding=1,
         )
 
+        print("[DEBUG ResnetBlock2D] Creating nonlinearity...")
         self.nonlinearity = get_activation(non_linearity)
 
         self.upsample = self.downsample = None
@@ -186,8 +193,10 @@ class ResnetBlock2D(nn.Module):
             else use_in_shortcut
         )
 
+        print(f"[DEBUG ResnetBlock2D] use_in_shortcut={self.use_in_shortcut}")
         self.conv_shortcut = None
         if self.use_in_shortcut:
+            print("[DEBUG ResnetBlock2D] Creating conv_shortcut...")
             self.conv_shortcut = Conv2d(
                 in_channels,
                 conv_2d_out_channels,
@@ -196,6 +205,7 @@ class ResnetBlock2D(nn.Module):
                 padding=0,
                 bias=conv_shortcut_bias,
             )
+        print("[DEBUG ResnetBlock2D] Init complete.")
 
     def __call__(
         self, input_tensor: Tensor, temb: Tensor, *args, **kwargs
