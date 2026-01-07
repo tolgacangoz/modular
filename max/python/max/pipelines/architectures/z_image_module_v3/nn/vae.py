@@ -103,8 +103,10 @@ class Encoder(nn.Module):
         double_z: bool = True,
         mid_block_add_attention: bool = True,
     ):
+        print("[DEBUG Encoder] Starting init...")
         self.layers_per_block = layers_per_block
 
+        print("[DEBUG Encoder] Creating conv_in...")
         self.conv_in = Conv2d(
             in_channels,
             block_out_channels[0],
@@ -112,12 +114,14 @@ class Encoder(nn.Module):
             stride=1,
             padding=1,
         )
+        print("[DEBUG Encoder] conv_in created. Creating down_blocks...")
 
         self.down_blocks = ModuleList([])
 
         # down
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
+            print(f"[DEBUG Encoder] Creating down_block {i}...")
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
@@ -136,8 +140,10 @@ class Encoder(nn.Module):
                 temb_channels=None,
             )
             self.down_blocks.append(down_block)
+            print(f"[DEBUG Encoder] down_block {i} created.")
 
         # mid
+        print("[DEBUG Encoder] Creating mid_block...")
         self.mid_block = UNetMidBlock2D(
             in_channels=block_out_channels[-1],
             resnet_eps=1e-6,
@@ -149,6 +155,7 @@ class Encoder(nn.Module):
             temb_channels=None,
             add_attention=mid_block_add_attention,
         )
+        print("[DEBUG Encoder] mid_block created. Creating output layers...")
 
         # out
         self.conv_norm_out = GroupNorm(
@@ -164,6 +171,7 @@ class Encoder(nn.Module):
         )
 
         self.gradient_checkpointing = False
+        print("[DEBUG Encoder] Init complete.")
 
     def __call__(self, sample: Tensor) -> Tensor:
         r"""The forward method of the `Encoder` class."""
