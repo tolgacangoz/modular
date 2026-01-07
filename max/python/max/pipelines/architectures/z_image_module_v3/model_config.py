@@ -421,6 +421,15 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
         # (second-to-last layer) for Z-Image conditioning - matching diffusers behavior
         from max.nn import ReturnHiddenStates
 
+        # Disable prefix caching for diffusion model text encoders
+        # since they don't use autoregressive KV caching
+        from dataclasses import replace
+
+        text_encoder_kv_cache_config = replace(
+            kv_cache_config,
+            enable_prefix_caching=False,
+        )
+
         text_encoder_config = Qwen3Config.generate(
             pipeline_config,
             text_encoder_config,
@@ -428,7 +437,7 @@ class ZImageConfig(MAXModelConfig, ZImageConfigBase):
             dtype,
             n_devices,
             cache_dtype,
-            kv_cache_config,
+            text_encoder_kv_cache_config,  # Use modified config without prefix caching
             return_logits,
             return_hidden_states=ReturnHiddenStates.SECOND_TO_LAST,
         )
