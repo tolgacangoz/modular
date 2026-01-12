@@ -278,7 +278,9 @@ class PipelineRegistry:
         if huggingface_repo.file_exists("model_index.json"):
             # Diffusers-style lookup: parse model_index.json for _class_name
             diffusers_config = DiffusersConfig.from_huggingface_repo(
-                huggingface_repo.repo_id, huggingface_repo.revision
+                huggingface_repo.repo_id,
+                huggingface_repo.revision,
+                trust_remote_code=huggingface_repo.trust_remote_code,
             )
             architecture_names = [diffusers_config.pipeline_class]
         else:
