@@ -335,6 +335,7 @@ class PipelineRegistry:
             self._cached_huggingface_configs[huggingface_repo] = (
                 AutoConfig.from_pretrained(
                     huggingface_repo.repo_id,
+                    subfolder=huggingface_repo.subfolder,
                     trust_remote_code=huggingface_repo.trust_remote_code,
                     revision=huggingface_repo.revision,
                 )

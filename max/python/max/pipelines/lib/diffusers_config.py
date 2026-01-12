@@ -171,7 +171,7 @@ class DiffusersConfig:
     """Raw contents of model_index.json."""
 
     _repo_id: str | None = None
-    _revision: str | None = None
+    _revision: str | None = huggingface_hub.constants.DEFAULT_REVISION
     _cache_dir: str | Path | None = None
     _token: str | None = None
     _trust_remote_code: bool = False
@@ -345,7 +345,7 @@ class DiffusersConfig:
         """Convenience property to get text encoder model repo."""
         return HuggingFaceRepo(
             repo_id=self._repo_id,
-            subfolder=self.components.get("text_encoder").subfolder,
+            subfolder=str(self.components.get("text_encoder").subfolder),
             revision=self._revision,
             trust_remote_code=self._trust_remote_code,
         )
