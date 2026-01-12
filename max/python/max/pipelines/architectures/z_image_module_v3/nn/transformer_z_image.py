@@ -282,12 +282,6 @@ class FinalLayer(nn.Module):
 
 
 class RopeEmbedder(nn.Module):
-    """Graph-compilable RoPE embedder.
-
-    Computes RoPE embeddings directly from position IDs.
-    Avoids F.gather by computing cos/sin directly from positions.
-    """
-
     def __init__(
         self,
         theta: float = 256.0,
