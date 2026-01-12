@@ -316,6 +316,10 @@ class MAXModelConfig(MAXModelConfigBase):
             # weight_path should not be used directly anymore.
             self.model_path = self._weights_repo_id
 
+        # For diffusers models, weight_path is auto-populated from component subfolders
+        # by HuggingFaceRepo.weight_files which uses recursive glob (**/*.safetensors).
+        # No additional handling needed here since the existing infrastructure supports it.
+
     @property
     def kv_cache_config(self) -> KVCacheConfig:
         # `_kv_cache` is a PrivateAttr. Some construction paths (notably
