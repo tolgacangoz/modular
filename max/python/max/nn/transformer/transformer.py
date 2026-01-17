@@ -86,6 +86,7 @@ class ReturnHiddenStates(str, Enum):
     ALL = "all"
     LAST_NORMALIZED = "last_normalized"
     ALL_NORMALIZED = "all_normalized"
+    PENULTIMATE = "penultimate"
 
 
 Block = TypeVar("Block", bound=Module, covariant=True)
@@ -131,7 +132,17 @@ class Transformer(Module):
         input_row_offsets: TensorValue,
     ) -> tuple[TensorValue, ...]:
         freqs_cis = self.rope.freqs_cis
+
+        # Track penultimate hidden state efficiently (rolling buffer of 2)
+        need_penultimate = (
+            self.return_hidden_states == ReturnHiddenStates.PENULTIMATE
+        )
+        penultimate_h: TensorValue | None = None
+
         for idx, layer in enumerate(self.layers):
+            if need_penultimate:
+                # Keep only the previous state (will become penultimate after next layer)
+                penultimate_h = h
             h = layer(
                 ops.constant(idx, DType.uint32, device=DeviceRef.CPU()),
                 h,
@@ -193,6 +204,9 @@ class Transformer(Module):
             ret_val += (self.norm(h),)
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
+        elif self.return_hidden_states == ReturnHiddenStates.PENULTIMATE:
+            assert penultimate_h is not None
+            ret_val += (penultimate_h,)
 
         return ret_val
 
