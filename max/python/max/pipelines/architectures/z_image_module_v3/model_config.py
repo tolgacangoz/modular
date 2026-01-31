@@ -24,6 +24,8 @@ from max.nn.legacy.kv_cache import KVCacheParams
 from max.pipelines.lib import KVCacheConfig, MAXModelConfigBase, PipelineConfig
 from transformers.models.auto.configuration_auto import AutoConfig
 
+from ..qwen3.model_config import Qwen3Config
+
 
 @dataclass
 class SchedulerConfig:
@@ -310,8 +312,8 @@ class ZImageConfig(MAXModelConfigBase):
     vae_config: VAEConfig
     """VAE configuration."""
 
-    text_encoder_config: Qwen3EncoderConfig
-    """Text encoder configuration."""
+    text_encoder_config: Qwen3Config
+    """Text encoder configuration (Qwen3 model)."""
 
     transformer_config: TransformerConfig
     """Transformer configuration."""
@@ -329,35 +331,36 @@ class ZImageConfig(MAXModelConfigBase):
         kv_cache_config: KVCacheConfig,
         cache_dtype: DType,
     ) -> KVCacheParams:
-        # Delegate to Qwen3EncoderConfig for language model parameters.
+        # Delegate to Qwen3Config for language model parameters.
         llm_config = getattr(
             huggingface_config, "text_config", huggingface_config
         )
-        return Qwen3EncoderConfig.get_kv_params(
+        return Qwen3Config.construct_kv_params(
             huggingface_config=llm_config,
-            n_devices=n_devices,
+            pipeline_config=None,  # Not needed for basic KV params
+            devices=[],
             kv_cache_config=kv_cache_config,
             cache_dtype=cache_dtype,
         )
 
     @staticmethod
     def get_num_layers(huggingface_config: AutoConfig) -> int:
-        # Delegate to Qwen3EncoderConfig for language model parameters.
+        # Delegate to Qwen3Config for language model parameters.
         llm_config = getattr(
             huggingface_config, "text_config", huggingface_config
         )
-        return Qwen3EncoderConfig.get_num_layers(llm_config)
+        return Qwen3Config.get_num_layers(llm_config)
 
     @staticmethod
     def calculate_max_seq_len(
         pipeline_config: PipelineConfig, huggingface_config: AutoConfig
     ) -> int:
         """Calculate maximum sequence length for ZImage."""
-        # Delegate to Qwen3EncoderConfig for language model parameters.
+        # Delegate to Qwen3Config for language model parameters.
         llm_config = getattr(
             huggingface_config, "text_config", huggingface_config
         )
-        return Qwen3EncoderConfig.calculate_max_seq_len(
+        return Qwen3Config.calculate_max_seq_len(
             pipeline_config=pipeline_config,
             huggingface_config=llm_config,
         )
@@ -409,30 +412,27 @@ class ZImageConfig(MAXModelConfigBase):
             pipeline_config,
         )
 
-        # Create Qwen3EncoderConfig for the text encoder
-        # Use ReturnHiddenStates.SECOND_TO_LAST to get hidden_states[-2]
+        # Create text encoder config using Qwen3Config
+        # Use ReturnHiddenStates.SECOND_TO_LAST_LAYER to get hidden_states[-2]
         # (second-to-last layer) for Z-Image conditioning - matching diffusers behavior
-        # Disable prefix caching for diffusion model text encoders
-        # since they don't use autoregressive KV caching
+        # Disable prefix caching since text encoders don't use autoregressive KV caching
         from dataclasses import replace
 
-        from max.nn import ReturnHiddenStates
+        from max.nn.legacy.transformer import ReturnHiddenStates
 
         text_encoder_kv_cache_config = replace(
             kv_cache_config,
             enable_prefix_caching=False,
         )
 
-        text_encoder_config = Qwen3EncoderConfig.generate(
-            pipeline_config,
-            text_encoder_config,
-            text_encoder_state_dict["llm_state_dict"],
-            dtype,
-            n_devices,
-            cache_dtype,
-            text_encoder_kv_cache_config,  # Use modified config without prefix caching
-            return_logits,
-            return_hidden_states=ReturnHiddenStates.SECOND_TO_LAST,
+        # Initialize Qwen3Config for text encoder with SECOND_TO_LAST_LAYER
+        # to extract hidden_states[-2] (matching diffusers behavior)
+        base_text_encoder_config = Qwen3Config.initialize_from_config(
+            pipeline_config, text_encoder_config
+        )
+        text_encoder_config = replace(
+            base_text_encoder_config,
+            return_hidden_states=ReturnHiddenStates.SECOND_TO_LAST_LAYER,
         )
 
         # Create TransformerConfig for the backbone of the pipeline

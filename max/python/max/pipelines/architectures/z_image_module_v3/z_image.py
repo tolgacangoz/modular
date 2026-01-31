@@ -50,9 +50,9 @@ class ZImage(Module):
     def build_text_encoder(self) -> Qwen3:
         """Build the text encoder component.
 
-        Uses native Qwen3 with return_hidden_states=ALL configured.
-        The hidden states are extracted in model.py's _encode_prompt(),
-        specifically hidden_states[-2] (second-to-last layer output).
+        Uses native Qwen3 with return_hidden_states=SECOND_TO_LAST_LAYER configured
+        in model_config.py. This returns the second-to-last layer's hidden states
+        directly (matching diffusers' hidden_states[-2] pattern).
         """
         return Qwen3(self.config.text_encoder_config)
 

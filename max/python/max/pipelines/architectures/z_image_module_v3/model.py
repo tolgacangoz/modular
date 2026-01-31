@@ -622,7 +622,7 @@ class ZImageModel(
                 lookup_table=kv_cache_inputs[2].tensor,
                 max_lengths=kv_cache_inputs[3].tensor,
             )
-            # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST returns
+            # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST_LAYER returns
             # (logits, second_to_last_hidden_states) directly
             outputs = self.model.text_encoder(
                 tokens.tensor,
