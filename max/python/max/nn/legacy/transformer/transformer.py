@@ -86,9 +86,6 @@ class ReturnHiddenStates(str, Enum):
     ALL = "all"
     LAST_NORMALIZED = "last_normalized"
     ALL_NORMALIZED = "all_normalized"
-    # Output of second-to-last decoder layer (pre-norm), matching
-    # HuggingFace's hidden_states[-2] for diffusion text encoders
-    SECOND_TO_LAST_LAYER = "second_to_last_layer"
 
 
 Block = TypeVar("Block", bound=Module, covariant=True)
@@ -203,6 +200,7 @@ class Transformer(Module):
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
         elif self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST_LAYER:
+            # Return second-to-last layer output (pre-norm) for diffusion text encoders
             # This matches HuggingFace's hidden_states[-2] behavior
             assert second_to_last_h is not None, (
                 "Model must have at least 2 layers to use SECOND_TO_LAST_LAYER"
