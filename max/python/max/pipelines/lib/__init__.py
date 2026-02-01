@@ -11,7 +11,7 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-"""Types to interface with ML pipelines such as text/token generation."""
+"""Types to interface with ML pipelines such as text/token/visual generation."""
 
 from max.config import (
     MAXConfig,
@@ -51,6 +51,11 @@ from .pipeline_variants.overlap_text_generation import (
     OverlapTextGenerationPipeline,
 )
 from .pipeline_variants.text_generation import TextGenerationPipeline
+from .pipeline_variants.overlap_text_generation import OverlapTextGenerationPipeline
+from .pipeline_variants import (
+    PixelGenerationPipeline,
+    TextGenerationPipeline,
+)
 from .pixel_tokenizer import PixelGenerationTokenizer
 from .profiling_config import ProfilingConfig
 from .registry import PIPELINE_REGISTRY, SupportedArchitecture
@@ -102,6 +107,7 @@ __all__ = [
     "PipelineConfig",
     "PipelineModel",
     "PipelineRole",
+    "PixelGenerationPipeline",
     "PixelGenerationTokenizer",
     "PreTrainedPipelineTokenizer",
     "ProfilingConfig",
