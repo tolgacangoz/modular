@@ -19,8 +19,8 @@ from collections.abc import Sequence
 import max.functional as F
 import max.nn as nn
 from max.driver import CPU, Device
-from max.graph import DeviceRef
 from max.dtype import DType
+from max.graph import DeviceRef
 from max.nn.legacy.attention.mask_config import MHAMaskVariant
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.nn.sequential import ModuleList

@@ -12,19 +12,15 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import max.functional as F
 from max._core.engine import Model
-from max.driver import Buffer, Device
-from max.driver import Tensor as DriverTensor
+from max.driver import Buffer
 from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.graph import DeviceRef, Graph, TensorType
@@ -32,19 +28,13 @@ from max.graph.weights import (
     SafetensorWeights,
     WeightData,
     Weights,
-    WeightsAdapter,
 )
-from max.nn import Module, ReturnLogits
+from max.nn import Module
 from max.pipelines import PixelContext
 from max.pipelines.lib import (
-    KVCacheConfig,
     ModelInputs,
     ModelOutputs,
-    PipelineConfig,
-    PipelineModel,
-    SupportedEncoding,
 )
-
 from max.pipelines.lib.interfaces import (
     DiffusionPipeline,
     PixelModelInputs,
@@ -52,14 +42,8 @@ from max.pipelines.lib.interfaces import (
 from max.tensor import Tensor
 from tqdm.auto import tqdm
 
-# from tqdm.auto import tqdm
-from transformers import AutoConfig
-
 from .model_config import ZImageConfig
 from .nn.transformer_z_image import ZImageTransformer2DModel
-from .scheduling_flow_match_euler_discrete import (
-    FlowMatchEulerDiscreteScheduler,
-)
 from .z_image import ZImage
 
 logger = logging.getLogger("max.pipelines")
@@ -141,8 +125,10 @@ class ZImageModelInputs(PixelModelInputs):
     """ The output format of the generate image. Choose between
     [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`."""
 
+
 class ZImagePipeline(DiffusionPipeline):
     """A ZImage pipeline for text-to-image generation."""
+
     vae: AutoencoderKLModel
     text_encoder: Qwen3
     transformer: ZImageTransformer2DModel
@@ -163,7 +149,9 @@ class ZImagePipeline(DiffusionPipeline):
     def prepare_inputs(self, context: PixelContext) -> ZImageModelInputs:
         return ZImageModelInputs.from_context(context)
 
-    def load_model(self, session: InferenceSession) -> tuple[AutoencoderKL, Model, ZImageTransformer2DModel]:
+    def load_model(
+        self, session: InferenceSession
+    ) -> tuple[AutoencoderKL, Model, ZImageTransformer2DModel]:
         """Loads the compiled Z-Image model into the MAX Engine session.
 
         Args:
@@ -548,7 +536,10 @@ class ZImagePipeline(DiffusionPipeline):
                     )
                     callback_queue.put_nowait(image)
 
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                if i == len(timesteps) - 1 or (
+                    (i + 1) > num_warmup_steps
+                    and (i + 1) % self.scheduler.order == 0
+                ):
                     progress_bar.update()
 
         # 3. Decode

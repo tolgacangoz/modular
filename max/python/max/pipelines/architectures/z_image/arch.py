@@ -13,7 +13,11 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask, PixelContext
-from max.pipelines.lib import SupportedArchitecture, SupportedEncoding, PixelGenerationTokenizer
+from max.pipelines.lib import (
+    PixelGenerationTokenizer,
+    SupportedArchitecture,
+    SupportedEncoding,
+)
 
 from .model import ZImagePipeline
 

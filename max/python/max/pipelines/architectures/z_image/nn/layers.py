@@ -11,7 +11,6 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-import numbers
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -22,7 +21,6 @@ from max.dtype import DType
 from max.graph.type import ConvInputLayout, FilterLayout
 from max.nn.legacy.attention.mask_config import MHAMaskVariant
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
-from max.nn.norm.rms_norm import rms_norm
 from max.nn.sequential import ModuleList
 from max.tensor import Tensor
 from typing_extensions import TypeVar

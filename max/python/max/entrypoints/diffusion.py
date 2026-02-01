@@ -257,7 +257,8 @@ async def _async_worker(
             request.num_inference_steps,
             request.guidance_scale,
             request.num_images_per_prompt,
-            request.negative_prompts, strict=False,
+            request.negative_prompts,
+            strict=False,
         ):
             request_id = RequestID()
             request = PixelGenerationRequest(

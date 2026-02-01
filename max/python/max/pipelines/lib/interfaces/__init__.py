@@ -17,8 +17,8 @@ from .arch_config import (
     ArchConfigWithAttentionKVCache,
     ArchConfigWithKVCache,
 )
-from .diffusion_pipeline import DiffusionPipeline, PixelModelInputs
 from .component_model import ComponentModel
+from .diffusion_pipeline import DiffusionPipeline, PixelModelInputs
 from .generate import GenerateMixin
 from .kv_cache import KVCacheMixin
 from .pipeline_model import (

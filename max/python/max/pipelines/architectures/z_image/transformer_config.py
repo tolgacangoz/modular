@@ -11,31 +11,31 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from typing import Any, ClassVar, Sequence
+from collections.abc import Sequence
+from typing import Any, ClassVar
 
 from max.driver import Device
-from max.dtype import DType
 from max.graph import DeviceRef
 from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
 from pydantic import Field
 
 
 class ZImageTransformer2DModelConfigBase(MAXModelConfigBase):
-    all_patch_size: Sequence[int] = (2,),
-    all_f_patch_size: Sequence[int] = (1,),
-    in_channels: int = 16,
-    dim: int = 3840,
-    n_layers: int = 30,
-    n_refiner_layers: int = 2,
-    n_heads: int = 30,
-    n_kv_heads: int = 30,
-    norm_eps: float = 1e-5,
-    qk_norm: bool = True,
-    cap_feat_dim: int = 2560,
-    rope_theta: float = 256.0,
-    t_scale: float = 1000.0,
-    axes_dims: Sequence[int] = (32, 48, 48),
-    axes_lens: Sequence[int] = (1536, 512, 512),
+    all_patch_size: Sequence[int] = ((2,),)
+    all_f_patch_size: Sequence[int] = ((1,),)
+    in_channels: int = (16,)
+    dim: int = (3840,)
+    n_layers: int = (30,)
+    n_refiner_layers: int = (2,)
+    n_heads: int = (30,)
+    n_kv_heads: int = (30,)
+    norm_eps: float = (1e-5,)
+    qk_norm: bool = (True,)
+    cap_feat_dim: int = (2560,)
+    rope_theta: float = (256.0,)
+    t_scale: float = (1000.0,)
+    axes_dims: Sequence[int] = ((32, 48, 48),)
+    axes_lens: Sequence[int] = ((1536, 512, 512),)
     device: DeviceRef = Field(default_factory=DeviceRef.GPU)
 
 

@@ -47,14 +47,12 @@ from .lora_config import LoRAConfig
 from .lora_request_processor import LoRARequestProcessor
 from .memory_estimation import MemoryEstimator
 from .model_config import MAXModelConfig, MAXModelConfigBase
-from .pipeline_variants.overlap_text_generation import (
-    OverlapTextGenerationPipeline,
-)
-from .pipeline_variants.text_generation import TextGenerationPipeline
-from .pipeline_variants.overlap_text_generation import OverlapTextGenerationPipeline
 from .pipeline_variants import (
     PixelGenerationPipeline,
     TextGenerationPipeline,
+)
+from .pipeline_variants.overlap_text_generation import (
+    OverlapTextGenerationPipeline,
 )
 from .pixel_tokenizer import PixelGenerationTokenizer
 from .profiling_config import ProfilingConfig

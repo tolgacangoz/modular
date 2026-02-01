@@ -52,8 +52,11 @@ from .config_enums import PipelineRole, RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo, is_diffusion_pipeline
 from .interfaces import ArchConfig, ArchConfigWithKVCache, PipelineModel
-
-from .pipeline_variants import PixelGenerationPipeline, TextGenerationPipeline, OverlapTextGenerationPipeline
+from .pipeline_variants import (
+    OverlapTextGenerationPipeline,
+    PixelGenerationPipeline,
+    TextGenerationPipeline,
+)
 from .speculative_decoding import (
     EAGLESpeculativeDecodingPipeline,
     SpeculativeMethod,
