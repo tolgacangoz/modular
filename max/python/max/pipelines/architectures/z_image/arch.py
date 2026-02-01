@@ -13,35 +13,18 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask, PixelContext
-from max.nn.legacy.kv_cache import KVCacheStrategy
-from max.pipelines.architectures.llama3 import weight_adapters
-from max.pipelines.lib import (
-    RopeType,
-    SupportedArchitecture,
-    SupportedEncoding,
-    TextTokenizer,
-)
+from max.pipelines.lib import SupportedArchitecture, SupportedEncoding, PixelGenerationTokenizer
 
-from .model import ZImageModel
+from .model import ZImagePipeline
 
 z_image_arch = SupportedArchitecture(
     name="ZImagePipeline",
     task=PipelineTask.PIXEL_GENERATION,
-    example_repo_ids=["Tongyi-MAI/Z-Image-Turbo"],
-    default_weights_format=WeightsFormat.safetensors,
+    example_repo_ids=["Tongyi-MAI/Z-Image-Turbo", "Tongyi-MAI/Z-Image"],
     default_encoding=SupportedEncoding.bfloat16,
-    supported_encodings={
-        SupportedEncoding.bfloat16: [KVCacheStrategy.MODEL_DEFAULT]
-    },  # No KV Caching for image-gen pipelines.
-    pipeline_model=ZImageModel,
-    # scheduler=FlowMatchEulerDiscreteScheduler,
-    # vae=AutoencoderKL,
-    # text_encoder=Qwen3,
-    tokenizer=TextTokenizer,
-    # transformer=ZImageTransformer2DModel,
+    supported_encodings={SupportedEncoding.bfloat16: []},
+    pipeline_model=ZImagePipeline,
+    tokenizer=PixelGenerationTokenizer,
     context_type=PixelContext,
-    rope_type=RopeType.normal,
-    weight_adapters={
-        WeightsFormat.safetensors: weight_adapters.convert_safetensor_state_dict
-    },
+    default_weights_format=WeightsFormat.safetensors,
 )
