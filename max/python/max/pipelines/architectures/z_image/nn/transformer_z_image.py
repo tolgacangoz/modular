@@ -19,6 +19,7 @@ from collections.abc import Sequence
 import max.functional as F
 import max.nn as nn
 from max.driver import CPU, Device
+from max.graph import DeviceRef
 from max.dtype import DType
 from max.nn.legacy.attention.mask_config import MHAMaskVariant
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
@@ -358,9 +359,9 @@ class ZImageTransformer2DModel(nn.Module):
         cap_feat_dim: int = 2560,
         rope_theta: float = 256.0,
         t_scale: float = 1000.0,
-        axes_dims: Sequence[int] = [32, 48, 48],
-        axes_lens: Sequence[int] = [1024, 512, 512],
-        device: Device | None = None,
+        axes_dims: Sequence[int] = (32, 48, 48),
+        axes_lens: Sequence[int] = (1024, 512, 512),
+        device: DeviceRef = Field(default_factory=DeviceRef.GPU),
     ) -> None:
         self.in_channels = in_channels
         self.out_channels = in_channels

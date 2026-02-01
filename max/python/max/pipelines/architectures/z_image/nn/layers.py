@@ -135,55 +135,55 @@ class Conv2d(nn.Module):
         )
 
 
-class RMSNorm(nn.Module):
-    r"""
-    RMS Norm as introduced in https://huggingface.co/papers/1910.07467 by Zhang et al.
+# class RMSNorm(nn.Module):
+#     r"""
+#     RMS Norm as introduced in https://huggingface.co/papers/1910.07467 by Zhang et al.
 
-    Args:
-        dim (`int`): Number of dimensions to use for `weights`. Only effective when `elementwise_affine` is True.
-        eps (`float`): Small value to use when calculating the reciprocal of the square-root.
-        elementwise_affine (`bool`, defaults to `True`):
-            Boolean flag to denote if affine transformation should be applied.
-        bias (`bool`, defaults to False): If also training the `bias` param.
-    """
+#     Args:
+#         dim (`int`): Number of dimensions to use for `weights`. Only effective when `elementwise_affine` is True.
+#         eps (`float`): Small value to use when calculating the reciprocal of the square-root.
+#         elementwise_affine (`bool`, defaults to `True`):
+#             Boolean flag to denote if affine transformation should be applied.
+#         bias (`bool`, defaults to False): If also training the `bias` param.
+#     """
 
-    def __init__(
-        self,
-        dim: int,
-        eps: float = 1e-6,
-        elementwise_affine: bool = True,
-        bias: bool = False,
-    ):
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
+#     def __init__(
+#         self,
+#         dim: int,
+#         eps: float = 1e-6,
+#         elementwise_affine: bool = True,
+#         bias: bool = False,
+#     ):
+#         self.eps = eps
+#         self.elementwise_affine = elementwise_affine
 
-        if isinstance(dim, numbers.Integral):
-            dim = (dim,)
+#         if isinstance(dim, numbers.Integral):
+#             dim = (dim,)
 
-        self.weight = None
-        self.bias = None
+#         self.weight = None
+#         self.bias = None
 
-        if elementwise_affine:
-            self.weight = Tensor.ones(dim)
-            if bias:
-                self.bias = Tensor.zeros(dim)
+#         if elementwise_affine:
+#             self.weight = Tensor.ones(dim)
+#             if bias:
+#                 self.bias = Tensor.zeros(dim)
 
-    def __call__(self, hidden_states: Tensor) -> Tensor:
-        if not self.elementwise_affine:
-            # Non-affine case: manual implementation
-            input_dtype = hidden_states.dtype
-            variance = reduce_mean(
-                F.pow(hidden_states.cast(DType.float32), 2), axis=-1
-            )
-            return (hidden_states * F.rsqrt(variance + self.eps)).cast(
-                input_dtype
-            )
+#     def __call__(self, hidden_states: Tensor) -> Tensor:
+#         if not self.elementwise_affine:
+#             # Non-affine case: manual implementation
+#             input_dtype = hidden_states.dtype
+#             variance = reduce_mean(
+#                 F.pow(hidden_states.cast(DType.float32), 2), axis=-1
+#             )
+#             return (hidden_states * F.rsqrt(variance + self.eps)).cast(
+#                 input_dtype
+#             )
 
-        # Affine case: use fused kernel
-        result = rms_norm(hidden_states, self.weight, self.eps)
-        if self.bias is not None:
-            result = result + self.bias
-        return result
+#         # Affine case: use fused kernel
+#         result = rms_norm(hidden_states, self.weight, self.eps)
+#         if self.bias is not None:
+#             result = result + self.bias
+#         return result
 
 
 class GroupNorm(nn.Module):
@@ -240,32 +240,32 @@ class GroupNorm(nn.Module):
         )[0]
 
 
-class LayerNorm(nn.Module):
-    def __init__(
-        self,
-        normalized_shape: int,
-        eps: float = 1e-5,
-        elementwise_affine: bool = True,
-    ):
-        self.normalized_shape = normalized_shape
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
+# class LayerNorm(nn.Module):
+#     def __init__(
+#         self,
+#         normalized_shape: int,
+#         eps: float = 1e-5,
+#         elementwise_affine: bool = True,
+#     ):
+#         self.normalized_shape = normalized_shape
+#         self.eps = eps
+#         self.elementwise_affine = elementwise_affine
 
-        if elementwise_affine:
-            self.weight = Tensor.ones([normalized_shape])
-            self.bias = Tensor.zeros([normalized_shape])
-        else:
-            self.weight = None
-            self.bias = None
+#         if elementwise_affine:
+#             self.weight = Tensor.ones([normalized_shape])
+#             self.bias = Tensor.zeros([normalized_shape])
+#         else:
+#             self.weight = None
+#             self.bias = None
 
-    def __call__(self, hidden_states: Tensor) -> Tensor:
-        if self.elementwise_affine:
-            return F.layer_norm(hidden_states, self.weight, self.bias, self.eps)
+#     def __call__(self, hidden_states: Tensor) -> Tensor:
+#         if self.elementwise_affine:
+#             return F.layer_norm(hidden_states, self.weight, self.bias, self.eps)
 
-        # Manual fallback for non-affine case
-        mean = reduce_mean(hidden_states, axis=-1)
-        var = reduce_var(hidden_states, axis=-1)
-        return (hidden_states - mean) / F.sqrt(var + self.eps)
+#         # Manual fallback for non-affine case
+#         mean = reduce_mean(hidden_states, axis=-1)
+#         var = reduce_var(hidden_states, axis=-1)
+#         return (hidden_states - mean) / F.sqrt(var + self.eps)
 
 
 class SiLU(nn.Module):
