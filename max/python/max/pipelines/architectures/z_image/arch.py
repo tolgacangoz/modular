@@ -24,7 +24,7 @@ from max.pipelines.lib import (
 
 from .model import ZImageModel
 
-z_image_module_v3_arch = SupportedArchitecture(
+z_image_arch = SupportedArchitecture(
     name="ZImagePipeline",
     task=PipelineTask.PIXEL_GENERATION,
     example_repo_ids=["Tongyi-MAI/Z-Image-Turbo"],
