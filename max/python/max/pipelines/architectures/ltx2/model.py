@@ -21,7 +21,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-# from max._core.engine import Model
 from max.driver import Device
 from max.driver import Tensor as DriverTensor
 from max.dtype import DType
