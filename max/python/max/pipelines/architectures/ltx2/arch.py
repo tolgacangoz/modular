@@ -12,44 +12,24 @@
 # ===----------------------------------------------------------------------=== #
 
 from max.graph.weights import WeightsFormat
-from max.interfaces import PipelineTask, PixelGenerationContext
-from max.nn.kv_cache import KVCacheStrategy
-from max.pipelines.architectures.gemma3.gemma3 import Gemma3
-from max.pipelines.architectures.llama3 import weight_adapters
+from max.interfaces import PipelineTask, PixelContext
 from max.pipelines.lib import (
-    RopeType,
     SupportedArchitecture,
     SupportedEncoding,
-    TextTokenizer,
+    PixelGenerationTokenizer,
 )
 
-from ..z_image_module_v3.scheduling_flow_match_euler_discrete import (
-    FlowMatchEulerDiscreteScheduler,
-)
-from .model import LTX2Model
-from .nn.autoencoder_kl_ltx2 import AutoencoderKLLTX2Video
-from .nn.autoencoder_kl_ltx2_audio import AutoencoderKLLTX2Audio
-from .nn.transformer_ltx2 import LTX2Transformer3DModel
+from .pipeline_ltx2 import LTX2Pipeline
 
-ltx2_module_v3_arch = SupportedArchitecture(
+
+ltx2_arch = SupportedArchitecture(
     name="LTX2Pipeline",
     task=PipelineTask.PIXEL_GENERATION,
-    example_repo_ids=["Lightricks/LTX-2"],
-    default_weights_format=WeightsFormat.safetensors,
     default_encoding=SupportedEncoding.bfloat16,
-    supported_encodings={
-        SupportedEncoding.bfloat16: [KVCacheStrategy.MODEL_DEFAULT]
-    },
-    pipeline_model=LTX2Model,
-    scheduler=FlowMatchEulerDiscreteScheduler,
-    vae=AutoencoderKLLTX2Video,
-    vae_audio=AutoencoderKLLTX2Audio,
-    text_encoder=Gemma3,
-    tokenizer=TextTokenizer,
-    transformer=LTX2Transformer3DModel,
-    context_type=PixelGenerationContext,
-    rope_type=RopeType.normal,
-    weight_adapters={
-        WeightsFormat.safetensors: weight_adapters.convert_safetensor_state_dict
-    },
+    supported_encodings={SupportedEncoding.bfloat16: []},
+    example_repo_ids=["Lightricks/LTX-2"],
+    pipeline_model=LTX2Pipeline,  # type: ignore[arg-type]
+    context_type=PixelContext,
+    default_weights_format=WeightsFormat.safetensors,
+    tokenizer=PixelGenerationTokenizer,
 )
