@@ -11,7 +11,7 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Sequence
 
 from max.driver import Device
 from max.dtype import DType
@@ -21,19 +21,42 @@ from pydantic import Field
 
 
 class LTX2ConfigBase(MAXModelConfigBase):
-    patch_size: int = 1
-    in_channels: int = 64
-    out_channels: int | None = None
-    num_layers: int = 19
-    num_single_layers: int = 38
+    activation_fn: str = "gelu-approximate"
+    attention_bias: bool = True
     attention_head_dim: int = 128
-    num_attention_heads: int = 24
-    joint_attention_dim: int = 4096
-    pooled_projection_dim: int = 768
-    guidance_embeds: bool = False
-    axes_dims_rope: tuple[int, int, int] = (16, 56, 56)
-    dtype: DType = DType.bfloat16
-    device: DeviceRef = Field(default_factory=DeviceRef.GPU)
+    attention_out_bias: bool = True
+    audio_attention_head_dim: int = 64
+    audio_cross_attention_dim: int = 2048
+    audio_hop_length: int = 160
+    audio_in_channels: int = 128
+    audio_num_attention_heads: int = 32
+    audio_out_channels: int = 128
+    audio_patch_size: int = 1
+    audio_patch_size_t: int = 1
+    audio_pos_embed_max_pos: int = 20
+    audio_sampling_rate: int = 16000
+    audio_scale_factor: int = 4
+    base_height: int = 2048
+    base_width: int = 2048
+    caption_channels: int = 3840
+    causal_offset: int = 1
+    cross_attention_dim: int = 4096
+    cross_attn_timestep_scale_multiplier: int = 1000
+    in_channels: int = 128
+    norm_elementwise_affine: bool = False
+    norm_eps: float = 1e-06
+    num_attention_heads: int = 32
+    num_layers: int = 48
+    out_channels: int = 128
+    patch_size: int = 1
+    patch_size_t: int = 1
+    pos_embed_max_pos: int = 20
+    qk_norm: str = "rms_norm_across_heads"
+    rope_double_precision: bool = True
+    rope_theta: float = 10000.0
+    rope_type: str = "split"
+    timestep_scale_multiplier: int = 1000
+    vae_scale_factors: tuple[int, int, int] = (8, 32, 32)
 
 
 class LTX2Config(LTX2ConfigBase):

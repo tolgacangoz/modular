@@ -42,20 +42,18 @@ from max.pipelines.lib.interfaces import (
 from max.tensor import Tensor
 from tqdm.auto import tqdm
 
-from .model_config import LTX2Config
-from .nn.transformer_ltx2 import LTX2Transformer2DModel
-from ..autoencoders import AutoencoderKLLTX2Video, AutoencoderKLLTX2Audio
-from ..gemma3multimodal.model import Gemma3_MultiModalModel
-from .ltx2 import LTX2
+from .model_config import ZImageConfig
+from .nn.transformer_z_image import ZImageTransformer2DModel
+from .z_image import ZImage
 
 logger = logging.getLogger("max.pipelines")
 
 
 @dataclass(kw_only=True)
-class LTX2ModelInputs(PixelModelInputs):
-    """A class representing inputs for the LTX2 model.
+class ZImageModelInputs(PixelModelInputs):
+    """A class representing inputs for the Z-Image model.
 
-    This class encapsulates the input tensors required for the LTX2 model execution,
+    This class encapsulates the input tensors required for the Z-Image model execution,
     including both text and vision inputs. Vision inputs are optional and can be None
     for text-only processing."""
 
@@ -71,6 +69,11 @@ class LTX2ModelInputs(PixelModelInputs):
 
     num_warmup_steps: int = 0
     """ The number of warmup steps."""
+
+    sigmas: list[Buffer] | None = None
+    """ Custom sigmas to use for the denoising process with schedulers which support a `sigmas` argument in
+    their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
+    will be used."""
 
     guidance_scale: float = 7.5
     """ Guidance scale as defined in Classifier-Free Diffusion Guidance.
@@ -105,8 +108,8 @@ class LTX2ModelInputs(PixelModelInputs):
     their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
     will be used."""
 
-    num_videos_per_prompt: int | None = 1
-    """ The number of videos to generate per prompt."""
+    num_images_per_prompt: int | None = 1
+    """ The number of images to generate per prompt."""
 
     seed: int | None = 0
     """ Seed for the random number generator to make generation deterministic.
@@ -123,19 +126,17 @@ class LTX2ModelInputs(PixelModelInputs):
     [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`."""
 
 
-class LTX2Pipeline(DiffusionPipeline):
-    """A LTX2 pipeline for text-to-video and image-to-video generation."""
+class ZImagePipeline(DiffusionPipeline):
+    """A ZImage pipeline for text-to-image generation."""
 
     vae: AutoencoderKLModel
-    vae_audio: AutoencoderKLModel
-    text_encoder: Gemma3_MultiModalModel
-    transformer: LTX2Transformer2DModel
+    text_encoder: Qwen3
+    transformer: ZImageTransformer2DModel
 
     components = {
         "vae": AutoencoderKLModel,
-        "vae_audio": AutoencoderKLModel,
-        "text_encoder": Gemma3_MultiModalModel,
-        "transformer": LTX2Transformer2DModel,
+        "text_encoder": Qwen3,
+        "transformer": ZImageTransformer2DModel,
     }
 
     def init_remaining_components(self) -> None:
@@ -145,13 +146,13 @@ class LTX2Pipeline(DiffusionPipeline):
             else 8
         )
 
-    def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
-        return LTX2ModelInputs.from_context(context)
+    def prepare_inputs(self, context: PixelContext) -> ZImageModelInputs:
+        return ZImageModelInputs.from_context(context)
 
     def load_model(
         self, session: InferenceSession
-    ) -> tuple[AutoencoderKLLTX2Video, AutoencoderKLLTX2Audio, Model, LTX2Transformer2DModel]:
-        """Loads the compiled LTX2 model into the MAX Engine session.
+    ) -> tuple[AutoencoderKL, Model, ZImageTransformer2DModel]:
+        """Loads the compiled Z-Image model into the MAX Engine session.
 
         Args:
             session: The MAX Engine inference session.
@@ -173,7 +174,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         if not isinstance(self.weights, SafetensorWeights):
             raise ValueError(
-                "LTX2 currently only supports safetensors weights"
+                "ZImage currently only supports safetensors weights"
             )
 
         # Partition raw safetensor weights by their originating file path.
@@ -183,7 +184,6 @@ class LTX2Pipeline(DiffusionPipeline):
         filepaths = [Path(p) for p in st_weights._filepaths]
 
         vae_weights: dict[str, Weights] = {}
-        vae_audio_weights: dict[str, Weights] = {}
         text_encoder_weights: dict[str, Weights] = {}
         transformer_weights: dict[str, Weights] = {}
 
@@ -194,15 +194,13 @@ class LTX2Pipeline(DiffusionPipeline):
 
             if "vae" in parts:
                 vae_weights[key] = weight
-            elif "vae_audio" in parts:
-                vae_audio_weights[key] = weight
             elif "text_encoder" in parts:
                 text_encoder_weights[key] = weight
             elif "transformer" in parts:
                 transformer_weights[key] = weight
             else:
                 logger.debug(
-                    "Unrecognized LTX2 weight file '%s' for key '%s', assigning to transformer",
+                    "Unrecognized Z-Image weight file '%s' for key '%s', assigning to transformer",
                     filepath,
                     key,
                 )
@@ -211,12 +209,6 @@ class LTX2Pipeline(DiffusionPipeline):
         # Materialize VAE and transformer weights directly.
         vae_state_dict: dict[str, WeightData] = {
             key: weight.data() for key, weight in vae_weights.items()
-        }
-        vae_audio_state_dict: dict[str, WeightData] = {
-            key: weight.data() for key, weight in vae_audio_weights.items()
-        }
-        text_encoder_state_dict: dict[str, WeightData] = {
-            key: weight.data() for key, weight in text_encoder_weights.items()
         }
         transformer_state_dict: dict[str, WeightData] = {
             key: weight.data() for key, weight in transformer_weights.items()
@@ -241,8 +233,8 @@ class LTX2Pipeline(DiffusionPipeline):
             "llm_state_dict": text_encoder_llm_state_dict,
         }
 
-        # Generate LTX2 config from HuggingFace config
-        ltx2_config = LTX2Config.generate(
+        # Generate ZImage config from HuggingFace config
+        zimage_config = ZImageConfig.generate(
             pipeline_config=self.pipeline_config,
             scheduler_config=self.scheduler_config,
             vae_config=self.vae_config,
@@ -257,15 +249,15 @@ class LTX2Pipeline(DiffusionPipeline):
             kv_cache_config=self.kv_cache_config,
             return_logits=self.return_logits,
         )
-        self.model_config = ltx2_config
+        self.model_config = zimage_config
 
         if self.model_config is None:
             raise ValueError("Model config must be initialized")
 
-        # Instantiate LTX2 container to build sub-models
+        # Instantiate ZImage container to build sub-models
         device0 = self.devices[0]
         with F.lazy():
-            nn_model: Module = LTX2(self.model_config, device=device0)
+            nn_model: Module = ZImage(self.model_config, device=device0)
             nn_model.to(device0)
 
         # graph_inputs = nn_model.text_encoder.input_types(
@@ -439,17 +431,17 @@ class LTX2Pipeline(DiffusionPipeline):
         model_inputs: ModelInputs,
     ) -> ModelOutputs:
         r"""
-        Executes the LTX2 model with the prepared inputs.
+        Executes the Z-Image model with the prepared inputs.
 
         Args:
-            model_inputs: A LTX2Inputs instance containing all image generation parameters
+            model_inputs: A ZImageInputs instance containing all image generation parameters
                 including prompt, dimensions, guidance scale, etc.
 
         Returns:
             ModelOutputs containing the generated images.
         """
         # Use cast for type safety (same pattern as GptOssModel)
-        model_inputs = cast(LTX2Inputs, model_inputs)
+        model_inputs = cast(ZImageInputs, model_inputs)
 
         # Extract parameters from model_inputs
         height = model_inputs.height or 1024
