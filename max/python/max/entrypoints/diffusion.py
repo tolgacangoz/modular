@@ -53,7 +53,7 @@ class _Request:
     width: list[int] | int = 1024
     num_inference_steps: list[int] | int = 50
     guidance_scale: list[float] | float = 3.5
-    num_images_per_prompt: list[int] | int = 1
+    num_visuals_per_prompt: list[int] | int = 1
     negative_prompts: list[str | None] | None = None
 
     def __post_init__(self) -> None:
@@ -66,8 +66,8 @@ class _Request:
             self.num_inference_steps, length
         )
         self.guidance_scale = normalize_sequence(self.guidance_scale, length)
-        self.num_images_per_prompt = normalize_sequence(
-            self.num_images_per_prompt, length
+        self.num_visuals_per_prompt = normalize_sequence(
+            self.num_visuals_per_prompt, length
         )
         self.negative_prompts = normalize_sequence(
             self.negative_prompts, length
@@ -143,7 +143,7 @@ class PixelGenerator:
         width: list[int] | None = None,
         num_inference_steps: list[int] | None = None,
         guidance_scale: list[float] | None = None,
-        num_images_per_prompt: list[int] | None = None,
+        num_visuals_per_prompt: list[int] | None = None,
     ) -> _Response:
         """Generate images from text prompts.
 
@@ -156,7 +156,7 @@ class PixelGenerator:
             width: Image width in pixels.
             num_inference_steps: Number of denoising steps.
             guidance_scale: Classifier-free guidance scale.
-            num_images_per_prompt: Number of images per prompt.
+            num_visuals_per_prompt: Number of images per prompt.
 
         Returns:
             _Response containing the generated PIL Images.
@@ -171,7 +171,7 @@ class PixelGenerator:
             "width": width,
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
-            "num_images_per_prompt": num_images_per_prompt,
+            "num_visuals_per_prompt": num_visuals_per_prompt,
         }
         request_dict = {k: v for k, v in request_dict.items() if v is not None}  # type: ignore
 
@@ -248,7 +248,7 @@ async def _async_worker(
             width,
             num_inference_steps,
             guidance_scale,
-            num_images_per_prompt,
+            num_visuals_per_prompt,
             negative_prompt,
         ) in zip(
             request.prompts,
@@ -256,7 +256,7 @@ async def _async_worker(
             request.width,
             request.num_inference_steps,
             request.guidance_scale,
-            request.num_images_per_prompt,
+            request.num_visuals_per_prompt,
             request.negative_prompts,
             strict=False,
         ):
@@ -270,7 +270,7 @@ async def _async_worker(
                 width=width,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
-                num_images_per_prompt=num_images_per_prompt,
+                num_visuals_per_prompt=num_visuals_per_prompt,
             )
             context: PixelContext = await tokenizer.new_context(request)
             batch[request_id] = context

@@ -108,7 +108,7 @@ class ZImageModelInputs(PixelModelInputs):
     their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is passed
     will be used."""
 
-    num_images_per_prompt: int | None = 1
+    num_visuals_per_prompt: int | None = 1
     """ The number of images to generate per prompt."""
 
     seed: int | None = 0
@@ -452,7 +452,7 @@ class ZImagePipeline(DiffusionPipeline):
         cfg_normalization = model_inputs.cfg_normalization
         cfg_truncation = model_inputs.cfg_truncation
         negative_prompt = model_inputs.negative_prompt
-        num_images_per_prompt = model_inputs.num_images_per_prompt or 1
+        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt or 1
         latents = model_inputs.latents
         prompt_embeds = model_inputs.prompt_embeds
         negative_prompt_embeds = model_inputs.negative_prompt_embeds

@@ -23,17 +23,15 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import numpy.typing as npt
 from max._core.driver import Device
+from max.graph import DeviceRef
 from max.graph.weights import load_weights
 from max.interfaces.tokens import TokenBuffer
-from max.pipelines.lib.interfaces.component_model import (  # type: ignore[import-not-found]
-    ComponentModel,
-)
+from max.pipelines.lib.interfaces.component_model import ComponentModel
 from tqdm import tqdm
-from typing_extensions import Self
 
 if TYPE_CHECKING:
     from max.engine import InferenceSession
-    from max.pipelines.core.context import PixelContext
+    from max.pipelines import PixelContext
 
     from ..config import PipelineConfig
 
@@ -68,16 +66,16 @@ class DiffusionPipeline(ABC):
         """Initialize non-ComponentModel components (e.g., image processors)."""
 
     @abstractmethod
-    def prepare_inputs(self, context: PixelContext) -> PixelModelInputs:
-        """Prepare inputs for the pipeline."""
+    def prepare_inputs(
+        self, flat_batch: PixelContext
+    ) -> type[PixelModelInputs]:
         raise NotImplementedError(
             f"prepare_inputs is not implemented for {self.__class__.__name__}"
         )
 
-    @classmethod
-    def finalize_pipeline_config(cls, pipeline_config: PipelineConfig) -> None:
+    def finalize_pipeline_config(self) -> None:
         """Hook for finalizing pipeline configuration. Override if needed."""
-        del pipeline_config
+        pass
 
     def _load_sub_models(
         self, weight_paths: list[Path]
@@ -168,6 +166,39 @@ class DiffusionPipeline(ABC):
         if not absolute_paths:
             raise ValueError(f"Component weights not found: {relative_paths}")
         return absolute_paths
+
+    def _execution_device(self) -> DeviceRef:
+        r"""Returns the device on which the pipeline's models will be executed.
+
+        This property checks pipeline components to determine the execution device.
+        It supports MAX models (with DeviceRef device attribute).
+        Similar structure to diffusers' _execution_device but returns DeviceRef instead of DeviceRef.
+
+        Returns:
+            DeviceRef: The execution device (GPU if available, otherwise CPU).
+        """
+        # Check MAX models - prioritize GPU
+        # Similar to diffusers' _execution_device but for MAX models (not torch.nn.Module)
+        sub_models = {k: getattr(self, k) for k in self.components}
+        for name, model in sub_models.items():
+            exclude_from_cpu_offload = getattr(
+                self, "_exclude_from_cpu_offload", set()
+            )
+            if name in exclude_from_cpu_offload:
+                continue
+
+            if hasattr(model, "device") and isinstance(model.device, DeviceRef):
+                return model.device
+
+        if hasattr(self, "device"):
+            try:
+                device = self.device
+                if isinstance(device, DeviceRef):
+                    return device
+            except Exception:
+                pass
+
+        return DeviceRef.CPU()
 
 
 @dataclass(kw_only=True)
@@ -330,7 +361,7 @@ class PixelModelInputs:
     - Must be >= 0.
     """
 
-    num_images_per_prompt: int = 1
+    num_visuals_per_prompt: int = 1
     """
     Number of images/videos to generate per prompt.
 
@@ -385,11 +416,11 @@ class PixelModelInputs:
                 f"num_warmup_steps must be >= 0. Got {self.num_warmup_steps!r}"
             )
         if (
-            not isinstance(self.num_images_per_prompt, int)
-            or self.num_images_per_prompt <= 0
+            not isinstance(self.num_visuals_per_prompt, int)
+            or self.num_visuals_per_prompt <= 0
         ):
             raise ValueError(
-                f"num_images_per_prompt must be > 0. Got {self.num_images_per_prompt!r}"
+                f"num_visuals_per_prompt must be > 0. Got {self.num_visuals_per_prompt!r}"
             )
         if not isinstance(self.num_frames, int) or self.num_frames <= 0:
             raise ValueError(
@@ -416,7 +447,7 @@ class PixelModelInputs:
             )
 
     @classmethod
-    def from_context(cls, context: PixelContext) -> Self:
+    def from_context(cls, context: PixelContext) -> PixelModelInputs:
         """
         Build an instance from a context-like dict.
 
@@ -429,21 +460,20 @@ class PixelModelInputs:
         fmap = {f.name: f for f in fields(cls)}
         kwargs: dict[str, Any] = {}
 
-        for dataclass_field in fields(cls):
-            name = dataclass_field.name
-            if not hasattr(context, name):
+        for k, v in context.__dict__.items():
+            if k not in fmap:
                 continue
-            v = getattr(context, name)
 
             if v is None:
-                if dataclass_field.default is not MISSING:
-                    kwargs[name] = dataclass_field.default
-                elif dataclass_field.default_factory is not MISSING:
-                    kwargs[name] = dataclass_field.default_factory()
+                f = fmap[k]
+                if f.default is not MISSING:
+                    kwargs[k] = f.default
+                elif f.default_factory is not MISSING:  # type: ignore[attr-defined]
+                    kwargs[k] = f.default_factory()  # type: ignore[misc]
                 else:
                     # No default -> keep None; for required fields this should fail downstream.
-                    kwargs[name] = None
+                    kwargs[k] = None
             else:
-                kwargs[name] = v
+                kwargs[k] = v
 
         return cls(**kwargs)

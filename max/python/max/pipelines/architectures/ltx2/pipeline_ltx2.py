@@ -44,7 +44,7 @@ from tqdm.auto import tqdm
 
 from .model_config import LTX2Config
 from .nn.transformer_ltx2 import LTX2Transformer2DModel
-from ..autoencoders import AutoencoderKLLTX2Video, AutoencoderKLLTX2Audio
+from ..autoencoders import AutoencoderKLLTX2VideoModel, AutoencoderKLLTX2AudioModel
 from ..gemma3multimodal.model import Gemma3_MultiModalModel
 from .ltx2 import LTX2
 
@@ -108,6 +108,12 @@ class LTX2ModelInputs(PixelModelInputs):
     num_videos_per_prompt: int | None = 1
     """ The number of videos to generate per prompt."""
 
+    num_frames: int = 1
+    """ The number of frames to generate for video output."""
+
+    frame_rate: int = 24
+    """ The frame rate for generated video."""
+
     seed: int | None = 0
     """ Seed for the random number generator to make generation deterministic.
     If None, random seed is used. Equivalent to torch.Generator().manual_seed(seed).
@@ -126,14 +132,14 @@ class LTX2ModelInputs(PixelModelInputs):
 class LTX2Pipeline(DiffusionPipeline):
     """A LTX2 pipeline for text-to-video and image-to-video generation."""
 
-    vae: AutoencoderKLModel
-    vae_audio: AutoencoderKLModel
+    vae: AutoencoderKLLTX2VideoModel
+    vae_audio: AutoencoderKLLTX2AudioModel
     text_encoder: Gemma3_MultiModalModel
     transformer: LTX2Transformer2DModel
 
     components = {
-        "vae": AutoencoderKLModel,
-        "vae_audio": AutoencoderKLModel,
+        "vae": AutoencoderKLLTX2VideoModel,
+        "vae_audio": AutoencoderKLLTX2AudioModel,
         "text_encoder": Gemma3_MultiModalModel,
         "transformer": LTX2Transformer2DModel,
     }
@@ -460,7 +466,7 @@ class LTX2Pipeline(DiffusionPipeline):
         cfg_normalization = model_inputs.cfg_normalization
         cfg_truncation = model_inputs.cfg_truncation
         negative_prompt = model_inputs.negative_prompt
-        num_images_per_prompt = model_inputs.num_images_per_prompt or 1
+        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt or 1
         latents = model_inputs.latents
         prompt_embeds = model_inputs.prompt_embeds
         negative_prompt_embeds = model_inputs.negative_prompt_embeds

@@ -13,7 +13,8 @@
 
 
 from .arch import gemma3_multimodal_arch
+from . import Gemma3LanguageModel
 
 ARCHITECTURES = [gemma3_multimodal_arch]
 
-__all__ = ["ARCHITECTURES", "gemma3_multimodal_arch"]
+__all__ = ["ARCHITECTURES", "gemma3_multimodal_arch", "Gemma3TextEncoderModel"]

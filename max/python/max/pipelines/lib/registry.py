@@ -94,6 +94,8 @@ def _infer_task_from_hf_pipeline_tag(
         "text-to-image": PipelineTask.PIXEL_GENERATION,
         "image-to-image": PipelineTask.PIXEL_GENERATION,
         "image-generation": PipelineTask.PIXEL_GENERATION,
+        "text-to-video": PipelineTask.PIXEL_GENERATION,
+        "video-generation": PipelineTask.PIXEL_GENERATION,
     }
 
     return tag_to_task.get(pipeline_tag)

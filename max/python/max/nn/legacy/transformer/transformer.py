@@ -86,7 +86,7 @@ class ReturnHiddenStates(str, Enum):
     ALL = "all"
     LAST_NORMALIZED = "last_normalized"
     ALL_NORMALIZED = "all_normalized"
-    SECOND_TO_LAST_LAYER = "second_to_last_layer"
+    ALL_LAYERS = "all_layers"
 
 
 Block = TypeVar("Block", bound=Module, covariant=True)
@@ -132,9 +132,7 @@ class Transformer(Module):
         input_row_offsets: TensorValue,
     ) -> tuple[TensorValue, ...]:
         freqs_cis = self.rope.freqs_cis
-        num_layers = len(self.layers)
-        second_to_last_h: TensorValue | None = None
-
+        all_hidden_states = []
         for idx, layer in enumerate(self.layers):
             h = layer(
                 ops.constant(idx, DType.uint32, device=DeviceRef.CPU()),
@@ -143,9 +141,8 @@ class Transformer(Module):
                 freqs_cis=freqs_cis,
                 input_row_offsets=input_row_offsets,
             )
-            # Capture second-to-last layer output for diffusion text encoders
-            if idx == num_layers - 2:
-                second_to_last_h = h
+            if self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS:
+                all_hidden_states.append(h)
 
         # Retrieve a variable number of tokens
         last_h = ops.gather(h, input_row_offsets[1:] - 1, axis=0)
@@ -200,15 +197,8 @@ class Transformer(Module):
             ret_val += (self.norm(h),)
         elif self.return_hidden_states == ReturnHiddenStates.LAST_NORMALIZED:
             ret_val += (self.norm(last_h),)
-        elif (
-            self.return_hidden_states == ReturnHiddenStates.SECOND_TO_LAST_LAYER
-        ):
-            # Return second-to-last layer output (pre-norm) for diffusion text encoders
-            # This matches HuggingFace's hidden_states[-2] behavior
-            assert second_to_last_h is not None, (
-                "Model must have at least 2 layers to use SECOND_TO_LAST_LAYER"
-            )
-            ret_val += (second_to_last_h,)
+        elif self.return_hidden_states == ReturnHiddenStates.ALL_LAYERS:
+            ret_val += tuple(all_hidden_states)
 
         return ret_val
 

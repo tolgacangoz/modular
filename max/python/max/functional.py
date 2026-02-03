@@ -597,6 +597,8 @@ logsoftmax = functional(ops.logsoftmax)
 #: Scatters values according to a mask.
 #: See :func:`max.graph.ops.masked_scatter` for details.
 masked_scatter = functional(ops.masked_scatter)
+#: Performs batch matrix multiplication. Alias for :func:`matmul`.
+bmm = functional(ops.matmul)
 #: Performs matrix multiplication.
 #: See :func:`max.graph.ops.matmul` for details.
 matmul = functional(ops.matmul)
@@ -636,21 +638,35 @@ max_pool2d = functional(ops.max_pool2d)
 
 
 @functional
-def mean(x: TensorValueLike, axis: int | None = -1) -> TensorValue:
+def mean(
+    x: TensorValueLike, axis: int | None = -1, keepdims: bool = False
+) -> TensorValue:
     """Computes the mean along specified axes.
 
     Args:
         x: The input tensor.
         axis: The axis along which to compute the mean. If None,
             computes the mean across all elements (flattened).
+        keepdims: If True, the reduced dimensions are retained as dimensions with size 1.
 
     Returns:
         A tensor containing the mean values.
     """
     if axis is None:
-        x = TensorValue(x).reshape([-1])
-        axis = 0
-    return ops.mean(x, axis=axis)
+        x_val = TensorValue(x)
+        res = ops.mean(x_val.reshape([-1]), axis=0)
+        if keepdims:
+            res = res.reshape([1] * len(x_val.shape))
+        return res
+
+    res = ops.mean(x, axis=axis)
+    if keepdims:
+        x_val = TensorValue(x)
+        new_shape = list(x_val.shape)
+        actual_axis = axis if axis >= 0 else len(new_shape) + axis
+        new_shape[actual_axis] = 1
+        res = res.reshape(new_shape)
+    return res
 
 
 @functional
@@ -840,21 +856,35 @@ sub = functional(ops.sub)
 
 
 @functional
-def sum(x: TensorValueLike, axis: int | None = -1) -> TensorValue:
+def sum(
+    x: TensorValueLike, axis: int | None = -1, keepdims: bool = False
+) -> TensorValue:
     """Computes the sum along specified axes.
 
     Args:
         x: The input tensor.
         axis: The axis along which to compute the sum. If None,
             computes the sum across all elements (flattened).
+        keepdims: If True, the reduced dimensions are retained as dimensions with size 1.
 
     Returns:
         A tensor containing the sum values.
     """
     if axis is None:
-        x = TensorValue(x).reshape([-1])
-        axis = 0
-    return ops.sum(x, axis=axis)
+        x_val = TensorValue(x)
+        res = ops.sum(x_val.reshape([-1]), axis=0)
+        if keepdims:
+            res = res.reshape([1] * len(x_val.shape))
+        return res
+
+    res = ops.sum(x, axis=axis)
+    if keepdims:
+        x_val = TensorValue(x)
+        new_shape = list(x_val.shape)
+        actual_axis = axis if axis >= 0 else len(new_shape) + axis
+        new_shape[actual_axis] = 1
+        res = res.reshape(new_shape)
+    return res
 
 
 #: Computes the hyperbolic tangent element-wise.

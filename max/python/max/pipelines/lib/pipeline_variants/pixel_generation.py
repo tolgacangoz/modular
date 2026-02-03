@@ -104,10 +104,10 @@ class PixelGenerationPipeline(
             batch_size = len(flat_batch)
             logger.error(
                 "Encountered an exception while executing pixel batch: "
-                "batch_size=%d, num_images_per_prompt=%s, height=%s, width=%s, "
+                "batch_size=%d, num_visuals_per_prompt=%s, height=%s, width=%s, "
                 "num_inference_steps=%s",
                 batch_size,
-                model_inputs.num_images_per_prompt,
+                model_inputs.num_visuals_per_prompt,
                 model_inputs.height,
                 model_inputs.width,
                 model_inputs.num_inference_steps,
@@ -115,8 +115,8 @@ class PixelGenerationPipeline(
             raise
 
         image_list = model_outputs.images
-        num_images_per_prompt = model_inputs.num_images_per_prompt
-        expected_images = len(flat_batch) * num_images_per_prompt
+        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt
+        expected_images = len(flat_batch) * num_visuals_per_prompt
         if len(image_list) != expected_images:
             raise ValueError(
                 "Unexpected number of images returned from pipeline: "
@@ -125,9 +125,9 @@ class PixelGenerationPipeline(
 
         responses: dict[RequestID, PixelGenerationOutput] = {}
         for index, (request_id, _context) in enumerate(flat_batch):
-            offset = index * num_images_per_prompt
+            offset = index * num_visuals_per_prompt
             pixel_data = np.stack(
-                image_list[offset : offset + num_images_per_prompt],
+                image_list[offset : offset + num_visuals_per_prompt],
                 axis=0,
             )
             pixel_data = pixel_data.astype(np.float32, copy=False)

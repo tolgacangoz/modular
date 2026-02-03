@@ -553,3 +553,150 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             output = output.squeeze(1)
 
         return output
+
+class Conv3d(Module[[Tensor], Tensor]):
+    """A 3D convolution layer.
+
+    Example:
+        .. code-block:: python
+
+            from max.nn import Conv3d
+            from max.tensor import Tensor
+
+            conv = Conv3d(
+                kernel_size=3,
+                in_channels=3,
+                out_channels=64,
+                has_bias=True,
+                permute=True,
+            )
+
+            x = Tensor.ones([1, 8, 32, 32, 3])
+            result = conv(x)
+    """
+
+    weight: Tensor
+    """The weight tensor with shape [depth, height, width, in_channels / num_groups, out_channels]."""
+
+    bias: Tensor | Literal[0]
+    """The bias tensor with shape [out_channels] (or 0 if bias is disabled)."""
+
+    def __init__(
+        self,
+        kernel_size: int | tuple[int, int, int],
+        in_channels: int,
+        out_channels: int,
+        dtype: DType | None = None,
+        stride: int | tuple[int, int, int] = 1,
+        padding: int | tuple[int, int, int] | tuple[int, int, int, int, int, int] = 0,
+        dilation: int | tuple[int, int, int] = 1,
+        num_groups: int = 1,
+        device: DeviceRef | None = None,
+        has_bias: bool = False,
+        permute: bool = False,
+        name: str | None = None,
+    ):
+        """Initialize Conv3d layer.
+
+        Args:
+            kernel_size: Size of the convolving kernel.
+            in_channels: Number of channels in the input.
+            out_channels: Number of channels produced by the convolution.
+            dtype: The data type for weights and bias.
+            stride: Stride of the convolution. Default: 1
+            padding: Padding added to input. Default: 0
+            dilation: Spacing between kernel elements. Default: 1
+            num_groups: Number of groups. Default: 1
+            device: The target device.
+            has_bias: If true, adds a learnable bias vector. Defaults to False.
+            permute: If true, permutes weights from PyTorch format to MAX format.
+                Defaults to False.
+            name: Base name for weights.
+        """
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.dtype = dtype
+        self.device = device
+        self.permute = permute
+        self.num_groups = num_groups
+        self.has_bias = has_bias
+        self.name = name
+
+        if isinstance(kernel_size, int):
+            self.kernel_size = (kernel_size, kernel_size, kernel_size)
+        else:
+            self.kernel_size = kernel_size
+
+        kd, kh, kw = self.kernel_size
+
+        self.weight = random.normal(
+            [out_channels, in_channels // num_groups, kd, kh, kw]
+            if self.permute
+            else [kd, kh, kw, in_channels // num_groups, out_channels],
+            dtype=self.dtype,
+            device=self.device.to_device() if self.device is not None else None,
+        )
+
+        if has_bias:
+            self.bias = random.normal(
+                [out_channels],
+                dtype=self.dtype,
+                device=self.device.to_device() if self.device is not None else None,
+            )
+        else:
+            self.bias = 0
+
+        self.stride = (
+            (stride, stride, stride) if isinstance(stride, int) else stride
+        )
+
+        if isinstance(padding, int):
+            self.padding = (padding, padding, padding, padding, padding, padding)
+        elif len(padding) == 3:
+            pd, ph, pw = padding
+            self.padding = (pd, pd, ph, ph, pw, pw)
+        else:
+            self.padding = padding
+
+        if isinstance(dilation, int):
+            self.dilation = (dilation, dilation, dilation)
+        else:
+            self.dilation = dilation
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Apply 3D convolution to input.
+
+        Args:
+            x: Input tensor. Shape depends on `permute`:
+                - If permute=True: [batch, in_channels, depth, height, width]
+                - If permute=False: [batch, depth, height, width, in_channels]
+
+        Returns:
+            Output tensor.
+        """
+        weight = self.weight.to(x.device)
+
+        if self.permute:
+            # PyTorch format: NCDHW -> NDHWC
+            x = F.permute(x, [0, 2, 3, 4, 1])
+            # Weight: FCDHW -> DHWCF
+            weight = F.permute(weight, [2, 3, 4, 1, 0])
+
+        output = F.conv3d(
+            x,
+            weight,
+            self.stride,
+            self.dilation,
+            self.padding,
+            self.num_groups,
+            self.bias if isinstance(self.bias, Tensor) else None,
+            filter_layout=self.weight.quantization_encoding
+            if hasattr(self.weight, "quantization_encoding")
+            else None,  # Placeholder for layout logic if needed
+        )
+
+        if self.permute:
+            # NDHWC -> NCDHW
+            output = F.permute(output, [0, 4, 1, 2, 3])
+
+        return output
