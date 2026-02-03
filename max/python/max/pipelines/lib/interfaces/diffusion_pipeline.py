@@ -336,7 +336,22 @@ class PixelModelInputs:
 
     - Commonly used for "same prompt, multiple samples" behavior.
     - Must be > 0.
-    - For video generation, the naming may still be used for historical compatibility.
+    """
+
+    num_frames: int = 1
+    """
+    Number of frames to generate for video output.
+
+    - 1 for image generation; >1 for video generation.
+    - If a context provides `num_frames=None`, `from_context()` treates that as
+      "not provided" and substitutes this default value.
+    """
+
+    frame_rate: int = 24
+    """
+    Frame rate for generated video.
+
+    - Defaults to 24 fps if not specified.
     """
 
     def __post_init__(self) -> None:
@@ -375,6 +390,14 @@ class PixelModelInputs:
         ):
             raise ValueError(
                 f"num_images_per_prompt must be > 0. Got {self.num_images_per_prompt!r}"
+            )
+        if not isinstance(self.num_frames, int) or self.num_frames <= 0:
+            raise ValueError(
+                f"num_frames must be a positive int. Got {self.num_frames!r}"
+            )
+        if not isinstance(self.frame_rate, int) or self.frame_rate <= 0:
+            raise ValueError(
+                f"frame_rate must be a positive int. Got {self.frame_rate!r}"
             )
 
         required_arrays = {
