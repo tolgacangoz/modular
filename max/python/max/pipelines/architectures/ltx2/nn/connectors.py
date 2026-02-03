@@ -11,13 +11,31 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
+import math
+
 import max.functional as F
-from max import nn
+from max import nn, random
 from max.dtype import DType
 from max.tensor import Tensor
+from max.driver import Device
 
 from .layers import FeedForward
 from .transformer_ltx2 import LTX2Attention, LTX2AudioVideoAttnProcessor
+
+
+def linspace(
+    start: float, end: float, steps: int, dtype: DType, device: Device
+) -> Tensor:
+    if steps < 0:
+        raise ValueError(f"number of steps must be non-negative, but got {steps}")
+    if steps == 0:
+        return Tensor.zeros((0,), dtype=dtype, device=device)
+    if steps == 1:
+        return Tensor.constant([start], dtype=dtype, device=device)
+
+    indices = Tensor.arange(steps, dtype=dtype, device=device)
+    delta = (end - start) / (steps - 1)
+    return indices * delta + start
 
 
 class LTX2RotaryPosEmbed1d(nn.Module):
@@ -34,7 +52,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
         rope_type: str = "interleaved",
         num_attention_heads: int = 32,
     ):
-        if rope_type not in ["interleaved", "split"]:
+        if rope_type not in ("interleaved", "split"):
             raise ValueError(
                 f"{rope_type=} not supported. Choose between 'interleaved' and 'split'."
             )
@@ -50,7 +68,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
         self,
         batch_size: int,
         pos: int,
-        device: str | torch.device,
+        device: Device,
     ) -> tuple[Tensor, Tensor]:
         # 1. Get 1D position ids
         grid_1d = Tensor.arange(pos, dtype=DType.float32, device=device)
@@ -65,7 +83,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
         freqs_dtype = DType.float64 if self.double_precision else DType.float32
         pow_indices = F.pow(
             self.theta,
-            F.linspace(
+            linspace(
                 start=0.0,
                 end=1.0,
                 steps=self.dim // num_rope_elems,
@@ -73,7 +91,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
                 device=device,
             ),
         )
-        freqs = (pow_indices * torch.pi / 2.0).cast(DType.float32)
+        freqs = (pow_indices * math.pi / 2.0).cast(DType.float32)
 
         # 3. Matrix-vector outer product between pos ids of shape (batch_size, seq_len) and freqs vector of shape
         # (self.dim // 2,).
@@ -117,8 +135,8 @@ class LTX2RotaryPosEmbed1d(nn.Module):
             cos_freq = cos_freq.reshape(b, t, self.num_attention_heads, -1)
             sin_freq = sin_freq.reshape(b, t, self.num_attention_heads, -1)
 
-            cos_freqs = torch.swapaxes(cos_freq, 1, 2)  # (B,H,T,D//2)
-            sin_freqs = torch.swapaxes(sin_freq, 1, 2)  # (B,H,T,D//2)
+            cos_freqs = cos_freq.transpose(1, 2)  # (B,H,T,D//2)
+            sin_freqs = sin_freq.transpose(1, 2)  # (B,H,T,D//2)
 
         return cos_freqs, sin_freqs
 
@@ -133,7 +151,7 @@ class LTX2TransformerBlock1d(nn.Module):
         eps: float = 1e-6,
         rope_type: str = "interleaved",
     ):
-        self.norm1 = nn.norm.nn.norm.RMSNorm(
+        self.norm1 = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=False
         )
         self.attn1 = LTX2Attention(
@@ -145,7 +163,7 @@ class LTX2TransformerBlock1d(nn.Module):
             rope_type=rope_type,
         )
 
-        self.norm2 = nn.norm.nn.norm.RMSNorm(
+        self.norm2 = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=False
         )
         self.ff = FeedForward(dim, activation_fn=activation_fn)
@@ -199,7 +217,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
         self.learnable_registers = None
         if num_learnable_registers is not None:
             init_registers = (
-                torch.rand(num_learnable_registers, self.inner_dim) * 2.0 - 1.0
+                random.uniform((num_learnable_registers, self.inner_dim)) * 2.0 - 1.0
             )
             self.learnable_registers = Tensor.constant(init_registers)
 
@@ -212,7 +230,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
             num_attention_heads=num_attention_heads,
         )
 
-        self.transformer_blocks = nn.sequential.ModuleList(
+        self.transformer_blocks = nn.ModuleList(
             [
                 LTX2TransformerBlock1d(
                     dim=self.inner_dim,
@@ -224,7 +242,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
             ]
         )
 
-        self.norm_out = nn.norm.RMSNorm(
+        self.norm_out = nn.RMSNorm(
             self.inner_dim, eps=eps, elementwise_affine=False
         )
 
@@ -247,7 +265,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
                 )
 
             num_register_repeats = seq_len // self.num_learnable_registers
-            registers = torch.tile(
+            registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
             )  # [seq_len, inner_dim]
 
@@ -277,7 +295,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
                 [x.unsqueeze(0) for x in padded_hidden_states], dim=0
             )  # [B, L, D]
 
-            flipped_mask = torch.flip(binary_attn_mask, dims=[1]).unsqueeze(
+            flipped_mask = binary_attn_mask[:, ::-1].unsqueeze(
                 -1
             )  # [B, L, 1]
             hidden_states = (
@@ -304,7 +322,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
         return hidden_states, attention_mask
 
 
-class LTX2TextConnectors(ModelMixin, ConfigMixin):
+class LTX2TextConnectors(nn.Module):
     """
     Text connector stack used by LTX 2.0 to process the packed text encoder hidden states for both the video and audio
     streams.
@@ -367,7 +385,7 @@ class LTX2TextConnectors(ModelMixin, ConfigMixin):
                 attention_mask.shape[0], 1, -1, attention_mask.shape[-1]
             )
             attention_mask = (
-                attention_mask.to(text_dtype) * torch.finfo(text_dtype).max
+                attention_mask.cast(text_dtype) * DType.finfo(text_dtype).max
             )
 
         text_encoder_hidden_states = self.text_proj_in(

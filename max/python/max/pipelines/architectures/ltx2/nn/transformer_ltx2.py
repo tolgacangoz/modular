@@ -13,13 +13,14 @@
 
 from dataclasses import dataclass
 from typing import Any
+import math
 
-import max.nn.module_v3 as nn
+import max.functional as F
+from max import nn, random
 from max.driver import Device
 from max.dtype import DType
-from max.experimental.tensor import Tensor
+from max.tensor import Tensor
 
-from ...configuration_utils import ConfigMixin
 from ...loaders import FromOriginalModelMixin, PeftAdapterMixin
 from ...utils import (
     USE_PEFT_BACKEND,
@@ -47,7 +48,7 @@ def apply_interleaved_rotary_emb(
 ) -> Tensor:
     cos, sin = freqs
     x_real, x_imag = x.unflatten(2, (-1, 2)).unbind(-1)  # [B, S, C // 2]
-    x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(2)
+    x_rotated = F.stack([-x_imag, x_real], dim=-1).flatten(2)
     out = (x.float() * cos + x_rotated.float() * sin).cast(x.dtype)
     return out
 
@@ -87,8 +88,8 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     first_out = out[..., :1, :]
     second_out = out[..., 1:, :]
 
-    first_out.addcmul_(-sin_u, second_x)
-    second_out.addcmul_(sin_u, first_x)
+    first_out = first_out - sin_u * second_x
+    second_out = second_out + sin_u * first_x
 
     out = out.reshape(*out.shape[:-2], last)
 
@@ -513,18 +514,12 @@ class LTX2VideoTransformerBlock(nn.Module):
 
         # 5. Per-Layer Modulation Parameters
         # Self-Attention / Feedforward AdaLayerNorm-Zero mod params
-        self.scale_shift_table = Tensor.constant(torch.randn(6, dim) / dim**0.5)
-        self.audio_scale_shift_table = Tensor.constant(
-            torch.randn(6, audio_dim) / audio_dim**0.5
-        )
+        self.scale_shift_table = random.gaussian((6, dim)) / dim**0.5
+        self.audio_scale_shift_table = random.gaussian((6, audio_dim)) / audio_dim**0.5
 
         # Per-layer a2v, v2a Cross-Attention mod params
-        self.video_a2v_cross_attn_scale_shift_table = Tensor.constant(
-            torch.randn(5, dim)
-        )
-        self.audio_a2v_cross_attn_scale_shift_table = Tensor.constant(
-            torch.randn(5, audio_dim)
-        )
+        self.video_a2v_cross_attn_scale_shift_table = random.gaussian((5, dim))
+        self.audio_a2v_cross_attn_scale_shift_table = random.gaussian((5, audio_dim))
 
     def forward(
         self,
@@ -858,9 +853,11 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
             device=device,
         )
         # indexing='ij' ensures that the dimensions are kept in order as (frames, height, width)
-        grid = torch.meshgrid(grid_f, grid_h, grid_w, indexing="ij")
-        grid = torch.stack(
-            grid, dim=0
+        grid_f_3d = grid_f.reshape(-1, 1, 1).expand(-1, grid_h.shape[0], grid_w.shape[0])
+        grid_h_3d = grid_h.reshape(1, -1, 1).expand(grid_f.shape[0], -1, grid_w.shape[0])
+        grid_w_3d = grid_w.reshape(1, 1, -1).expand(grid_f.shape[0], grid_h.shape[0], -1)
+        grid = F.stack(
+            [grid_f_3d, grid_h_3d, grid_w_3d], axis=0
         )  # [3, N_F, N_H, N_W], where e.g. N_F is the number of temporal patches
 
         # 2. Get the patch boundaries with respect to the latent video grid
@@ -871,8 +868,8 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
         patch_ends = grid + patch_size_delta.reshape(3, 1, 1, 1)
 
         # Combine the start (grid) and end (patch_ends) coordinates along new trailing dimension
-        latent_coords = torch.stack(
-            [grid, patch_ends], dim=-1
+        latent_coords = F.stack(
+            [grid, patch_ends], axis=-1
         )  # [3, N_F, N_H, N_W, 2]
         # Reshape to (batch_size, 3, num_patches, 2)
         latent_coords = latent_coords.flatten(1, 3)
@@ -1020,7 +1017,7 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
                 device=device,
             ),
         )
-        freqs = (pow_indices * torch.pi / 2.0).cast(DType.float32)
+        freqs = (pow_indices * math.pi / 2.0).cast(DType.float32)
 
         # 4. Tensor-vector outer product between pos ids tensor of shape (B, 3, num_patches) and freqs vector of shape
         # (self.dim // num_elems,)
@@ -1069,8 +1066,8 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
             cos_freq = cos_freq.reshape(b, t, self.num_attention_heads, -1)
             sin_freq = sin_freq.reshape(b, t, self.num_attention_heads, -1)
 
-            cos_freqs = torch.swapaxes(cos_freq, 1, 2)  # (B,H,T,D//2)
-            sin_freqs = torch.swapaxes(sin_freq, 1, 2)  # (B,H,T,D//2)
+            cos_freqs = cos_freq.transpose(1, 2)  # (B,H,T,D//2)
+            sin_freqs = sin_freq.transpose(1, 2)  # (B,H,T,D//2)
 
         return cos_freqs, sin_freqs
 
@@ -1223,12 +1220,8 @@ class LTX2VideoTransformer3DModel(
         )
 
         # 3.3. Output Layer Scale/Shift Modulation parameters
-        self.scale_shift_table = Tensor.constant(
-            torch.randn(2, inner_dim) / inner_dim**0.5
-        )
-        self.audio_scale_shift_table = Tensor.constant(
-            torch.randn(2, audio_inner_dim) / audio_inner_dim**0.5
-        )
+        self.scale_shift_table = random.gaussian((2, inner_dim)) / inner_dim**0.5
+        self.audio_scale_shift_table = random.gaussian((2, audio_inner_dim)) / audio_inner_dim**0.5
 
         # 4. Rotary Positional Embeddings (RoPE)
         # Self-Attention
