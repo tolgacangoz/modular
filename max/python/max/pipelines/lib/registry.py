@@ -31,11 +31,12 @@ from max.interfaces import (
     Pipeline,
     PipelineTask,
     PipelineTokenizer,
+    PixelGenerationContext,
     TextGenerationContext,
     TextGenerationRequest,
 )
 from max.nn.legacy.kv_cache import KVCacheStrategy
-from max.pipelines.core import TextAndVisionContext, TextContext
+from max.pipelines.core import PixelContext, TextAndVisionContext, TextContext
 from transformers import (
     AutoConfig,
     AutoTokenizer,
@@ -52,10 +53,11 @@ from .config_enums import PipelineRole, RepoType, RopeType, SupportedEncoding
 from .embeddings_pipeline import EmbeddingsPipeline
 from .hf_utils import HuggingFaceRepo, is_diffusion_pipeline
 from .interfaces import ArchConfig, ArchConfigWithKVCache, PipelineModel
-from .pipeline_variants.overlap_text_generation import (
+from .pipeline_variants import (
     OverlapTextGenerationPipeline,
+    PixelGenerationPipeline,
+    TextGenerationPipeline,
 )
-from .pipeline_variants.text_generation import TextGenerationPipeline
 from .speculative_decoding import (
     EAGLESpeculativeDecodingPipeline,
     StandaloneSpeculativeDecodingPipeline,
@@ -88,7 +90,12 @@ def _infer_task_from_hf_pipeline_tag(
         "feature-extraction": PipelineTask.EMBEDDINGS_GENERATION,
         "sentence-similarity": PipelineTask.EMBEDDINGS_GENERATION,
         "audio-generation": PipelineTask.AUDIO_GENERATION,
-        # Add more mappings as needed
+        # Diffusion/pixel generation tasks
+        "text-to-image": PipelineTask.PIXEL_GENERATION,
+        "image-to-image": PipelineTask.PIXEL_GENERATION,
+        "image-generation": PipelineTask.PIXEL_GENERATION,
+        "text-to-video": PipelineTask.PIXEL_GENERATION,
+        "video-generation": PipelineTask.PIXEL_GENERATION,
     }
 
     return tag_to_task.get(pipeline_tag)
@@ -104,6 +111,7 @@ def get_pipeline_for_task(
     | type[SpeechTokenGenerationPipeline]
     | type[EAGLESpeculativeDecodingPipeline]
     | type[OverlapTextGenerationPipeline[TextContext]]
+    | type[PixelGenerationPipeline[PixelContext]]
 ):
     if (
         task == PipelineTask.TEXT_GENERATION
@@ -145,7 +153,7 @@ def get_pipeline_for_task(
     elif task == PipelineTask.SPEECH_TOKEN_GENERATION:
         return SpeechTokenGenerationPipeline
     elif task == PipelineTask.PIXEL_GENERATION:
-        raise NotImplementedError("Pixel generation not yet implemented")
+        return PixelGenerationPipeline
 
 
 @dataclass(frozen=False)
@@ -215,11 +223,16 @@ class SupportedArchitecture:
     default_weights_format: WeightsFormat
     """The weights format expected by the `pipeline_model`."""
 
-    context_type: type[TextGenerationContext] | type[EmbeddingsContext]
+    context_type: (
+        type[TextGenerationContext]
+        | type[EmbeddingsContext]
+        | type[PixelGenerationContext]
+    )
     """The context class type that this architecture uses for managing request state and inputs.
 
-    This should be a class (not an instance) that implements either the `TextGenerationContext`
-    or `EmbeddingsContext` protocol, defining how the pipeline processes and tracks requests.
+    This should be a class (not an instance) that implements one of the context protocols:
+    TextGenerationContext, EmbeddingsContext, or PixelGenerationContext, defining how
+    the pipeline processes and tracks requests.
     """
 
     config: type[ArchConfig]

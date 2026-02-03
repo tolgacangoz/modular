@@ -16,11 +16,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Generic
 
 import numpy as np
 from max.driver import load_devices
+import numpy as np
+from max.driver import load_devices
 from max.interfaces import (
+    GenerationStatus,
     GenerationStatus,
     Pipeline,
     PipelineOutputsDict,
@@ -30,6 +35,12 @@ from max.interfaces import (
 )
 from max.interfaces.generation import GenerationOutput
 from max.interfaces.request.open_responses import OutputImageContent
+
+from ..interfaces.diffusion_pipeline import (  # type: ignore[import-not-found]
+    DiffusionPipeline,
+    PixelModelInputs,
+)
+from .utils import get_weight_paths
 
 from ..interfaces.diffusion_pipeline import (
     DiffusionPipeline,
@@ -104,10 +115,10 @@ class PixelGenerationPipeline(
             batch_size = len(flat_batch)
             logger.error(
                 "Encountered an exception while executing pixel batch: "
-                "batch_size=%d, num_images_per_prompt=%s, height=%s, width=%s, "
+                "batch_size=%d, num_visuals_per_prompt=%s, height=%s, width=%s, "
                 "num_inference_steps=%s",
                 batch_size,
-                model_inputs.num_images_per_prompt,
+                model_inputs.num_visuals_per_prompt,
                 model_inputs.height,
                 model_inputs.width,
                 model_inputs.num_inference_steps,
@@ -115,7 +126,7 @@ class PixelGenerationPipeline(
             raise
 
         image_list = model_outputs.images
-        num_images_per_prompt = model_inputs.num_images_per_prompt
+        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt
 
         # Post-process images from NCHW to NHWC format
         # The VAE decoder returns images in (batch, channels, height, width) format
@@ -126,7 +137,7 @@ class PixelGenerationPipeline(
             # Transpose from NCHW to NHWC
             image_list = image_list.transpose(0, 2, 3, 1)
 
-        expected_images = len(flat_batch) * num_images_per_prompt
+        expected_images = len(flat_batch) * num_visuals_per_prompt
         if len(image_list) != expected_images:
             raise ValueError(
                 "Unexpected number of images returned from pipeline: "
@@ -135,11 +146,10 @@ class PixelGenerationPipeline(
 
         responses: dict[RequestID, GenerationOutput] = {}
         for index, (request_id, _context) in enumerate(flat_batch):
-            offset = index * num_images_per_prompt
+            offset = index * num_visuals_per_prompt
             # Select images for this request (already in NHWC format)
-            pixel_data = image_list[offset : offset + num_images_per_prompt]
+            pixel_data = image_list[offset : offset + num_visuals_per_prompt]
             pixel_data = pixel_data.astype(np.float32, copy=False)
-
             responses[request_id] = GenerationOutput(
                 request_id=request_id,
                 final_status=GenerationStatus.END_OF_SEQUENCE,
