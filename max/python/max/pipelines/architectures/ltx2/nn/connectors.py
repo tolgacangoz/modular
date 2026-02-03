@@ -11,18 +11,13 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-
-import max.experimental.functional as F
-import max.nn.module_v3 as nn
+import max.functional as F
+from max import nn
 from max.dtype import DType
+from max.tensor import Tensor
 
-from ...configuration_utils import ConfigMixin
-from ...models.attention import FeedForward
-from ...models.modeling_utils import ModelMixin
-from ...models.transformers.transformer_ltx2 import (
-    LTX2Attention,
-    LTX2AudioVideoAttnProcessor,
-)
+from .layers import FeedForward
+from .transformer_ltx2 import LTX2Attention, LTX2AudioVideoAttnProcessor
 
 
 class LTX2RotaryPosEmbed1d(nn.Module):
@@ -70,7 +65,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
         freqs_dtype = DType.float64 if self.double_precision else DType.float32
         pow_indices = F.pow(
             self.theta,
-            torch.linspace(
+            F.linspace(
                 start=0.0,
                 end=1.0,
                 steps=self.dim // num_rope_elems,
