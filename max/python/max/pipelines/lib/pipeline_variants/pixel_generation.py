@@ -16,16 +16,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Generic
 
 import numpy as np
 from max.driver import load_devices
-import numpy as np
-from max.driver import load_devices
 from max.interfaces import (
-    GenerationStatus,
     GenerationStatus,
     Pipeline,
     PipelineOutputsDict,
@@ -37,12 +32,6 @@ from max.interfaces.generation import GenerationOutput
 from max.interfaces.request.open_responses import OutputImageContent
 
 from ..interfaces.diffusion_pipeline import (  # type: ignore[import-not-found]
-    DiffusionPipeline,
-    PixelModelInputs,
-)
-from .utils import get_weight_paths
-
-from ..interfaces.diffusion_pipeline import (
     DiffusionPipeline,
     PixelModelInputs,
 )

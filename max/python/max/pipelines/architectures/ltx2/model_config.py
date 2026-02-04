@@ -13,9 +13,8 @@
 
 from typing import Any, ClassVar
 
-from max.driver import Device
 from max.graph import DeviceRef
-from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
+from max.pipelines.lib import MAXModelConfigBase
 
 
 class LTX2ConfigBase(MAXModelConfigBase):
@@ -62,6 +61,7 @@ class LTX2ConfigBase(MAXModelConfigBase):
     vae_config: dict[str, Any] = {}
     vae_audio_config: dict[str, Any] = {}
     text_encoder_config: dict[str, Any] = {}
+    connectors_config: dict[str, Any] = {}
 
 
 class LTX2Config(LTX2ConfigBase):
@@ -95,6 +95,7 @@ class LTX2Config(LTX2ConfigBase):
             "vae_config",
             "vae_audio_config",
             "text_encoder_config",
+            "connectors_config",
         ]:
             if cfg_name in kwargs:
                 init_dict[cfg_name] = kwargs[cfg_name]
@@ -103,7 +104,9 @@ class LTX2Config(LTX2ConfigBase):
         if "dtype" in kwargs:
             init_dict["dtype"] = kwargs["dtype"]
         elif hasattr(pipeline_config, "model"):
-            init_dict["dtype"] = pipeline_config.model.quantization_encoding.dtype
+            init_dict["dtype"] = (
+                pipeline_config.model.quantization_encoding.dtype
+            )
 
         if "device" in kwargs:
             init_dict["device"] = kwargs["device"]
