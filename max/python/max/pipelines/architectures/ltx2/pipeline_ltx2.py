@@ -16,14 +16,17 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
+
+import numpy as np
 
 import max.functional as F
 from max._core.engine import Model
-from max.driver import Buffer
+from max import random
+from max.driver import Buffer, CPU
 from max.dtype import DType
 from max.engine.api import InferenceSession
-from max.graph import DeviceRef, Graph, TensorType
+from max.graph import DeviceRef, TensorType
 from max.graph.weights import (
     SafetensorWeights,
     WeightData,
@@ -136,13 +139,11 @@ class LTX2Pipeline(DiffusionPipeline):
 
     vae: AutoencoderKLLTX2VideoModel
     vae_audio: AutoencoderKLLTX2AudioModel
-    text_encoder: Gemma3_MultiModalModel
     transformer: LTX2Transformer2DModel
 
     components = {
         "vae": AutoencoderKLLTX2VideoModel,
         "vae_audio": AutoencoderKLLTX2AudioModel,
-        "text_encoder": Gemma3_MultiModalModel,
         "transformer": LTX2Transformer2DModel,
     }
 
@@ -378,75 +379,155 @@ class LTX2Pipeline(DiffusionPipeline):
         )
         nn_model.transformer = compiled_transformer_model
 
-        # Prepare text encoder graph inputs.
-        # Gemma3 expects (tokens, input_row_offsets, return_n_logits, *kv_cache_inputs)
-        # We use dummy kv_params for type discovery
-        graph_inputs = nn_model.text_encoder.input_types()
-
-        logger.info("Building and compiling text encoder...")
-        before_text_encoder_build = time.perf_counter()
-        text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
-        after_text_encoder_build = time.perf_counter()
-
+        # Text encoder is now loaded via transformers (Gemma3ForConditionalGeneration)
+        # No MAX graph compilation needed - it runs on PyTorch/CUDA directly
         logger.info(
-            f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
+            "Text encoder loaded via transformers (Gemma3ForConditionalGeneration)"
         )
 
-        before_text_encoder_compile = time.perf_counter()
-        compiled_text_encoder_model = session.load(
-            text_encoder_graph,
-            weights_registry=text_encoder_llm_state_dict,
-        )
-        nn_model.text_encoder = compiled_text_encoder_model
         after = time.perf_counter()
-
-        # logger.info(
-        #     f"Compiling text encoder's model took {after - before_text_encoder_compile:.6f} seconds"
-        # )
         logger.info(
             f"Building and compiling the whole pipeline took {after - before:.6f} seconds"
         )
         return nn_model
 
-    def _build_text_encoder_graph(
-        self, graph_inputs: tuple[TensorType, ...]
-    ) -> Graph:
-        """Build the MAX graph for the text encoder.
+    def _encode_tokens(self, token_ids: Tensor, device: str = "cuda") -> Tensor:
+        """Encode token_ids using transformers Gemma3ForConditionalGeneration.
 
-        Uses native Qwen3 with return_hidden_states=SECOND_TO_LAST configured in
-        model_config.py. SECOND_TO_LAST returns the second-to-last layer's hidden
-        states directly (matching diffusers' hidden_states[-2] pattern).
+        The token_ids come from PixelGenerationTokenizer which already handles
+        tokenization. This method just runs them through the text encoder to
+        get hidden states.
 
         Args:
-            graph_inputs: Tuple of TensorType defining the graph inputs.
+            token_ids: Token IDs from PixelGenerationTokenizer (via model_inputs.token_ids).
+            device: Device to run encoding on.
 
         Returns:
-            Compiled MAX graph that outputs hidden states of shape
-            (seq_len, hidden_size) from the second-to-last layer.
+            Hidden states tensor from the text encoder, stacked across all layers.
         """
-        with Graph("qwen3_text_encoder", input_types=graph_inputs) as graph:
-            tokens, input_row_offsets, return_n_logits, *kv_cache_inputs = (
-                graph.inputs
-            )
-            kv_collection = PagedCacheValues(
-                kv_blocks=kv_cache_inputs[0].buffer,
-                cache_lengths=kv_cache_inputs[1].tensor,
-                lookup_table=kv_cache_inputs[2].tensor,
-                max_lengths=kv_cache_inputs[3].tensor,
-            )
-            # Qwen3 with ReturnHiddenStates.SECOND_TO_LAST_LAYER returns
-            # (logits, second_to_last_hidden_states) directly
+        import torch
+
+        # Convert MAX Tensor to PyTorch tensor
+        input_ids = torch.from_numpy(token_ids.to_numpy()).to(device)
+        attention_mask = torch.ones_like(input_ids)
+
+        with torch.no_grad():
             outputs = self.model.text_encoder(
-                tokens.tensor,
-                kv_collection,
-                return_n_logits.tensor,
-                input_row_offsets.tensor,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
             )
-            # Extract second-to-last hidden states (last element of output tuple)
-            # Shape: (seq_len, hidden_size)
-            hidden_states = outputs[-1]
-            graph.output(hidden_states)
-            return graph
+            # Stack all hidden states: [batch_size, seq_len, hidden_dim, num_layers]
+            hidden_states = torch.stack(outputs.hidden_states, dim=-1)
+
+        # Convert to MAX Tensor
+        return Tensor.from_dlpack(hidden_states.to(torch.bfloat16))
+
+    @staticmethod
+    def _pack_text_embeds(
+        text_hidden_states: Tensor,
+        attention_mask: Tensor,
+        device: Device,
+        scale_factor: int = 8,
+        eps: float = 1e-6,
+    ) -> Tensor:
+        """
+        Packs and normalizes text encoder hidden states, respecting padding.
+        """
+        batch_size, seq_len, hidden_dim, num_layers = text_hidden_states.shape
+        # original_dtype = text_hidden_states.dtype
+
+        # Create padding mask [batch_size, seq_len, 1, 1]
+        mask = attention_mask.unsqueeze(-1).unsqueeze(-1)
+        sequence_lengths = attention_mask.sum(axis=1)
+
+        # Compute masked mean over non-padding positions
+        masked_text_hidden_states = F.where(mask.cast(DType.bool), text_hidden_states, F.constant(0.0, dtype=text_hidden_states.dtype))
+        num_valid_positions = (sequence_lengths * hidden_dim).reshape(batch_size, 1, 1, 1)
+
+        # masked_mean = masked_text_hidden_states.sum(dim=(1, 2), keepdim=True) / (num_valid_positions + eps)
+        # MAX doesn't support sum(dim=(1,2)), we do it sequentially
+        masked_sum = masked_text_hidden_states.sum(axis=1).sum(axis=1).unsqueeze(1).unsqueeze(2)
+        masked_mean = masked_sum / (num_valid_positions.cast(text_hidden_states.dtype) + eps)
+
+        # Compute min/max over non-padding positions
+        inf_val = F.constant(float("inf"), dtype=text_hidden_states.dtype)
+        neg_inf_val = F.constant(float("-inf"), dtype=text_hidden_states.dtype)
+
+        x_min = F.where(mask.cast(DType.bool), text_hidden_states, inf_val).min(axis=1).min(axis=1).unsqueeze(1).unsqueeze(2)
+        x_max = F.where(mask.cast(DType.bool), text_hidden_states, neg_inf_val).max(axis=1).max(axis=1).unsqueeze(1).unsqueeze(2)
+
+        # Normalization
+        normalized_hidden_states = (text_hidden_states - masked_mean) / (x_max - x_min + eps)
+        normalized_hidden_states = normalized_hidden_states * scale_factor
+
+        # Pack the hidden states to a 3D tensor (batch_size, seq_len, hidden_dim * num_layers)
+        normalized_hidden_states = normalized_hidden_states.reshape(batch_size, seq_len, -1)
+
+        # Mask out padding in the final result
+        mask_flat = attention_mask.unsqueeze(-1)
+        # normalized_hidden_states = F.where(mask_flat.cast(DType.bool), normalized_hidden_states, F.constant(0.0, dtype=normalized_hidden_states.dtype))
+
+        return normalized_hidden_states
+
+    @staticmethod
+    def _pack_latents(latents: Tensor, patch_size: int = 1, patch_size_t: int = 1) -> Tensor:
+        """Pack latents from [B, C, F, H, W] to [B, S, D] token sequence."""
+        batch_size, num_channels, num_frames, height, width = latents.shape
+        post_patch_num_frames = num_frames // patch_size_t
+        post_patch_height = height // patch_size
+        post_patch_width = width // patch_size
+        latents = latents.reshape(
+            batch_size,
+            -1,
+            post_patch_num_frames,
+            patch_size_t,
+            post_patch_height,
+            patch_size,
+            post_patch_width,
+            patch_size,
+        )
+        latents = latents.permute(0, 2, 4, 6, 1, 3, 5, 7).flatten(4, 7).flatten(1, 3)
+        return latents
+
+    @staticmethod
+    def _unpack_latents(
+        latents: Tensor, num_frames: int, height: int, width: int, patch_size: int = 1, patch_size_t: int = 1
+    ) -> Tensor:
+        """Unpack latents from [B, S, D] to [B, C, F, H, W]."""
+        batch_size = latents.shape[0]
+        latents = latents.reshape(batch_size, num_frames, height, width, -1, patch_size_t, patch_size, patch_size)
+        latents = latents.permute(0, 4, 1, 5, 2, 6, 3, 7).flatten(6, 7).flatten(4, 5).flatten(2, 3)
+        return latents
+
+    @staticmethod
+    def _pack_audio_latents(latents: Tensor) -> Tensor:
+        """Pack audio latents from [B, C, L, M] to [B, L, C*M]."""
+        # Transpose [B, C, L, M] -> [B, L, C, M] then flatten to [B, L, C*M]
+        latents = latents.transpose(1, 2).flatten(2, 3)
+        return latents
+
+    @staticmethod
+    def _unpack_audio_latents(latents: Tensor, latent_length: int, num_mel_bins: int) -> Tensor:
+        """Unpack audio latents from [B, L, C*M] to [B, C, L, M]."""
+        # Unflatten [B, L, C*M] -> [B, L, C, M] then transpose to [B, C, L, M]
+        latents = latents.unflatten(2, (-1, num_mel_bins)).transpose(1, 2)
+        return latents
+
+    def _denormalize_latents(self, latents: Tensor) -> Tensor:
+        """Denormalize video latents."""
+        latents_mean = self.model.vae.latents_mean
+        latents_std = self.model.vae.latents_std
+        scaling_factor = self.model.vae.config.scaling_factor
+        # Reshape mean/std for broadcasting [1, C, 1, 1, 1]
+        latents = latents * latents_std / scaling_factor + latents_mean
+        return latents
+
+    def _denormalize_audio_latents(self, latents: Tensor) -> Tensor:
+        """Denormalize audio latents."""
+        latents_mean = self.model.audio_vae.latents_mean
+        latents_std = self.model.audio_vae.latents_std
+        return (latents * latents_std) + latents_mean
 
     @property
     def guidance_scale(self) -> float:
@@ -464,6 +545,44 @@ class LTX2Pipeline(DiffusionPipeline):
     def num_timesteps(self) -> int:
         return self._num_timesteps
 
+    def _decode_latents(
+        self,
+        latents: Tensor,
+        height: int,
+        width: int,
+        output_type: Literal["np", "latent", "pil"] = "np",
+    ) -> Tensor | np.ndarray:
+        if output_type == "latent":
+            return latents
+        latents = Tensor.from_dlpack(latents)
+        latents = self._unpack_latents(
+            latents, height, width, self.vae_scale_factor
+        )
+        latents = (
+            latents / self.model.vae.config.scaling_factor
+        ) + self.model.vae.config.shift_factor
+        return self._to_numpy(self.model.vae.decode(latents))
+
+    def _to_numpy(self, image: Tensor) -> np.ndarray:
+        cpu_image: Tensor = image.cast(DType.float32).to(CPU())
+        return np.from_dlpack(cpu_image)
+
+    def _scheduler_step(
+        self,
+        latents: Tensor,
+        noise_pred: Tensor,
+        sigmas: Tensor,
+        step_index: int,
+    ) -> Tensor:
+        latents_dtype = latents.dtype
+        latents = latents.cast(DType.float32)
+        sigma = sigmas[step_index]
+        sigma_next = sigmas[step_index + 1]
+        dt = sigma_next - sigma
+        latents = latents + dt * noise_pred
+        latents = latents.cast(latents_dtype)
+        return latents
+
     def execute(
         self,
         model_inputs: ModelInputs,
@@ -478,118 +597,170 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             ModelOutputs containing the generated images.
         """
-        # Use cast for type safety (same pattern as GptOssModel)
-        model_inputs = cast(LTX2Inputs, model_inputs)
+        # Use cast for type safety
+        model_inputs = cast(LTX2ModelInputs, model_inputs)
 
         # Extract parameters from model_inputs
-        height = model_inputs.height or 1024
-        width = model_inputs.width or 1024
+        height = model_inputs.height or 512
+        width = model_inputs.width or 768
+        num_frames = model_inputs.num_frames or 121
+        frame_rate = model_inputs.frame_rate or 24
         num_inference_steps = model_inputs.num_inference_steps
-        sigmas = model_inputs.sigmas
         guidance_scale = model_inputs.guidance_scale
-        cfg_normalization = model_inputs.cfg_normalization
-        cfg_truncation = model_inputs.cfg_truncation
-        negative_prompt = model_inputs.negative_prompt
-        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt or 1
-        latents = model_inputs.latents
-        prompt_embeds = model_inputs.prompt_embeds
-        negative_prompt_embeds = model_inputs.negative_prompt_embeds
-        output_type = model_inputs.output_type
         device = self.devices[0]
 
-        prompt_embeds = (
-            Tensor.from_dlpack(prompt_embeds_np).to(device).cast(DType.bfloat16)
+        self._guidance_scale = guidance_scale
+
+        # 1. Compute latent dimensions
+        latent_num_frames = (num_frames - 1) // self.vae_temporal_compression_ratio + 1
+        latent_height = height // self.vae_spatial_compression_ratio
+        latent_width = width // self.vae_spatial_compression_ratio
+
+        # 2. Get timesteps and sigmas
+        timesteps = (
+            Tensor.from_dlpack(model_inputs.timesteps)
+            .to(device)
+            .cast(DType.float32)
+        )
+        sigmas = (
+            Tensor.from_dlpack(model_inputs.sigmas)
+            .to(device)
+            .cast(DType.float32)
         )
 
-        self._guidance_scale = guidance_scale
-        self._cfg_normalization = cfg_normalization
-        self._cfg_truncation = cfg_truncation
-        # 2. Define call parameters
-        self.model.scheduler._step_index = 0
-        timesteps = (
-            Tensor.from_dlpack(model_inputs.timesteps).to(device).cast(DType.float32)
+        # 3. Encode text with Gemma3 (via transformers)
+        token_ids = Tensor.from_dlpack(model_inputs.token_ids).to(device)
+        prompt_attention_mask = Tensor.from_dlpack(model_inputs.mask).to(device)
+
+        text_encoder_hidden_states = self._encode_tokens(token_ids, device="cuda")
+        prompt_embeds = self._pack_text_embeds(text_encoder_hidden_states, prompt_attention_mask, device)
+
+        # Encode negative prompt if doing CFG
+        if self.do_classifier_free_guidance:
+            if model_inputs.negative_token_ids is not None:
+                negative_token_ids = Tensor.from_dlpack(model_inputs.negative_token_ids).to(device)
+                negative_attention_mask = Tensor.from_dlpack(model_inputs.mask).to(device) # Usually same mask shape
+
+                negative_hidden_states = self._encode_tokens(negative_token_ids, device="cuda")
+                negative_prompt_embeds = self._pack_text_embeds(negative_hidden_states, negative_attention_mask, device)
+            else:
+                # Use zeros for negative prompt if not provided
+                negative_prompt_embeds = F.zeros_like(prompt_embeds)
+            # Concatenate for CFG: [negative, positive]
+            prompt_embeds = F.concat([negative_prompt_embeds, prompt_embeds], axis=0)
+            prompt_attention_mask = F.concat([prompt_attention_mask, prompt_attention_mask], axis=0)
+
+        # 4. Process text embeddings through connectors
+        additive_attention_mask = (1 - prompt_attention_mask.cast(prompt_embeds.dtype)) * -1000000.0
+        connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.model.connectors(
+            prompt_embeds, additive_attention_mask, additive_mask=True
         )
+
+        # 5. Prepare video latents
         latents = (
-            Tensor.from_dlpack(model_inputs.latents).to(device).cast(DType.bfloat16)
+            Tensor.from_dlpack(model_inputs.latents)
+            .to(device)
+            .cast(DType.bfloat16)
         )
+        # Pack latents: [B, C, F, H, W] -> [B, S, D]
+        batch_size = latents.shape[0]
+        latents = self._pack_latents(latents)
+
+        # 6. Prepare audio latents
+        num_mel_bins = 64  # From audio VAE config
+        latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
+        duration_s = num_frames / frame_rate
+        audio_latents_per_second = 16_000 / 160 / 4.0
+        audio_num_frames = round(duration_s * audio_latents_per_second)
+        audio_shape = (batch_size, 8, audio_num_frames, latent_mel_bins)
+        audio_latents = random.gaussian(audio_shape, dtype=DType.float32).to(device)
+        audio_latents = self._pack_audio_latents(audio_latents)
+
+        # 7. Pre-compute positional embeddings
+        video_coords = self.model.transformer.rope.prepare_video_coords(
+            latents.shape[0], latent_num_frames, latent_height, latent_width, device, fps=frame_rate
+        )
+        audio_coords = self.model.transformer.audio_rope.prepare_audio_coords(
+            audio_latents.shape[0], audio_num_frames, device
+        )
+
         num_warmup_steps = model_inputs.num_warmup_steps
 
-        # 6. Denoising loop
+        # 8. Denoising loop
         with tqdm(total=num_inference_steps, desc="Denoising") as progress_bar:
             for i, t in enumerate(timesteps):
-                # Normalize timestep for guidance scale check
-                t_norm = t / 1000.0
-
-                # Handle cfg truncation
-                current_guidance_scale = self.guidance_scale
-                if (
-                    self.do_classifier_free_guidance
-                    and self._cfg_truncation is not None
-                    and float(self._cfg_truncation) <= 1
-                ):
-                    if t_norm > self._cfg_truncation:
-                        current_guidance_scale = 0.0
-
-                # Run CFG only if configured AND scale is non-zero
-                apply_cfg = (
-                    self.do_classifier_free_guidance
-                    and current_guidance_scale > 0
-                )
-
-                if apply_cfg:
-                    latent_model_input = latents.repeat(2, 1, 1, 1)
-                    prompt_embeds_model_input = F.concat(
-                        [prompt_embeds, negative_prompt_embeds], axis=0
-                    )
-                    timestep_model_input = t.repeat(2)
+                # Prepare CFG inputs
+                if self.do_classifier_free_guidance:
+                    latent_model_input = F.concat([latents, latents], axis=0)
+                    audio_latent_model_input = F.concat([audio_latents, audio_latents], axis=0)
                 else:
                     latent_model_input = latents
-                    prompt_embeds_model_input = prompt_embeds
-                    timestep_model_input = t
+                    audio_latent_model_input = audio_latents
 
-                # Backbone transformer expects (B, C, F, H, W)
-                latent_model_input = latent_model_input.unsqueeze(2)
+                latent_model_input = latent_model_input.cast(prompt_embeds.dtype)
+                audio_latent_model_input = audio_latent_model_input.cast(prompt_embeds.dtype)
 
-                model_out = self.model.transformer(
-                    latent_model_input,
-                    timestep_model_input,
-                    prompt_embeds_model_input,
-                )
-
-                if apply_cfg:
-                    # CFG Implementation
-                    noise_pred_uncond, noise_pred_text = F.chunk(
-                        model_out, 2, axis=0
-                    )
-                    noise_pred = noise_pred_uncond + current_guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                # Broadcast timestep
+                if self.do_classifier_free_guidance:
+                    timestep = F.concat([t.unsqueeze(0), t.unsqueeze(0)], axis=0)
                 else:
-                    noise_pred = model_out
+                    timestep = t.unsqueeze(0)
 
-                noise_pred = -noise_pred.cast(DType.float32).squeeze(2)
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.model.scheduler.step(
-                    noise_pred,
-                    t,
-                    latents,
-                ).prev_sample
+                noise_pred_video, noise_pred_audio = self.model.transformer(
+                    hidden_states=latent_model_input,
+                    audio_hidden_states=audio_latent_model_input,
+                    encoder_hidden_states=connector_prompt_embeds,
+                    audio_encoder_hidden_states=connector_audio_prompt_embeds,
+                    timestep=timestep,
+                    encoder_attention_mask=connector_attention_mask,
+                    audio_encoder_attention_mask=connector_attention_mask,
+                    num_frames=latent_num_frames,
+                    height=latent_height,
+                    width=latent_width,
+                    fps=frame_rate,
+                    audio_num_frames=audio_num_frames,
+                    video_coords=video_coords,
+                    audio_coords=audio_coords,
+                )
+                noise_pred_video = noise_pred_video.cast(DType.float32)
+                noise_pred_audio = noise_pred_audio.cast(DType.float32)
 
-                if i == len(timesteps) - 1 or (
-                    (i + 1) > num_warmup_steps
-                    and (i + 1) % self.model.scheduler.order == 0
-                ):
-                    progress_bar.update()
+                if self.do_classifier_free_guidance:
+                    # Split into uncond and cond predictions
+                    noise_pred_video_uncond = noise_pred_video[0:1]
+                    noise_pred_video_text = noise_pred_video[1:2]
+                    noise_pred_video = noise_pred_video_uncond + guidance_scale * (
+                        noise_pred_video_text - noise_pred_video_uncond
+                    )
 
-        # 3. Decode
-        outputs = self._decode_latents(
-            latents,
-            model_inputs.height,
-            model_inputs.width,
-            output_type=output_type,
-        )
+                    noise_pred_audio_uncond = noise_pred_audio[0:1]
+                    noise_pred_audio_text = noise_pred_audio[1:2]
+                    noise_pred_audio = noise_pred_audio_uncond + guidance_scale * (
+                        noise_pred_audio_text - noise_pred_audio_uncond
+                    )
+
+                # Scheduler step
+                audio_latents = self._scheduler_step(audio_latents, noise_pred_audio, sigmas, i)
+                latents = self._scheduler_step(latents, noise_pred_video, sigmas, i)
+
+        # 9. Decode latents to video
+        # Unpack latents: [B, S, D] -> [B, C, F, H, W]
+        latents = self._unpack_latents(latents, latent_num_frames, latent_height, latent_width)
+        latents = self._denormalize_latents(latents)
+
+        video = self.model.vae.decode(latents.cast(DType.bfloat16))
+
+        # Scale to [0, 1] and permute to [B, F, H, W, C]
+        video = (video / 2.0 + 0.5).clip(0.0, 1.0)
+        video = video.permute(0, 2, 3, 4, 1)
+
+        # 10. Decode audio
+        audio_latents = self._unpack_audio_latents(audio_latents, audio_num_frames, latent_mel_bins)
+        audio_latents = self._denormalize_audio_latents(audio_latents)
+        mel_spectrograms = self.model.audio_vae.decode(audio_latents.cast(DType.bfloat16))
+        audio = self.model.vocoder(mel_spectrograms)
 
         return ModelOutputs(
-            hidden_states=cast(Buffer, outputs.driver_tensor),
-            logits=None,
+            hidden_states=cast(Buffer, video.driver_tensor),
+            logits=cast(Buffer, audio.driver_tensor),
         )
