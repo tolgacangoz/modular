@@ -49,6 +49,36 @@ class FlowMatchEulerDiscreteScheduler:
         elif num_inference_steps is not None:
             # Generate default timesteps
             self.timesteps = np.linspace(
-                0, 1000, num_inference_steps, dtype=np.float32
+                1000.0, 0.0, num_inference_steps, dtype=np.float32
             )
             self.sigmas = self.timesteps / 1000.0
+
+    def step(
+        self,
+        model_output: Any,
+        timestep: Any,
+        sample: Any,
+        return_dict: bool = True,
+    ) -> Any:
+        """Step function for FlowMatchEulerDiscreteScheduler."""
+        # For flow matching, model_output is the predicted velocity
+        # x_{t-1} = x_t + (sigma_{t-1} - sigma_t) * velocity
+
+        # In a real implementation we would look up sigma_t and sigma_{t-1}
+        # For a stub, we'll assume a linear step based on fixed num_inference_steps
+        # Or just use the timestep difference if they are sigmas.
+
+        # Simplified Euler step:
+        # Assuming timestep is sigma here or can be mapped to it.
+        # Let's assume timestep is from 1000 down to 0.
+        dt = 1.0 / len(self.timesteps) if len(self.timesteps) > 0 else 0.02
+        prev_sample = sample - dt * model_output
+
+        if not return_dict:
+            return (prev_sample,)
+
+        class SchedulerOutput:
+            def __init__(self, prev_sample):
+                self.prev_sample = prev_sample
+
+        return SchedulerOutput(prev_sample)

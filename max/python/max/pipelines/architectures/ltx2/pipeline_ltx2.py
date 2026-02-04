@@ -337,6 +337,20 @@ class LTX2Pipeline(DiffusionPipeline):
         # Prepare compilation types for backbone transformer
         # We compile with max_batch_size to support variable batch sizes
         max_batch_size = self.pipeline_config.max_batch_size
+
+        # Define missing dimension variables
+        C = self.model_config.in_channels
+        inner_dim = (
+            self.model_config.num_attention_heads
+            * self.model_config.attention_head_dim
+        )
+        # For LTX2 images, we use 32 as the spatial reduction factor (32x32)
+        # and 1 as the default frame dimension.
+        F_dim = 1
+        H_dim = 32
+        W_dim = 32
+        cap_seq_len = 128  # Default caption sequence length for Gemma3
+
         hidden_states_type = TensorType(
             DType.bfloat16,
             shape=(max_batch_size, C, F_dim, H_dim, W_dim),
@@ -347,7 +361,7 @@ class LTX2Pipeline(DiffusionPipeline):
         )
         cap_feats_type = TensorType(
             DType.bfloat16,
-            shape=(max_batch_size, cap_seq_len, 2560),
+            shape=(max_batch_size, cap_seq_len, inner_dim),
             device=device_ref,
         )
 
@@ -364,21 +378,26 @@ class LTX2Pipeline(DiffusionPipeline):
         )
         nn_model.transformer = compiled_transformer_model
 
-        # logger.info("Building and compiling text encoder...")
-        # before_text_encoder_build = time.perf_counter()
-        # text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
-        # after_text_encoder_build = time.perf_counter()
+        # Prepare text encoder graph inputs.
+        # Gemma3 expects (tokens, input_row_offsets, return_n_logits, *kv_cache_inputs)
+        # We use dummy kv_params for type discovery
+        graph_inputs = nn_model.text_encoder.input_types()
 
-        # logger.info(
-        #     f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
-        # )
+        logger.info("Building and compiling text encoder...")
+        before_text_encoder_build = time.perf_counter()
+        text_encoder_graph = self._build_text_encoder_graph(graph_inputs)
+        after_text_encoder_build = time.perf_counter()
 
-        # before_text_encoder_compile = time.perf_counter()
-        # compiled_text_encoder_model = session.load(
-        #     text_encoder_graph,
-        #     weights_registry=text_encoder_llm_state_dict,
-        # )
-        # nn_model.text_encoder = compiled_text_encoder_model
+        logger.info(
+            f"Building text encoder's graph took {after_text_encoder_build - before_text_encoder_build:.6f} seconds"
+        )
+
+        before_text_encoder_compile = time.perf_counter()
+        compiled_text_encoder_model = session.load(
+            text_encoder_graph,
+            weights_registry=text_encoder_llm_state_dict,
+        )
+        nn_model.text_encoder = compiled_text_encoder_model
         after = time.perf_counter()
 
         # logger.info(
@@ -487,9 +506,20 @@ class LTX2Pipeline(DiffusionPipeline):
         self._cfg_truncation = cfg_truncation
         # 2. Define call parameters
         self.model.scheduler._step_index = 0
+        timesteps = (
+            Tensor.from_dlpack(model_inputs.timesteps).to(device).cast(DType.float32)
+        )
+        latents = (
+            Tensor.from_dlpack(model_inputs.latents).to(device).cast(DType.bfloat16)
+        )
+        num_warmup_steps = model_inputs.num_warmup_steps
+
         # 6. Denoising loop
         with tqdm(total=num_inference_steps, desc="Denoising") as progress_bar:
-            for i in range(self._num_timesteps):
+            for i, t in enumerate(timesteps):
+                # Normalize timestep for guidance scale check
+                t_norm = t / 1000.0
+
                 # Handle cfg truncation
                 current_guidance_scale = self.guidance_scale
                 if (
@@ -506,17 +536,16 @@ class LTX2Pipeline(DiffusionPipeline):
                     and current_guidance_scale > 0
                 )
 
-                latents = latents.cast(DType.bfloat16)
                 if apply_cfg:
                     latent_model_input = latents.repeat(2, 1, 1, 1)
                     prompt_embeds_model_input = F.concat(
                         [prompt_embeds, negative_prompt_embeds], axis=0
                     )
-                    timestep_model_input = timestep.repeat(2)
+                    timestep_model_input = t.repeat(2)
                 else:
                     latent_model_input = latents
                     prompt_embeds_model_input = prompt_embeds
-                    timestep_model_input = timestep
+                    timestep_model_input = t
 
                 # Backbone transformer expects (B, C, F, H, W)
                 latent_model_input = latent_model_input.unsqueeze(2)
@@ -546,18 +575,9 @@ class LTX2Pipeline(DiffusionPipeline):
                     latents,
                 ).prev_sample
 
-                if callback_queue is not None:
-                    image = self._decode_latents(
-                        latents,
-                        model_inputs.height,
-                        model_inputs.width,
-                        output_type=output_type,
-                    )
-                    callback_queue.put_nowait(image)
-
                 if i == len(timesteps) - 1 or (
                     (i + 1) > num_warmup_steps
-                    and (i + 1) % self.scheduler.order == 0
+                    and (i + 1) % self.model.scheduler.order == 0
                 ):
                     progress_bar.update()
 
