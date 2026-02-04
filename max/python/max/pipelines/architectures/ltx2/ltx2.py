@@ -23,6 +23,7 @@ from ..autoencoders import (
 from ..lib.diffusion_schedulers import FlowMatchEulerDiscreteScheduler
 from .nn.connectors import LTX2TextConnectors
 from .nn.transformer_ltx2 import LTX2Transformer2DModel
+from .nn.vocoder import LTX2Vocoder
 
 
 class LTX2(Module):
@@ -41,4 +42,5 @@ class LTX2(Module):
             torch_dtype=torch.bfloat16,
         )
         self.connectors = LTX2TextConnectors(config.connectors_config)
+        self.vocoder = LTX2Vocoder(**config.vocoder_config)
         # self.scheduler = FlowMatchEulerDiscreteScheduler()

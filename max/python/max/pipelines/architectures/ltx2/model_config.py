@@ -32,7 +32,6 @@ class LTX2ConfigBase(MAXModelConfigBase):
     audio_patch_size_t: int = 1
     audio_pos_embed_max_pos: int = 20
     audio_sampling_rate: int = 16000
-    audio_sampling_rate_audio: int = 16000  # Added for audio path
     audio_scale_factor: int = 4
     base_height: int = 2048
     base_width: int = 2048
@@ -62,6 +61,7 @@ class LTX2ConfigBase(MAXModelConfigBase):
     vae_audio_config: dict[str, Any] = {}
     text_encoder_config: dict[str, Any] = {}
     connectors_config: dict[str, Any] = {}
+    vocoder_config: dict[str, Any] = {}
 
 
 class LTX2Config(LTX2ConfigBase):
@@ -96,6 +96,7 @@ class LTX2Config(LTX2ConfigBase):
             "vae_audio_config",
             "text_encoder_config",
             "connectors_config",
+            "vocoder_config",
         ]:
             if cfg_name in kwargs:
                 init_dict[cfg_name] = kwargs[cfg_name]

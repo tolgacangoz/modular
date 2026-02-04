@@ -90,17 +90,14 @@ class LTX2ModelInputs(PixelModelInputs):
     token_ids: Buffer
     """ Tokenized prompt IDs from PixelGenerationTokenizer. Used for text encoder input."""
 
-    secondary_token_ids: Buffer | None = None
-    """ Secondary tokenized prompt IDs from PixelGenerationTokenizer. Used for text encoder input."""
-
     negative_token_ids: Buffer | None = None
     """ Negative prompt token IDs from PixelGenerationTokenizer. Used for text encoder input."""
 
-    secondary_negative_token_ids: Buffer | None = None
-    """ Negative secondary tokenized prompt IDs from PixelGenerationTokenizer. Used for text encoder input."""
-
     mask: Buffer | None = None
     """ Mask for the input tokens."""
+
+    attention_kwargs: dict[str, Any] | None = None
+    """ Additional keyword arguments for the attention heads."""
 
     timesteps: Buffer | None = None
     """ Timesteps for the denoising process."""
@@ -148,11 +145,19 @@ class LTX2Pipeline(DiffusionPipeline):
     }
 
     def init_remaining_components(self) -> None:
-        self.vae_scale_factor = (
-            2 ** (len(self.vae.config.block_out_channels) - 1)
-            if getattr(self, "vae", None)
-            else 8
+        self.vae_spatial_compression_ratio = (
+            self.model.vae.config.vae_scale_factors[1]
+            if hasattr(self.model.vae.config, "vae_scale_factors")
+            else 32
         )
+        self.vae_temporal_compression_ratio = (
+            self.model.vae.config.vae_scale_factors[0]
+            if hasattr(self.model.vae.config, "vae_scale_factors")
+            else 4
+        )
+        self.audio_vae_mel_compression_ratio = 4
+        self.audio_hop_length = 160
+        self.audio_sampling_rate = 16000
 
     def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
         return LTX2ModelInputs.from_context(context)
@@ -466,7 +471,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Mask out padding in the final result
         mask_flat = attention_mask.unsqueeze(-1)
-        # normalized_hidden_states = F.where(mask_flat.cast(DType.bool), normalized_hidden_states, F.constant(0.0, dtype=normalized_hidden_states.dtype))
+        normalized_hidden_states = F.where(mask_flat.cast(DType.bool), normalized_hidden_states, F.constant(0.0, dtype=normalized_hidden_states.dtype))
 
         return normalized_hidden_states
 
@@ -525,8 +530,8 @@ class LTX2Pipeline(DiffusionPipeline):
 
     def _denormalize_audio_latents(self, latents: Tensor) -> Tensor:
         """Denormalize audio latents."""
-        latents_mean = self.model.audio_vae.latents_mean
-        latents_std = self.model.audio_vae.latents_std
+        latents_mean = self.model.vae_audio.latents_mean
+        latents_std = self.model.vae_audio.latents_std
         return (latents * latents_std) + latents_mean
 
     @property
@@ -556,12 +561,12 @@ class LTX2Pipeline(DiffusionPipeline):
             return latents
         latents = Tensor.from_dlpack(latents)
         latents = self._unpack_latents(
-            latents, height, width, self.vae_scale_factor
+            latents, height, width, self.vae_spatial_compression_ratio
         )
-        latents = (
-            latents / self.model.vae.config.scaling_factor
-        ) + self.model.vae.config.shift_factor
-        return self._to_numpy(self.model.vae.decode(latents))
+        # Denormalize
+        latents = self._denormalize_latents(latents)
+
+        return self._to_numpy(self.model.vae.decode(latents.cast(DType.bfloat16)))
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
         cpu_image: Tensor = image.cast(DType.float32).to(CPU())
@@ -721,6 +726,7 @@ class LTX2Pipeline(DiffusionPipeline):
                     audio_num_frames=audio_num_frames,
                     video_coords=video_coords,
                     audio_coords=audio_coords,
+                    attention_kwargs=model_inputs.attention_kwargs,
                 )
                 noise_pred_video = noise_pred_video.cast(DType.float32)
                 noise_pred_audio = noise_pred_audio.cast(DType.float32)
@@ -757,7 +763,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # 10. Decode audio
         audio_latents = self._unpack_audio_latents(audio_latents, audio_num_frames, latent_mel_bins)
         audio_latents = self._denormalize_audio_latents(audio_latents)
-        mel_spectrograms = self.model.audio_vae.decode(audio_latents.cast(DType.bfloat16))
+        mel_spectrograms = self.model.vae_audio.decode(audio_latents.cast(DType.bfloat16))
         audio = self.model.vocoder(mel_spectrograms)
 
         return ModelOutputs(
