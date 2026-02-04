@@ -11,15 +11,17 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
+import torch
 from max.driver import Device
 from max.nn import Module
+from transformers import Gemma3ForConditionalGeneration
 
 from ..autoencoders import (
     AutoencoderKLLTX2AudioModel,
     AutoencoderKLLTX2VideoModel,
 )
-from ..gemma3multimodal.model import Gemma3_MultiModalModel
 from ..lib.diffusion_schedulers import FlowMatchEulerDiscreteScheduler
+from .nn.connectors import LTX2TextConnectors
 from .nn.transformer_ltx2 import LTX2Transformer2DModel
 
 
@@ -33,5 +35,10 @@ class LTX2(Module):
         self.transformer = LTX2Transformer2DModel(config.transformer_config)
         self.vae = AutoencoderKLLTX2VideoModel(config.vae_config)
         self.vae_audio = AutoencoderKLLTX2AudioModel(config.vae_audio_config)
-        self.text_encoder = Gemma3_MultiModalModel(config.text_encoder_config)
-        self.scheduler = FlowMatchEulerDiscreteScheduler()
+        self.text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+            "Lightricks/LTX-2",
+            subfolder="text_encoder",
+            torch_dtype=torch.bfloat16,
+        )
+        self.connectors = LTX2TextConnectors(config.connectors_config)
+        # self.scheduler = FlowMatchEulerDiscreteScheduler()
