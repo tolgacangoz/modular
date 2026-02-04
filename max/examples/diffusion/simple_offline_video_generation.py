@@ -33,23 +33,17 @@ import asyncio
 import os
 
 import numpy as np
-from max.driver import DeviceSpec
+from max.driver import CPU, Device, DeviceSpec, load_devices
+from max.engine import InferenceSession
 from max.interfaces import (
-    PixelGenerationInputs,
     PixelGenerationRequest,
     RequestID,
 )
 from max.pipelines import PipelineConfig
-from max.pipelines.architectures.ltx2.pipeline_ltx2 import (
-    LTX2Pipeline,
-)
-from max.driver import Device, CPU
-from max.dtype import DType
+from max.pipelines.architectures.ltx2.pipeline_ltx2 import LTX2Pipeline
 from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
-from max.pipelines.lib.pipeline_variants.pixel_generation import (
-    PixelGenerationPipeline,
-)
+from max.pipelines.lib.pipeline_variants.utils import get_weight_paths
 from max.tensor import Tensor
 
 
@@ -352,11 +346,17 @@ async def generate_video(args: argparse.Namespace) -> None:
         max_length=256,  # Gemma3 max length
     )
 
-    # Step 3: Initialize the pipeline
-    # The pipeline executes the LTX-2 diffusion model
-    pipeline = PixelGenerationPipeline[PixelContext](
+    # Step 3: Initialize devices, session, weights, and the LTX2 pipeline
+    devices = load_devices(config.model.device_specs)
+    session = InferenceSession(devices=devices)
+    config.configure_session(session)
+    weight_paths = get_weight_paths(config.model)
+
+    pipeline = LTX2Pipeline(
         pipeline_config=config,
-        pipeline_model=LTX2Pipeline,
+        session=session,
+        devices=devices,
+        weight_paths=weight_paths,
     )
 
     print(f"Generating video for prompt: '{args.prompt}'")
@@ -390,31 +390,17 @@ async def generate_video(args: argparse.Namespace) -> None:
         f"Context created: {context.height}x{context.width}, {context.num_inference_steps} steps"
     )
 
-    # Step 6: Prepare inputs for the pipeline
-    # Create a batch with a single context
-    inputs = PixelGenerationInputs[PixelContext](
-        batch={context.request_id: context}
-    )
-
-    # Step 7: Execute the pipeline
+    # Step 6: Prepare inputs and execute the LTX2 pipeline directly
     print("Running diffusion model...")
-    outputs = pipeline.execute(inputs)
-
-    # Step 8: Get the output for our request
-    output = outputs[context.request_id]
-
-    # Check if generation completed successfully
-    if not output.is_done:
-        print(f"WARNING: Generation status: {output.final_status}")
-        return
+    model_inputs = pipeline.prepare_inputs(context)
+    pipeline_output = pipeline.execute(model_inputs)
 
     print("Generation complete!")
 
-    # Step 9: Post-process the pixel data
-    # The LTX2Pipeline returns video in [B, F, H, W, C] and audio in [B, C, S]
-    # Wrap Buffer outputs in Tensor for post-processing
-    video_tensor = Tensor.from_dlpack(output.pixel_data)
-    audio_tensor = Tensor.from_dlpack(output.logits)
+    # Step 7: Post-process the pixel and audio data
+    # LTX2Pipeline now returns a Flux-style LTX2PipelineOutput with Max tensors for video and audio
+    video_tensor = pipeline_output.video
+    audio_tensor = pipeline_output.audio
 
     # LTX2 usage: 24kHz audio sample rate
     video_postprocess(

@@ -209,6 +209,11 @@ class PixelGenerationOutput(msgspec.Struct, tag=True, omit_defaults=True):
     )
     """The generated pixel data, if available."""
 
+    audio_data: npt.NDArray[np.float32] = msgspec.field(
+        default_factory=lambda: np.array([], dtype=np.float32)
+    )
+    """Optional generated audio data for video+audio pixel generation models."""
+
     @property
     def is_done(self) -> bool:
         """Indicates whether the pixel generation process is complete.
