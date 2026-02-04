@@ -209,6 +209,33 @@ class PixelGenerationTokenizer(
         self._default_sample_size = 128
         self._num_channels_latents = transformer_config["in_channels"] // 4
 
+        # Store static scheduler config for shift calculation
+        self._base_image_seq_len = scheduler_config.get(
+            "base_image_seq_len", 256
+        )
+        self._max_image_seq_len = scheduler_config.get(
+            "max_image_seq_len", 4096
+        )
+        self._base_shift = scheduler_config.get("base_shift", 0.5)
+        self._max_shift = scheduler_config.get("max_shift", 1.15)
+
+        # Store guidance embeds flag
+        self._use_guidance_embeds = transformer_config.get(
+            "guidance_embeds", False
+        )
+
+        # LTX2-specific constants (video+audio) used when _pipeline_class_name == "LTX2Pipeline".
+        # These match the current MAX LTX2 pipeline implementation.
+        self._is_ltx2 = self._pipeline_class_name == "LTX2Pipeline"
+        if self._is_ltx2:
+            # VAE temporal downsample factor (frames per latent frame).
+            self._ltx2_vae_temporal_compression_ratio = 4
+            # Audio configuration: 16 kHz, hop length 160, mel compression 4.
+            self._ltx2_audio_sampling_rate = 16_000
+            self._ltx2_audio_hop_length = 160
+            self._ltx2_audio_mel_compression_ratio = 4
+            self._ltx2_num_mel_bins = 64
+
         # Create scheduler
         scheduler_class_name = components.get("scheduler", {}).get(
             "class_name", None
@@ -768,6 +795,62 @@ class PixelGenerationTokenizer(
             request.body.seed,
         )
 
+        guidance: npt.NDArray[np.float32] | None = None
+        if self._use_guidance_embeds:
+            guidance = np.array(
+                [image_options.guidance_scale], dtype=np.float32
+            )
+
+        # 4b. LTX2-specific CPU-bound preprocessing: expand latents to 5D video latents
+        # and sample audio latents. These are stored in extra_params for consumption
+        # by LTX2Pipeline, without affecting other pipelines.
+        extra_params: dict[str, npt.NDArray[Any]] = {}
+
+        if self._is_ltx2:
+            num_frames = request.num_frames
+            frame_rate = request.frame_rate
+
+            if num_frames is None or num_frames <= 0:
+                num_frames = 1
+            if frame_rate is None or frame_rate <= 0:
+                frame_rate = 24
+
+            # Expand 4D latents [B, C, H, W] to 5D [B, C, F, H, W] by repeating along
+            # the temporal dimension according to the VAE temporal compression ratio.
+            latent_num_frames = (
+                (num_frames - 1)
+                // self._ltx2_vae_temporal_compression_ratio
+                + 1
+            )
+
+            latents_5d = latents[:, :, None, :, :]
+            latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
+            latents_5d = latents_5d.astype(np.float32, copy=False)
+
+            extra_params["ltx2_video_latents_5d"] = latents_5d
+
+            # Audio latents: [B, 8, L, M]. Match the MAX LTX2 pipeline's defaults.
+            num_mel_bins = self._ltx2_num_mel_bins
+            latent_mel_bins = num_mel_bins // self._ltx2_audio_mel_compression_ratio
+            duration_s = float(num_frames) / float(frame_rate)
+            audio_latents_per_second = (
+                self._ltx2_audio_sampling_rate
+                / float(self._ltx2_audio_hop_length)
+                / float(self._ltx2_audio_mel_compression_ratio)
+            )
+            audio_num_frames = int(round(duration_s * audio_latents_per_second))
+            if audio_num_frames <= 0:
+                audio_num_frames = 1
+
+            audio_shape = (
+                request.num_visuals_per_prompt,
+                8,
+                audio_num_frames,
+                latent_mel_bins,
+            )
+            audio_latents = self._randn_tensor(audio_shape, request.seed)
+            extra_params["ltx2_audio_latents"] = audio_latents
+
         # 5. Build the context
         context = PixelContext(
             request_id=request.request_id,
@@ -780,6 +863,7 @@ class PixelGenerationTokenizer(
             sigmas=sigmas,
             latents=latents,
             latent_image_ids=latent_image_ids,
+            extra_params=extra_params,
             height=height,
             width=width,
             num_inference_steps=num_inference_steps,
