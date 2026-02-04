@@ -33,6 +33,7 @@ class LTX2ConfigBase(MAXModelConfigBase):
     audio_patch_size_t: int = 1
     audio_pos_embed_max_pos: int = 20
     audio_sampling_rate: int = 16000
+    audio_sampling_rate_audio: int = 16000  # Added for audio path
     audio_scale_factor: int = 4
     base_height: int = 2048
     base_width: int = 2048
@@ -56,25 +57,62 @@ class LTX2ConfigBase(MAXModelConfigBase):
     timestep_scale_multiplier: int = 1000
     vae_scale_factors: tuple[int, int, int] = (8, 32, 32)
 
+    # Added to store nested configs if provided
+    transformer_config: dict[str, Any] = {}
+    vae_config: dict[str, Any] = {}
+    vae_audio_config: dict[str, Any] = {}
+    text_encoder_config: dict[str, Any] = {}
+
 
 class LTX2Config(LTX2ConfigBase):
     config_name: ClassVar[str] = "config.json"
 
     @staticmethod
     def generate(
-        config_dict: dict[str, Any],
-        encoding: SupportedEncoding,
-        devices: list[Device],
+        pipeline_config: Any,
+        **kwargs: Any,
     ) -> LTX2ConfigBase:
+        # Extract generic config from pipeline_config if available
+        config_dict = {}
+        if hasattr(pipeline_config, "model") and hasattr(
+            pipeline_config.model, "config"
+        ):
+            config_dict = pipeline_config.model.config
+
+        # Merge with transformer_config or other kwargs if they contain base params
+        if "transformer_config" in kwargs:
+            config_dict.update(kwargs["transformer_config"])
+
         init_dict = {
             key: value
             for key, value in config_dict.items()
             if key in LTX2ConfigBase.__annotations__
         }
-        init_dict.update(
-            {
-                "dtype": encoding.dtype,
-                "device": DeviceRef.from_device(devices[0]),
-            }
-        )
+
+        # Handle specific nested configs
+        for cfg_name in [
+            "transformer_config",
+            "vae_config",
+            "vae_audio_config",
+            "text_encoder_config",
+        ]:
+            if cfg_name in kwargs:
+                init_dict[cfg_name] = kwargs[cfg_name]
+
+        # Handle mandatory fields from pipeline_config/kwargs
+        if "dtype" in kwargs:
+            init_dict["dtype"] = kwargs["dtype"]
+        elif hasattr(pipeline_config, "model"):
+            init_dict["dtype"] = pipeline_config.model.quantization_encoding.dtype
+
+        if "device" in kwargs:
+            init_dict["device"] = kwargs["device"]
+        elif (
+            hasattr(pipeline_config, "device_specs")
+            and pipeline_config.device_specs
+        ):
+            init_dict["device"] = DeviceRef.from_device(
+                pipeline_config.device_specs[0]
+            )
+
         return LTX2ConfigBase(**init_dict)

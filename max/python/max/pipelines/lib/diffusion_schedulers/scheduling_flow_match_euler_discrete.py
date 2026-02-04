@@ -154,13 +154,7 @@ class FlowMatchEulerDiscreteScheduler:
             sigmas = np.append(sigmas, np.float32(0.0))
         else:
             # Generate default timesteps
-            if reverse:
-                timesteps = np.linspace(
-                    1000, 0, num_inference_steps, dtype=np.float32
-                )
-            else:
-                timesteps = np.linspace(
-                    0, 1000, num_inference_steps, dtype=np.float32
-                )
-            sigmas = timesteps / 1000.0
-        return timesteps, sigmas
+            self.timesteps = np.linspace(
+                0, 1000, num_inference_steps, dtype=np.float32
+            )
+            self.sigmas = self.timesteps / 1000.0
