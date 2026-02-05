@@ -653,12 +653,15 @@ def interpolate(
             )
             tiled = tiled.rebind(rebind_shape)
 
-            # Now reshape to drop the size-1 dimension.
-            new_shape = (
+            # Use squeeze + rebind to drop the size-1 dimension without
+            # triggering reshape's symbolic element-count checks.
+            squeezed = ops.squeeze(tiled, spatial_axis + 1)
+            # Final rebind to the target shape (same rank as squeezed)
+            final_shape = (
                 list(rebind_shape[: spatial_axis + 1])
                 + list(rebind_shape[spatial_axis + 2 :])
             )
-            result = tiled.reshape(new_shape)
+            result = squeezed.rebind(final_shape)
 
     return result
 
