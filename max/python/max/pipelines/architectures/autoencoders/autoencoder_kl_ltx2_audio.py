@@ -14,7 +14,6 @@
 
 from typing import Any, ClassVar
 
-import torch
 from max import functional as F
 from max.driver import Device
 from max.graph import TensorType
@@ -31,7 +30,6 @@ from max.nn import (
 )
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
-from torch.nn import functional as F_torch
 
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2AudioConfig
@@ -308,11 +306,7 @@ class LTX2AudioUpsample(Module[[Tensor], Tensor]):
                 )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = Tensor.from_dlpack(
-            F_torch.interpolate(
-                torch.from_dlpack(x), scale_factor=2, mode="nearest"
-            )
-        )
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
         if self.conv is not None:
             x = self.conv(x)
             if self.causality_axis == "height":

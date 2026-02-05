@@ -572,21 +572,27 @@ irfft = functional(ops.irfft)
 
 @functional
 def interpolate(
-    x: TensorValueLike,
-    scale_factor: float | tuple[float, ...],
+    input: TensorValueLike,
+    size: int | tuple[int, ...] | None = None,
+    scale_factor: float | tuple[float, ...] | None = None,
     mode: str = "nearest",
+    align_corners: bool | None = None,
+    recompute_scale_factor: bool | None = None,
+    antialias: bool = False,
 ) -> TensorValue:
-    """Upsamples a tensor using nearest-neighbor interpolation.
-
-    Only 'nearest' mode is currently supported.
+    """Upsamples the input to either the given size or the given scale_factor.
 
     Args:
-        x: The input tensor. Shape must be 3D [B, C, L], 4D [B, C, H, W],
+        input: The input tensor. Shape must be 3D [B, C, L], 4D [B, C, H, W],
            or 5D [B, C, D, H, W].
-        scale_factor: A float or tuple of floats specifying the scale factor
-            for each spatial dimension. If a float, the same scale is applied
-            to all spatial dimensions.
+        size: Output spatial size.
+        scale_factor: Multiplier for spatial size. Has to match input size if it is a tuple.
         mode: Interpolation mode. Only 'nearest' is supported.
+        align_corners: Geometrically, we consider the pixels of the input and
+            output as squares rather than points. (Not used for 'nearest')
+        recompute_scale_factor: recompute the scale_factor for use in the
+            interpolation calculation.
+        antialias: flag to apply anti-aliasing. (Not used for 'nearest')
 
     Returns:
         Upsampled tensor with scaled spatial dimensions.
@@ -596,71 +602,76 @@ def interpolate(
             f"interpolate mode '{mode}' not implemented. Only 'nearest' is supported."
         )
 
-    x_val = TensorValue(x)
+    if size is not None and scale_factor is not None:
+        raise ValueError("Only one of size or scale_factor should be defined")
+
+    if size is None and scale_factor is None:
+        raise ValueError("Either size or scale_factor must be defined")
+
+    x_val = TensorValue(input)
     shape = x_val.shape
     rank = len(shape)
 
     if rank < 3 or rank > 5:
-        raise ValueError(
-            f"interpolate expects 3D, 4D, or 5D input, got {rank}D"
-        )
+        raise ValueError(f"interpolate expects 3D, 4D, or 5D input, got {rank}D")
 
     # Number of spatial dimensions (exclude batch and channel)
     num_spatial_dims = rank - 2
 
-    # Normalize scale_factor to a tuple
-    if isinstance(scale_factor, (int, float)):
-        scales = tuple(float(scale_factor) for _ in range(num_spatial_dims))
+    scales: list[int] = []
+    if size is not None:
+        if isinstance(size, int):
+            size_tuple = (size,) * num_spatial_dims
+        else:
+            size_tuple = tuple(size)
+
+        if len(size_tuple) != num_spatial_dims:
+            raise ValueError(
+                f"size tuple length {len(size_tuple)} doesn't match "
+                f"number of spatial dimensions {num_spatial_dims}"
+            )
+
+        for i, s in enumerate(size_tuple):
+            orig_dim = shape[2 + i]
+            # If orig_dim is symbolic, we can't easily calculate int factor
+            # unless we have symbolic division.
+            # For now, we assume if size is provided, it's a multiple.
+            # repeat_interleave requires int repeats.
+            if isinstance(orig_dim, int):
+                if s % orig_dim != 0:
+                    raise ValueError(
+                        f"Nearest interpolation with size requires output size to be "
+                        f"a multiple of input size, but {s} / {orig_dim} is not integer."
+                    )
+                scales.append(s // orig_dim)
+            else:
+                # Symbolic dimension. We can't verify multiple easily here.
+                # In a real graph, we might need a different op for arbitrary resize.
+                # For now, we use a heuristic or just assume it works.
+                raise NotImplementedError(
+                    "interpolate with 'size' and symbolic dimensions is not yet fully supported. "
+                    "Use 'scale_factor' instead."
+                )
     else:
-        scales = tuple(float(s) for s in scale_factor)
+        # Normalize scale_factor to a tuple
+        if isinstance(scale_factor, (int, float)):
+            scales = [int(scale_factor)] * num_spatial_dims
+        else:
+            scales = [int(s) for s in scale_factor]
+
         if len(scales) != num_spatial_dims:
             raise ValueError(
                 f"scale_factor tuple length {len(scales)} doesn't match "
                 f"number of spatial dimensions {num_spatial_dims}"
             )
 
-    # For nearest-neighbor, we use a tile + reshape pattern on each spatial
-    # axis. To keep the shape system happy with symbolic dimensions, we follow
-    # the recommended "rebind then reshape" pattern:
-    #   x = x.rebind([... * r, 1, ...])
-    #   x = x.reshape([... * r, ...])
-    # This guarantees that the reshape sees element counts that are provably
-    # equal, even when dimensions are symbolic.
+    # For nearest-neighbor, we use repeat_interleave on each spatial axis.
+    # This is more robust than tile + rebind for symbolic dimensions.
     result = x_val
-    for i, scale in enumerate(scales):
+    for i, repeat_factor in enumerate(scales):
         spatial_axis = 2 + i
-        repeat_factor = int(scale)
         if repeat_factor > 1:
-            # Repeat along this axis using tile-like behavior
-            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W]
-            unsqueezed = ops.unsqueeze(result, spatial_axis + 1)
-
-            # Create tile pattern
-            tile_reps = [1] * (len(result.shape) + 1)
-            tile_reps[spatial_axis + 1] = repeat_factor
-            tiled = ops.tile(unsqueezed, tile_reps)
-
-            # First, rebind to merge the repeated dimension into a single
-            # symbolic dimension and insert a trailing size-1 dim. This keeps
-            # the rank unchanged while making the element-count arithmetic
-            # explicit for the subsequent reshape.
-            tiled_shape = tiled.shape
-            rebind_shape = (
-                list(tiled_shape[:spatial_axis])
-                + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
-                + [1]
-                + list(tiled_shape[spatial_axis + 2 :])
-            )
-            tiled = tiled.rebind(rebind_shape)
-
-            # Use squeeze + rebind to drop the size-1 dimension without
-            # triggering reshape's symbolic element-count checks.
-            squeezed = ops.squeeze(tiled, spatial_axis + 1)
-            # Final rebind to the target shape (same rank as squeezed)
-            final_shape = list(rebind_shape[: spatial_axis + 1]) + list(
-                rebind_shape[spatial_axis + 2 :]
-            )
-            result = squeezed.rebind(final_shape)
+            result = ops.repeat_interleave(result, repeat_factor, axis=spatial_axis)
 
     return result
 

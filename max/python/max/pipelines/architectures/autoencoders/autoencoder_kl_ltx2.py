@@ -14,7 +14,6 @@
 
 from typing import Any, ClassVar
 
-import torch
 from max import functional as F
 from max.driver import Device
 from max.dtype import DType
@@ -31,7 +30,6 @@ from max.nn import (
 )
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
-from torch.nn import functional as F_torch
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from .model import BaseAutoencoderModel
@@ -246,23 +244,18 @@ class LTX2VideoUpsample3d(Module[[Tensor], Tensor]):
 
         if self.spatio_temporal:
             # 3D interpolation
-            x = Tensor.from_dlpack(
-                F_torch.interpolate(
-                    torch.from_dlpack(x),
-                    scale_factor=int(self.factor),
-                    mode="nearest",
-                )
+            x = F.interpolate(
+                x,
+                scale_factor=int(self.factor),
+                mode="nearest",
             )
         else:
             # Spatial-only interpolation (keep depth dimension)
-            # Need to handle specific logic if one dimension is kept
-            # For now, simplest nearest interpolation
-            x = Tensor.from_dlpack(
-                F_torch.interpolate(
-                    torch.from_dlpack(x),
-                    scale_factor=(1, int(self.factor), int(self.factor)),
-                    mode="nearest",
-                )
+            # F.interpolate handles tuple scale_factor
+            x = F.interpolate(
+                x,
+                scale_factor=(1.0, float(self.factor), float(self.factor)),
+                mode="nearest",
             )
 
         return self.conv(x)
