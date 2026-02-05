@@ -634,29 +634,16 @@ def interpolate(
             spatial_dim_size = current_shape[spatial_axis]
 
             # Insert a new axis after spatial_axis, then tile it
-            # [B, C, D, H, W] -> [B, C, D, H, 1, W] -> tile -> [B, C, D, H, r, W] -> reshape
+            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W] -> flatten -> [B, C, D*r, H, W]
             unsqueezed = ops.unsqueeze(result, spatial_axis + 1)
             # Create tile pattern
             tile_reps = [1] * (len(current_shape) + 1)
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
 
-            # Reshape to merge the tiled dimension back
-            # Calculate new shape: spatial_dim * repeat_factor
-            new_shape = (
-                current_shape[:spatial_axis]
-                + [spatial_dim_size * repeat_factor]
-                + current_shape[spatial_axis + 1 :]
-            )
-            
-            # Use rebind to assert the reshape is valid for symbolic shapes
-            tiled_shape = list(tiled.shape)
-            tiled = tiled.rebind(
-                tiled_shape[:spatial_axis]
-                + [spatial_dim_size * repeat_factor]
-                + tiled_shape[spatial_axis + 2 :]
-            )
-            result = tiled.reshape(new_shape)
+            # Flatten the two dimensions (spatial_axis and spatial_axis+1) to merge them
+            # This merges [D, r] into [D*r] automatically
+            result = ops.flatten(tiled, spatial_axis, spatial_axis + 1)
 
     return result
 
