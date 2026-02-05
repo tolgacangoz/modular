@@ -30,7 +30,7 @@ from max.nn import (
 )
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
-from torch.nn import functional as F
+from torch.nn import functional as F_torch
 
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2AudioConfig
@@ -308,7 +308,7 @@ class LTX2AudioUpsample(Module[[Tensor], Tensor]):
 
     def forward(self, x: Tensor) -> Tensor:
         x = Tensor.from_dlpack(
-            F.interpolate(torch.from_dlpack(x), scale_factor=2, mode="nearest")
+            F_torch.interpolate(torch.from_dlpack(x), scale_factor=2, mode="nearest")
         )
         if self.conv is not None:
             x = self.conv(x)
