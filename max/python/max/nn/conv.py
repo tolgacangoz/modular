@@ -31,9 +31,10 @@ from .layer import Module, Shardable
 =======
 from max.graph import DeviceRef
 from max.graph.type import ConvInputLayout, FilterLayout
-from max.nn import Module
 from max.tensor import Tensor
 >>>>>>> 49761efa58 (asd)
+
+from .module import Module
 
 
 class Conv2d(Module, Shardable):
