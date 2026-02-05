@@ -24,7 +24,7 @@ from max.nn import FeedForward, Linear, Module, ModuleList, RMSNorm, SiLU
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
-from ..embeddings import (
+from ...embeddings import (
     PixArtAlphaCombinedTimestepSizeEmbeddings,
     PixArtAlphaTextProjection,
 )
