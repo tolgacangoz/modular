@@ -636,13 +636,11 @@ def interpolate(
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
 
-            # Reshape to merge the two dimensions
-            # Use -1 to let reshape infer the merged dimension automatically
-            # This avoids symbolic shape verification issues
+            # Reshape to merge the two dimensions using explicit Dim algebra
             tiled_shape = tiled.shape
             new_shape = (
                 list(tiled_shape[:spatial_axis])
-                + [-1]  # Automatic dimension inference
+                + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
                 + list(tiled_shape[spatial_axis + 2:])
             )
             result = tiled.reshape(new_shape)
