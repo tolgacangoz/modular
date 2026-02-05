@@ -128,7 +128,27 @@ class FlowMatchEulerDiscreteScheduler:
         use_beta_sigmas: bool | None = False,
         time_shift_type: str = "exponential",
         stochastic_sampling: bool = False,
+        **kwargs,
     ):
+        # Capture all parameters into a config object to support framework expectations
+        config_dict = {
+            "num_train_timesteps": num_train_timesteps,
+            "shift": shift,
+            "use_dynamic_shifting": use_dynamic_shifting,
+            "base_shift": base_shift,
+            "max_shift": max_shift,
+            "base_image_seq_len": base_image_seq_len,
+            "max_image_seq_len": max_image_seq_len,
+            "invert_sigmas": invert_sigmas,
+            "shift_terminal": shift_terminal,
+            "use_karras_sigmas": use_karras_sigmas,
+            "use_exponential_sigmas": use_exponential_sigmas,
+            "use_beta_sigmas": use_beta_sigmas,
+            "time_shift_type": time_shift_type,
+            "stochastic_sampling": stochastic_sampling,
+        }
+        config_dict.update(kwargs)
+        self.config = type("Config", (), config_dict)()
         # Store all config parameters as instance attributes
         self.num_train_timesteps = num_train_timesteps
         self.use_dynamic_shifting = use_dynamic_shifting
