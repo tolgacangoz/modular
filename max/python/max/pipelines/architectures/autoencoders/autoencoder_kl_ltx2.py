@@ -244,15 +244,15 @@ class LTX2VideoUpsample3d(Module[[Tensor], Tensor]):
 
         if self.spatio_temporal:
             # 3D interpolation
-            x = F.interpolate(
-                x, scale_factor=int(self.factor), mode="nearest"
-            )
+            x = F.interpolate(x, scale_factor=int(self.factor), mode="nearest")
         else:
             # Spatial-only interpolation (keep depth dimension)
             # Need to handle specific logic if one dimension is kept
             # For now, simplest nearest interpolation
             x = F.interpolate(
-                x, scale_factor=(1, int(self.factor), int(self.factor)), mode="nearest"
+                x,
+                scale_factor=(1, int(self.factor), int(self.factor)),
+                mode="nearest",
             )
 
         return self.conv(x)

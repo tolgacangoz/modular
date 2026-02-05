@@ -49,7 +49,6 @@ from max.graph import (
     Type,
     ops,
 )
-from max.driver import Device
 from max.graph.type import DeviceRef
 from max.graph.value import Value
 from typing_extensions import ParamSpec
@@ -629,21 +628,23 @@ def interpolate(
         if repeat_factor > 1:
             # Repeat along this axis using tile-like behavior
             # For nearest neighbor: repeat each element 'repeat_factor' times
-            # Use reshape + tile + reshape pattern
-            current_shape = list(result.shape)
-            spatial_dim_size = current_shape[spatial_axis]
-
-            # Insert a new axis after spatial_axis, then tile it
-            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W] -> flatten -> [B, C, D*r, H, W]
+            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W] -> reshape -> [B, C, D*r, H, W]
             unsqueezed = ops.unsqueeze(result, spatial_axis + 1)
+
             # Create tile pattern
-            tile_reps = [1] * (len(current_shape) + 1)
+            tile_reps = [1] * (len(result.shape) + 1)
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
 
-            # Flatten the two dimensions (spatial_axis and spatial_axis+1) to merge them
-            # This merges [D, r] into [D*r] automatically
-            result = ops.flatten(tiled, spatial_axis, spatial_axis + 1)
+            # Reshape to merge the two dimensions, using Dim objects from tiled.shape
+            # This allows MAX's shape algebra to correctly compute the product
+            tiled_shape = tiled.shape
+            new_shape = (
+                tiled_shape[:spatial_axis]
+                + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
+                + tiled_shape[spatial_axis + 2:]
+            )
+            result = tiled.reshape(list(new_shape))
 
     return result
 
