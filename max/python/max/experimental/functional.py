@@ -619,16 +619,20 @@ def interpolate(
                 f"number of spatial dimensions {num_spatial_dims}"
             )
 
-    # For nearest-neighbor, we use repeat_interleave on each spatial axis
-    # by computing integer repeat factors for each dimension
+    # For nearest-neighbor, we use a tile + reshape pattern on each spatial
+    # axis. To keep the shape system happy with symbolic dimensions, we follow
+    # the recommended "rebind then reshape" pattern:
+    #   x = x.rebind([... * r, 1, ...])
+    #   x = x.reshape([... * r, ...])
+    # This guarantees that the reshape sees element counts that are provably
+    # equal, even when dimensions are symbolic.
     result = x_val
     for i, scale in enumerate(scales):
         spatial_axis = 2 + i
         repeat_factor = int(scale)
         if repeat_factor > 1:
             # Repeat along this axis using tile-like behavior
-            # For nearest neighbor: repeat each element 'repeat_factor' times
-            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W] -> reshape -> [B, C, D*r, H, W]
+            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile -> [B, C, D, r, H, W]
             unsqueezed = ops.unsqueeze(result, spatial_axis + 1)
 
             # Create tile pattern
@@ -636,19 +640,25 @@ def interpolate(
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
 
-            # Reshape to merge the two dimensions using explicit Dim algebra
+            # First, rebind to merge the repeated dimension into a single
+            # symbolic dimension and insert a trailing size-1 dim. This keeps
+            # the rank unchanged while making the element-count arithmetic
+            # explicit for the subsequent reshape.
             tiled_shape = tiled.shape
-            new_shape = (
+            rebind_shape = (
                 list(tiled_shape[:spatial_axis])
                 + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
+                + [1]
                 + list(tiled_shape[spatial_axis + 2:])
             )
-            # Use rebind to assert that the element counts match when combining
-            # symbolic dimensions (e.g. W and 2 -> W * 2). This avoids reshape
-            # failures in cases where the compiler cannot prove equivalence of
-            # symbolic products, even though the total number of elements is
-            # unchanged.
-            result = tiled.rebind(new_shape)
+            tiled = tiled.rebind(rebind_shape)
+
+            # Now reshape to drop the size-1 dimension.
+            new_shape = (
+                list(rebind_shape[: spatial_axis + 1])
+                + list(rebind_shape[spatial_axis + 2 :])
+            )
+            result = tiled.reshape(new_shape)
 
     return result
 
