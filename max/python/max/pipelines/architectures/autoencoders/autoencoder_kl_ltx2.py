@@ -176,9 +176,9 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         if self.norm3 is not None:
             # norm3 is applied to [B, C, D, H, W] but LayerNorm expects C as last dim
             # x shape: [B, C, D, H, W]
-            x_norm = x.permute(0, 2, 3, 4, 1)  # [B, D, H, W, C]
+            x_norm = x.permute((0, 2, 3, 4, 1))  # [B, D, H, W, C]
             x_norm = self.norm3(x_norm)
-            residual = x_norm.permute(0, 4, 1, 2, 3)  # [B, C, D, H, W]
+            residual = x_norm.permute((0, 4, 1, 2, 3))  # [B, C, D, H, W]
 
         if self.conv_shortcut is not None:
             residual = self.conv_shortcut(residual)

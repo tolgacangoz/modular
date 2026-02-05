@@ -143,7 +143,7 @@ class LTX2AudioAttnBlock(Module[[Tensor], Tensor]):
         batch, channels, height, width = q.shape
         # Use F.bmm for attention computation
         q = F.reshape(q, [batch, channels, height * width]).permute(
-            0, 2, 1
+            (0, 2, 1)
         )  # [B, HW, C]
         k = F.reshape(k, [batch, channels, height * width])  # [B, C, HW]
 
@@ -151,7 +151,7 @@ class LTX2AudioAttnBlock(Module[[Tensor], Tensor]):
         attn = F.softmax(attn, axis=2)
 
         v = F.reshape(v, [batch, channels, height * width])  # [B, C, HW]
-        attn = attn.permute(0, 2, 1)  # [B, HW, HW]
+        attn = attn.permute((0, 2, 1))  # [B, HW, HW]
 
         h = F.bmm(v, attn)  # [B, C, HW]
         h = F.reshape(h, [batch, channels, height, width])
@@ -336,7 +336,7 @@ class LTX2AudioAudioPatchifier:
     def patchify(self, audio_latents: Tensor) -> Tensor:
         batch, channels, time, freq = audio_latents.shape
         return F.reshape(
-            audio_latents.permute(0, 2, 1, 3), [batch, time, channels * freq]
+            audio_latents.permute((0, 2, 1, 3)), [batch, time, channels * freq]
         )
 
     def unpatchify(
@@ -345,7 +345,7 @@ class LTX2AudioAudioPatchifier:
         batch, time, _ = audio_latents.shape
         return F.reshape(
             audio_latents, [batch, time, channels, mel_bins]
-        ).permute(0, 2, 1, 3)
+        ).permute((0, 2, 1, 3))
 
 
 class LTX2AudioDecoder(Module[[Tensor], Tensor]):
