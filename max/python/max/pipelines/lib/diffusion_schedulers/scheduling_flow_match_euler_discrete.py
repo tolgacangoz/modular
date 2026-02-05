@@ -183,8 +183,8 @@ class FlowMatchEulerDiscreteScheduler:
         self.sigmas = sigmas  # Keep on default device
         # Pre-compute sigmas and timesteps as Python lists to avoid syncs
         sigmas_cpu = sigmas.to(CPU())
-        self.sigmas_list = [float(s) for s in sigmas_cpu]
-        self.timesteps_list = [float(t) for t in self.timesteps.to(CPU())]
+        self.sigmas_list = sigmas_cpu
+        self.timesteps_list = self.timesteps.to(CPU())
         self.sigma_min = self.sigmas_list[-1]
         self.sigma_max = self.sigmas_list[0]
 
@@ -422,8 +422,8 @@ class FlowMatchEulerDiscreteScheduler:
         self.sigmas = sigmas
         # Update lists after setting timesteps
         sigmas_cpu = sigmas.to(CPU())
-        self.sigmas_list = [float(s) for s in sigmas_cpu]
-        self.timesteps_list = [float(t) for t in timesteps.to(CPU())]
+        self.sigmas_list = sigmas_cpu
+        self.timesteps_list = timesteps.to(CPU())
         self._step_index = None
         self._begin_index = None
 
