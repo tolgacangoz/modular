@@ -620,26 +620,6 @@ def interpolate(
                 f"number of spatial dimensions {num_spatial_dims}"
             )
 
-    # Compute new spatial dimensions
-    new_spatial_sizes = []
-    for i, scale in enumerate(scales):
-        spatial_idx = 2 + i  # Skip batch and channel dims
-        old_size = shape[spatial_idx]
-        if isinstance(old_size, int):
-            new_spatial_sizes.append(int(old_size * scale))
-        else:
-            # Symbolic dimension - Dim doesn't support float multiplication.
-            # If scale is an integer (e.g. 2.0), cast to int to allow Dim algebra.
-            if scale == float(int(scale)):
-                new_spatial_sizes.append(old_size * int(scale))
-            else:
-                new_spatial_sizes.append(int(old_size * scale))
-
-    # Build target shape: [batch, channels, new_spatial...]
-    batch_size = shape[0]
-    num_channels = shape[1]
-    target_shape = [batch_size, num_channels] + new_spatial_sizes
-
     # For nearest-neighbor, we use repeat_interleave on each spatial axis
     # by computing integer repeat factors for each dimension
     result = x_val
@@ -658,15 +638,11 @@ def interpolate(
             tile_reps = [1] * (len(current_shape) + 1)
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
-            # Flatten the repeated dimension back
-            tiled_shape = list(tiled.shape)
-            merged_size = (
-                tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]
-            )
+            # Flatten the repeated dimension back using [-1] for inference
             new_shape = (
-                tiled_shape[:spatial_axis]
-                + [merged_size]
-                + tiled_shape[spatial_axis + 2 :]
+                current_shape[:spatial_axis]
+                + [-1]
+                + current_shape[spatial_axis + 1 :]
             )
             result = tiled.reshape(new_shape)
 
