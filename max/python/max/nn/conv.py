@@ -22,8 +22,9 @@ from max.driver import Accelerator, accelerator_api
 from max.dtype import DType
 from max.graph import DeviceRef
 from max.graph.type import ConvInputLayout, FilterLayout
-from max.nn import Module
 from max.tensor import Tensor
+
+from .module import Module
 
 
 class Conv2d(Module[[Tensor], Tensor]):
