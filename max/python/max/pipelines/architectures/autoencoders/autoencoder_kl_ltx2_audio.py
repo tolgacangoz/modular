@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 
 from max import functional as F
 from max.driver import Device
+from max.graph import TensorType
 from max.graph.weights import Weights
 from max.nn import (
     Conv2d,
@@ -458,6 +459,20 @@ class LTX2AudioDecoder(Module[[Tensor], Tensor]):
             self.conv_out = Conv2d(
                 curr_channels, config.output_channels, kernel_size=3, padding=1
             )
+
+    def input_types(self) -> tuple[TensorType, ...]:
+        """Define input tensor types for the decoder model."""
+        latent_type = TensorType(
+            self.config.dtype,
+            shape=[
+                "batch_size",
+                self.config.latent_channels,
+                "latent_height",
+                "latent_width",
+            ],
+            device=self.config.device,
+        )
+        return (latent_type,)
 
     def forward(self, sample: Tensor) -> Tensor:
         h = self.conv_in(sample)

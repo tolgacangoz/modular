@@ -16,6 +16,8 @@ from typing import Any, ClassVar
 
 from max import functional as F
 from max.driver import Device
+from max.dtype import DType
+from max.graph import TensorType
 from max.graph.weights import Weights
 from max.nn import (
     Conv3d,
@@ -397,6 +399,30 @@ class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
             padding=1,
             permute=True,
         )
+
+    def input_types(self) -> tuple[TensorType, ...]:
+        """Define input tensor types for the decoder model."""
+        latent_type = TensorType(
+            self.config.dtype,
+            shape=[
+                "batch_size",
+                self.config.latent_channels,
+                "latent_num_frames",
+                "latent_height",
+                "latent_width",
+            ],
+            device=self.config.device,
+        )
+
+        if self.config.timestep_conditioning:
+            timestep_type = TensorType(
+                DType.float32,
+                shape=["batch_size"],
+                device=self.config.device,
+            )
+            return (latent_type, timestep_type)
+
+        return (latent_type,)
 
     def forward(
         self, z: Tensor, timestep: Tensor | None = None, causal: bool = True
