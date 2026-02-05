@@ -104,7 +104,7 @@ class LTX2AudioPixelNorm(Module[[Tensor], Tensor]):
         self.eps = eps
 
     def forward(self, x: Tensor) -> Tensor:
-        mean_sq = F.mean(x**2, axis=self.dim, keepdims=True)
+        mean_sq = F.mean(x**2, axis=self.dim)
         rms = F.sqrt(mean_sq + self.eps)
         return x / rms
 
