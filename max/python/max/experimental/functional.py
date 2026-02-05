@@ -613,7 +613,9 @@ def interpolate(
     rank = len(shape)
 
     if rank < 3 or rank > 5:
-        raise ValueError(f"interpolate expects 3D, 4D, or 5D input, got {rank}D")
+        raise ValueError(
+            f"interpolate expects 3D, 4D, or 5D input, got {rank}D"
+        )
 
     # Number of spatial dimensions (exclude batch and channel)
     num_spatial_dims = rank - 2
@@ -665,13 +667,44 @@ def interpolate(
                 f"number of spatial dimensions {num_spatial_dims}"
             )
 
-    # For nearest-neighbor, we use repeat_interleave on each spatial axis.
-    # This is more robust than tile + rebind for symbolic dimensions.
+    # For nearest-neighbor, we use a reshape + broadcast + reshape strategy.
+    # This is GPU-friendly and handles symbolic dimensions correctly.
+    # For each spatial dimension:
+    # 1. Reshape [..., N, ...] -> [..., N, 1, ...]
+    # 2. Broadcast -> [..., N, K, ...]
+    # 3. Reshape -> [..., N*K, ...]
     result = x_val
     for i, repeat_factor in enumerate(scales):
+        if repeat_factor <= 1:
+            continue
+
         spatial_axis = 2 + i
-        if repeat_factor > 1:
-            result = ops.repeat_interleave(result, repeat_factor, axis=spatial_axis)
+        curr_shape = result.shape
+
+        # Step 1: Reshape [..., N, ...] -> [..., N, 1, ...]
+        inter_shape = (
+            list(curr_shape[: spatial_axis + 1])
+            + [1]
+            + list(curr_shape[spatial_axis + 1 :])
+        )
+        result = ops.reshape(result, inter_shape)
+
+        # Step 2: Broadcast -> [..., N, K, ...]
+        broadcast_shape = (
+            list(curr_shape[: spatial_axis + 1])
+            + [repeat_factor]
+            + list(curr_shape[spatial_axis + 1 :])
+        )
+        result = ops.broadcast_to(result, broadcast_shape)
+
+        # Step 3: Reshape -> [..., N*K, ...]
+        final_axis_size = curr_shape[spatial_axis] * repeat_factor
+        final_shape = (
+            list(curr_shape[:spatial_axis])
+            + [final_axis_size]
+            + list(curr_shape[spatial_axis + 1 :])
+        )
+        result = ops.reshape(result, final_shape)
 
     return result
 
