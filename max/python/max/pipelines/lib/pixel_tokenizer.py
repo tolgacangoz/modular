@@ -818,10 +818,8 @@ class PixelGenerationTokenizer(
             # Expand 4D latents [B, C, H, W] to 5D [B, C, F, H, W] by repeating along
             # the temporal dimension according to the VAE temporal compression ratio.
             latent_num_frames = (
-                (num_frames - 1)
-                // self._ltx2_vae_temporal_compression_ratio
-                + 1
-            )
+                num_frames - 1
+            ) // self._ltx2_vae_temporal_compression_ratio + 1
 
             latents_5d = latents[:, :, None, :, :]
             latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
@@ -831,14 +829,16 @@ class PixelGenerationTokenizer(
 
             # Audio latents: [B, 8, L, M]. Match the MAX LTX2 pipeline's defaults.
             num_mel_bins = self._ltx2_num_mel_bins
-            latent_mel_bins = num_mel_bins // self._ltx2_audio_mel_compression_ratio
+            latent_mel_bins = (
+                num_mel_bins // self._ltx2_audio_mel_compression_ratio
+            )
             duration_s = float(num_frames) / float(frame_rate)
             audio_latents_per_second = (
                 self._ltx2_audio_sampling_rate
                 / float(self._ltx2_audio_hop_length)
                 / float(self._ltx2_audio_mel_compression_ratio)
             )
-            audio_num_frames = int(round(duration_s * audio_latents_per_second))
+            audio_num_frames = round(duration_s * audio_latents_per_second)
             if audio_num_frames <= 0:
                 audio_num_frames = 1
 
