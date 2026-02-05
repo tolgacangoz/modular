@@ -667,44 +667,49 @@ def interpolate(
                 f"number of spatial dimensions {num_spatial_dims}"
             )
 
-    # For nearest-neighbor, we use a reshape + broadcast + reshape strategy.
-    # This is GPU-friendly and handles symbolic dimensions correctly.
+    # For nearest-neighbor, we use a range + gather strategy.
+    # This is rank-preserving, GPU-friendly, and robust for symbolic dimensions.
     # For each spatial dimension:
-    # 1. Reshape [..., N, ...] -> [..., N, 1, ...]
-    # 2. Broadcast -> [..., N, K, ...]
-    # 3. Reshape -> [..., N*K, ...]
+    # 1. Create indices [0, 0, 1, 1, ..., N-1, N-1] using range and floor division.
+    # 2. Gather along the spatial axis.
     result = x_val
     for i, repeat_factor in enumerate(scales):
         if repeat_factor <= 1:
             continue
 
         spatial_axis = 2 + i
-        curr_shape = result.shape
+        in_dim = result.shape[spatial_axis]
+        out_dim = in_dim * repeat_factor
 
-        # Step 1: Reshape [..., N, ...] -> [..., N, 1, ...]
-        inter_shape = (
-            list(curr_shape[: spatial_axis + 1])
-            + [1]
-            + list(curr_shape[spatial_axis + 1 :])
-        )
-        result = ops.reshape(result, inter_shape)
+        # Create indices on CPU
+        zero = ops.constant(0, DType.int32, DeviceRef.CPU())
+        one = ops.constant(1, DType.int32, DeviceRef.CPU())
+        K_const = ops.constant(repeat_factor, DType.int32, DeviceRef.CPU())
 
-        # Step 2: Broadcast -> [..., N, K, ...]
-        broadcast_shape = (
-            list(curr_shape[: spatial_axis + 1])
-            + [repeat_factor]
-            + list(curr_shape[spatial_axis + 1 :])
+        # Get the input dimension as a TensorValue on CPU to use as 'stop' in range
+        shape_tensor = ops.shape_to_tensor(result.shape)
+        in_dim_tensor = ops.gather(
+            shape_tensor,
+            ops.constant(spatial_axis, DType.int64, DeviceRef.CPU()),
+            axis=0,
         )
-        result = ops.broadcast_to(result, broadcast_shape)
+        stop_tensor = ops.cast(in_dim_tensor, DType.int32) * K_const
 
-        # Step 3: Reshape -> [..., N*K, ...]
-        final_axis_size = curr_shape[spatial_axis] * repeat_factor
-        final_shape = (
-            list(curr_shape[:spatial_axis])
-            + [final_axis_size]
-            + list(curr_shape[spatial_axis + 1 :])
+        # idx shape: [out_dim]
+        idx = ops.range(
+            zero,
+            stop_tensor,
+            one,
+            out_dim=out_dim,
+            dtype=DType.int32,
+            device=DeviceRef.CPU(),
         )
-        result = ops.reshape(result, final_shape)
+
+        # Interleave indices: [0, 1, 2, 3] // 2 -> [0, 0, 1, 1]
+        idx = ops.cast(idx // K_const, DType.int32)
+
+        # Gather along spatial axis
+        result = ops.gather(result, idx, axis=spatial_axis)
 
     return result
 
