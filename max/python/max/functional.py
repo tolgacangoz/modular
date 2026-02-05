@@ -646,7 +646,7 @@ def interpolate(
                 list(tiled_shape[:spatial_axis])
                 + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
                 + [1]
-                + list(tiled_shape[spatial_axis + 2:])
+                + list(tiled_shape[spatial_axis + 2 :])
             )
             tiled = tiled.rebind(rebind_shape)
 
@@ -654,9 +654,8 @@ def interpolate(
             # triggering reshape's symbolic element-count checks.
             squeezed = ops.squeeze(tiled, spatial_axis + 1)
             # Final rebind to the target shape (same rank as squeezed)
-            final_shape = (
-                list(rebind_shape[: spatial_axis + 1])
-                + list(rebind_shape[spatial_axis + 2 :])
+            final_shape = list(rebind_shape[: spatial_axis + 1]) + list(
+                rebind_shape[spatial_axis + 2 :]
             )
             result = squeezed.rebind(final_shape)
 
