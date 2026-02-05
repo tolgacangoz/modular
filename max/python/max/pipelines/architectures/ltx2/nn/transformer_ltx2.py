@@ -20,7 +20,16 @@ import max.functional as F
 from max import random
 from max.driver import Device
 from max.dtype import DType
-from max.nn import FeedForward, Linear, Module, ModuleList, RMSNorm, SiLU
+from max.nn import (
+    Dropout,
+    FeedForward,
+    LayerNorm,
+    Linear,
+    Module,
+    ModuleList,
+    RMSNorm,
+    SiLU,
+)
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 

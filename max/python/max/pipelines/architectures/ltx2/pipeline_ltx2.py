@@ -20,7 +20,7 @@ import max.functional as F
 import numpy as np
 import numpy.typing as npt
 from max import random
-from max.driver import CPU
+from max.driver import CPU, Device
 from max.dtype import DType
 from max.pipelines import PixelContext
 from max.pipelines.lib import (
