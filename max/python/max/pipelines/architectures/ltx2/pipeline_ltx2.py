@@ -39,7 +39,7 @@ from ..autoencoders import (
     AutoencoderKLLTX2VideoModel,
 )
 from .nn.connectors import LTX2TextConnectors
-from .nn.transformer_ltx2 import LTX2Transformer2DModel
+from .nn.transformer_ltx2 import LTX2VideoTransformer3DModel
 from .nn.vocoder import LTX2Vocoder
 
 logger = logging.getLogger("max.pipelines")
@@ -85,12 +85,12 @@ class LTX2Pipeline(DiffusionPipeline):
 
     vae: AutoencoderKLLTX2VideoModel
     vae_audio: AutoencoderKLLTX2AudioModel
-    transformer: LTX2Transformer2DModel
+    transformer: LTX2VideoTransformer3DModel
 
     components = {
         "vae": AutoencoderKLLTX2VideoModel,
         "vae_audio": AutoencoderKLLTX2AudioModel,
-        "transformer": LTX2Transformer2DModel,
+        "transformer": LTX2VideoTransformer3DModel,
     }
 
     def init_remaining_components(self) -> None:
