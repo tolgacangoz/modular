@@ -33,7 +33,7 @@ import asyncio
 import os
 
 import numpy as np
-from max.driver import CPU, Device, DeviceSpec, load_devices
+from max.driver import CPU, DeviceSpec, load_devices
 from max.engine import InferenceSession
 from max.interfaces import (
     PixelGenerationRequest,
@@ -41,7 +41,6 @@ from max.interfaces import (
 )
 from max.pipelines import PipelineConfig
 from max.pipelines.architectures.ltx2.pipeline_ltx2 import LTX2Pipeline
-from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
 from max.pipelines.lib.pipeline_variants.utils import get_weight_paths
 from max.tensor import Tensor
@@ -140,6 +139,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     return args
 
+
 # Copyright 2025 The Lightricks team and The HuggingFace Team.
 # All rights reserved.
 #
@@ -156,12 +156,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # limitations under the License.
 
 from fractions import Fraction
-from typing import Optional
 
 import av
 
 
-def _prepare_audio_stream(container: av.container.Container, audio_sample_rate: int) -> av.audio.AudioStream:
+def _prepare_audio_stream(
+    container: av.container.Container, audio_sample_rate: int
+) -> av.audio.AudioStream:
     """
     Prepare the audio stream for writing.
     """
@@ -173,7 +174,9 @@ def _prepare_audio_stream(container: av.container.Container, audio_sample_rate: 
 
 
 def _resample_audio(
-    container: av.container.Container, audio_stream: av.audio.AudioStream, frame_in: av.AudioFrame
+    container: av.container.Container,
+    audio_stream: av.audio.AudioStream,
+    frame_in: av.AudioFrame,
 ) -> None:
     cc = audio_stream.codec_context
 
@@ -214,7 +217,9 @@ def _write_audio(
         samples = samples.T
 
     if samples.shape[1] != 2:
-        raise ValueError(f"Expected samples with 2 channels; got shape {samples.shape}.")
+        raise ValueError(
+            f"Expected samples with 2 channels; got shape {samples.shape}."
+        )
 
     # Convert to int16 packed for ingestion; resampler converts to encoder fmt.
     if samples.dtype != DType.int16:
@@ -232,7 +237,11 @@ def _write_audio(
 
 
 def video_postprocess(
-    video: Tensor, fps: int, audio: Tensor | None = None, audio_sample_rate: int | None = None, output_path: str = "./output.mp4"
+    video: Tensor,
+    fps: int,
+    audio: Tensor | None = None,
+    audio_sample_rate: int | None = None,
+    output_path: str = "./output.mp4",
 ) -> None:
     video_np = np.from_dlpack(video.to(CPU()).cast(DType.float32))
     # Scale from [0, 1] to [0, 255] uint8
@@ -252,7 +261,9 @@ def video_postprocess(
 
     if audio is not None:
         if audio_sample_rate is None:
-            raise ValueError("audio_sample_rate is required when audio is provided")
+            raise ValueError(
+                "audio_sample_rate is required when audio is provided"
+            )
 
         audio_stream = _prepare_audio_stream(container, audio_sample_rate)
 
@@ -269,8 +280,6 @@ def video_postprocess(
         _write_audio(container, audio_stream, audio, audio_sample_rate)
 
     container.close()
-
-
 
 
 def save_video(
@@ -408,7 +417,7 @@ async def generate_video(args: argparse.Namespace) -> None:
         fps=args.frame_rate,
         audio=audio_tensor,
         audio_sample_rate=24000,
-        output_path=args.output
+        output_path=args.output,
     )
 
 
