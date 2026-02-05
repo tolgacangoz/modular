@@ -39,7 +39,7 @@ from max.interfaces import (
     PixelGenerationRequest,
     RequestID,
 )
-from max.pipelines import PipelineConfig
+from max.pipelines import PipelineConfig, SupportedEncoding
 from max.pipelines.architectures.ltx2.pipeline_ltx2 import LTX2Pipeline
 from max.pipelines.lib import PixelGenerationTokenizer
 from max.pipelines.lib.pipeline_variants.utils import get_weight_paths
@@ -122,6 +122,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default="output.mp4",
         help="Output filename for the generated video.",
+    )
+    parser.add_argument(
+        "--encoding",
+        type=str,
+        default="bfloat16",
+        choices=[e.value for e in SupportedEncoding],
+        help="Weight encoding type (default: bfloat16).",
     )
 
     args = parser.parse_args(argv)
@@ -343,6 +350,7 @@ async def generate_video(args: argparse.Namespace) -> None:
         model_path=args.model,
         device_specs=[DeviceSpec.accelerator()],
         use_legacy_module=False,
+        quantization_encoding=args.encoding,
     )
 
     # Step 2: Initialize the tokenizer
