@@ -16,12 +16,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+import max.functional as F
 import numpy as np
 import numpy.typing as npt
-
-import max.functional as F
 from max import random
-from max.driver import Buffer, CPU
+from max.driver import CPU
 from max.dtype import DType
 from max.pipelines import PixelContext
 from max.pipelines.lib import (
@@ -138,9 +137,7 @@ class LTX2Pipeline(DiffusionPipeline):
         connectors_cfg = components_cfg.get("connectors", {}).get(
             "config_dict", {}
         )
-        vocoder_cfg = components_cfg.get("vocoder", {}).get(
-            "config_dict", {}
-        )
+        vocoder_cfg = components_cfg.get("vocoder", {}).get("config_dict", {})
 
         # LTX2TextConnectors and LTX2Vocoder expect expanded keyword arguments.
         self.connectors = LTX2TextConnectors(**connectors_cfg)
@@ -200,36 +197,71 @@ class LTX2Pipeline(DiffusionPipeline):
         sequence_lengths = attention_mask.sum(axis=1)
 
         # Compute masked mean over non-padding positions
-        masked_text_hidden_states = F.where(mask.cast(DType.bool), text_hidden_states, F.constant(0.0, dtype=text_hidden_states.dtype))
-        num_valid_positions = (sequence_lengths * hidden_dim).reshape(batch_size, 1, 1, 1)
+        masked_text_hidden_states = F.where(
+            mask.cast(DType.bool),
+            text_hidden_states,
+            F.constant(0.0, dtype=text_hidden_states.dtype),
+        )
+        num_valid_positions = (sequence_lengths * hidden_dim).reshape(
+            batch_size, 1, 1, 1
+        )
 
         # masked_mean = masked_text_hidden_states.sum(dim=(1, 2), keepdim=True) / (num_valid_positions + eps)
         # MAX doesn't support sum(dim=(1,2)), we do it sequentially
-        masked_sum = masked_text_hidden_states.sum(axis=1).sum(axis=1).unsqueeze(1).unsqueeze(2)
-        masked_mean = masked_sum / (num_valid_positions.cast(text_hidden_states.dtype) + eps)
+        masked_sum = (
+            masked_text_hidden_states.sum(axis=1)
+            .sum(axis=1)
+            .unsqueeze(1)
+            .unsqueeze(2)
+        )
+        masked_mean = masked_sum / (
+            num_valid_positions.cast(text_hidden_states.dtype) + eps
+        )
 
         # Compute min/max over non-padding positions
         inf_val = F.constant(float("inf"), dtype=text_hidden_states.dtype)
         neg_inf_val = F.constant(float("-inf"), dtype=text_hidden_states.dtype)
 
-        x_min = F.where(mask.cast(DType.bool), text_hidden_states, inf_val).min(axis=1).min(axis=1).unsqueeze(1).unsqueeze(2)
-        x_max = F.where(mask.cast(DType.bool), text_hidden_states, neg_inf_val).max(axis=1).max(axis=1).unsqueeze(1).unsqueeze(2)
+        x_min = (
+            F.where(mask.cast(DType.bool), text_hidden_states, inf_val)
+            .min(axis=1)
+            .min(axis=1)
+            .unsqueeze(1)
+            .unsqueeze(2)
+        )
+        x_max = (
+            F.where(mask.cast(DType.bool), text_hidden_states, neg_inf_val)
+            .max(axis=1)
+            .max(axis=1)
+            .unsqueeze(1)
+            .unsqueeze(2)
+        )
 
         # Normalization
-        normalized_hidden_states = (text_hidden_states - masked_mean) / (x_max - x_min + eps)
+        normalized_hidden_states = (text_hidden_states - masked_mean) / (
+            x_max - x_min + eps
+        )
         normalized_hidden_states = normalized_hidden_states * scale_factor
 
         # Pack the hidden states to a 3D tensor (batch_size, seq_len, hidden_dim * num_layers)
-        normalized_hidden_states = normalized_hidden_states.reshape(batch_size, seq_len, -1)
+        normalized_hidden_states = normalized_hidden_states.reshape(
+            batch_size, seq_len, -1
+        )
 
         # Mask out padding in the final result
         mask_flat = attention_mask.unsqueeze(-1)
-        normalized_hidden_states = F.where(mask_flat.cast(DType.bool), normalized_hidden_states, F.constant(0.0, dtype=normalized_hidden_states.dtype))
+        normalized_hidden_states = F.where(
+            mask_flat.cast(DType.bool),
+            normalized_hidden_states,
+            F.constant(0.0, dtype=normalized_hidden_states.dtype),
+        )
 
         return normalized_hidden_states
 
     @staticmethod
-    def _pack_latents(latents: Tensor, patch_size: int = 1, patch_size_t: int = 1) -> Tensor:
+    def _pack_latents(
+        latents: Tensor, patch_size: int = 1, patch_size_t: int = 1
+    ) -> Tensor:
         """Pack latents from [B, C, F, H, W] to [B, S, D] token sequence."""
         batch_size, num_channels, num_frames, height, width = latents.shape
         post_patch_num_frames = num_frames // patch_size_t
@@ -245,17 +277,38 @@ class LTX2Pipeline(DiffusionPipeline):
             post_patch_width,
             patch_size,
         )
-        latents = latents.permute(0, 2, 4, 6, 1, 3, 5, 7).flatten(4, 7).flatten(1, 3)
+        latents = (
+            latents.permute(0, 2, 4, 6, 1, 3, 5, 7).flatten(4, 7).flatten(1, 3)
+        )
         return latents
 
     @staticmethod
     def _unpack_latents(
-        latents: Tensor, num_frames: int, height: int, width: int, patch_size: int = 1, patch_size_t: int = 1
+        latents: Tensor,
+        num_frames: int,
+        height: int,
+        width: int,
+        patch_size: int = 1,
+        patch_size_t: int = 1,
     ) -> Tensor:
         """Unpack latents from [B, S, D] to [B, C, F, H, W]."""
         batch_size = latents.shape[0]
-        latents = latents.reshape(batch_size, num_frames, height, width, -1, patch_size_t, patch_size, patch_size)
-        latents = latents.permute(0, 4, 1, 5, 2, 6, 3, 7).flatten(6, 7).flatten(4, 5).flatten(2, 3)
+        latents = latents.reshape(
+            batch_size,
+            num_frames,
+            height,
+            width,
+            -1,
+            patch_size_t,
+            patch_size,
+            patch_size,
+        )
+        latents = (
+            latents.permute(0, 4, 1, 5, 2, 6, 3, 7)
+            .flatten(6, 7)
+            .flatten(4, 5)
+            .flatten(2, 3)
+        )
         return latents
 
     @staticmethod
@@ -266,7 +319,9 @@ class LTX2Pipeline(DiffusionPipeline):
         return latents
 
     @staticmethod
-    def _unpack_audio_latents(latents: Tensor, latent_length: int, num_mel_bins: int) -> Tensor:
+    def _unpack_audio_latents(
+        latents: Tensor, latent_length: int, num_mel_bins: int
+    ) -> Tensor:
         """Unpack audio latents from [B, L, C*M] to [B, C, L, M]."""
         # Unflatten [B, L, C*M] -> [B, L, C, M] then transpose to [B, C, L, M]
         latents = latents.unflatten(2, (-1, num_mel_bins)).transpose(1, 2)
@@ -429,8 +484,12 @@ class LTX2Pipeline(DiffusionPipeline):
             device=device,
         )
 
-        text_encoder_hidden_states = self._encode_tokens(token_ids, device="cuda")
-        prompt_embeds = self._pack_text_embeds(text_encoder_hidden_states, prompt_attention_mask, device)
+        text_encoder_hidden_states = self._encode_tokens(
+            token_ids, device="cuda"
+        )
+        prompt_embeds = self._pack_text_embeds(
+            text_encoder_hidden_states, prompt_attention_mask, device
+        )
 
         # Encode negative prompt if doing CFG
         if self.do_classifier_free_guidance:
@@ -445,7 +504,9 @@ class LTX2Pipeline(DiffusionPipeline):
                 )
                 negative_attention_mask = prompt_attention_mask
 
-                negative_hidden_states = self._encode_tokens(negative_token_ids, device="cuda")
+                negative_hidden_states = self._encode_tokens(
+                    negative_token_ids, device="cuda"
+                )
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
                     negative_attention_mask,
@@ -455,12 +516,22 @@ class LTX2Pipeline(DiffusionPipeline):
                 # Use zeros for negative prompt if not provided
                 negative_prompt_embeds = F.zeros_like(prompt_embeds)
             # Concatenate for CFG: [negative, positive]
-            prompt_embeds = F.concat([negative_prompt_embeds, prompt_embeds], axis=0)
-            prompt_attention_mask = F.concat([prompt_attention_mask, prompt_attention_mask], axis=0)
+            prompt_embeds = F.concat(
+                [negative_prompt_embeds, prompt_embeds], axis=0
+            )
+            prompt_attention_mask = F.concat(
+                [prompt_attention_mask, prompt_attention_mask], axis=0
+            )
 
         # 4. Process text embeddings through connectors
-        additive_attention_mask = (1 - prompt_attention_mask.cast(prompt_embeds.dtype)) * -1000000.0
-        connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.connectors(
+        additive_attention_mask = (
+            1 - prompt_attention_mask.cast(prompt_embeds.dtype)
+        ) * -1000000.0
+        (
+            connector_prompt_embeds,
+            connector_audio_prompt_embeds,
+            connector_attention_mask,
+        ) = self.connectors(
             prompt_embeds, additive_attention_mask, additive_mask=True
         )
 
@@ -539,7 +610,12 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # 7. Pre-compute positional embeddings
         video_coords = self.model.transformer.rope.prepare_video_coords(
-            latents.shape[0], latent_num_frames, latent_height, latent_width, device, fps=frame_rate
+            latents.shape[0],
+            latent_num_frames,
+            latent_height,
+            latent_width,
+            device,
+            fps=frame_rate,
         )
         audio_coords = self.model.transformer.audio_rope.prepare_audio_coords(
             audio_latents.shape[0], audio_num_frames, device
@@ -553,17 +629,25 @@ class LTX2Pipeline(DiffusionPipeline):
                 # Prepare CFG inputs
                 if self.do_classifier_free_guidance:
                     latent_model_input = F.concat([latents, latents], axis=0)
-                    audio_latent_model_input = F.concat([audio_latents, audio_latents], axis=0)
+                    audio_latent_model_input = F.concat(
+                        [audio_latents, audio_latents], axis=0
+                    )
                 else:
                     latent_model_input = latents
                     audio_latent_model_input = audio_latents
 
-                latent_model_input = latent_model_input.cast(prompt_embeds.dtype)
-                audio_latent_model_input = audio_latent_model_input.cast(prompt_embeds.dtype)
+                latent_model_input = latent_model_input.cast(
+                    prompt_embeds.dtype
+                )
+                audio_latent_model_input = audio_latent_model_input.cast(
+                    prompt_embeds.dtype
+                )
 
                 # Broadcast timestep
                 if self.do_classifier_free_guidance:
-                    timestep = F.concat([t.unsqueeze(0), t.unsqueeze(0)], axis=0)
+                    timestep = F.concat(
+                        [t.unsqueeze(0), t.unsqueeze(0)], axis=0
+                    )
                 else:
                     timestep = t.unsqueeze(0)
 
@@ -591,23 +675,33 @@ class LTX2Pipeline(DiffusionPipeline):
                     # Split into uncond and cond predictions
                     noise_pred_video_uncond = noise_pred_video[0:1]
                     noise_pred_video_text = noise_pred_video[1:2]
-                    noise_pred_video = noise_pred_video_uncond + guidance_scale * (
-                        noise_pred_video_text - noise_pred_video_uncond
+                    noise_pred_video = (
+                        noise_pred_video_uncond
+                        + guidance_scale
+                        * (noise_pred_video_text - noise_pred_video_uncond)
                     )
 
                     noise_pred_audio_uncond = noise_pred_audio[0:1]
                     noise_pred_audio_text = noise_pred_audio[1:2]
-                    noise_pred_audio = noise_pred_audio_uncond + guidance_scale * (
-                        noise_pred_audio_text - noise_pred_audio_uncond
+                    noise_pred_audio = (
+                        noise_pred_audio_uncond
+                        + guidance_scale
+                        * (noise_pred_audio_text - noise_pred_audio_uncond)
                     )
 
                 # Scheduler step
-                audio_latents = self._scheduler_step(audio_latents, noise_pred_audio, sigmas, i)
-                latents = self._scheduler_step(latents, noise_pred_video, sigmas, i)
+                audio_latents = self._scheduler_step(
+                    audio_latents, noise_pred_audio, sigmas, i
+                )
+                latents = self._scheduler_step(
+                    latents, noise_pred_video, sigmas, i
+                )
 
         # 9. Decode latents to video
         # Unpack latents: [B, S, D] -> [B, C, F, H, W]
-        latents = self._unpack_latents(latents, latent_num_frames, latent_height, latent_width)
+        latents = self._unpack_latents(
+            latents, latent_num_frames, latent_height, latent_width
+        )
         latents = self._denormalize_latents(latents)
 
         video = self.vae.decode(latents.cast(DType.bfloat16))
@@ -617,9 +711,13 @@ class LTX2Pipeline(DiffusionPipeline):
         video = video.permute(0, 2, 3, 4, 1)
 
         # 10. Decode audio
-        audio_latents = self._unpack_audio_latents(audio_latents, audio_num_frames, latent_mel_bins)
+        audio_latents = self._unpack_audio_latents(
+            audio_latents, audio_num_frames, latent_mel_bins
+        )
         audio_latents = self._denormalize_audio_latents(audio_latents)
-        mel_spectrograms = self.vae_audio.decode(audio_latents.cast(DType.bfloat16))
+        mel_spectrograms = self.vae_audio.decode(
+            audio_latents.cast(DType.bfloat16)
+        )
         audio = self.vocoder(mel_spectrograms)
 
         return LTX2PipelineOutput(
