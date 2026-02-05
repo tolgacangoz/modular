@@ -14,6 +14,7 @@
 
 from typing import Any, ClassVar
 
+import torch
 from max import functional as F
 from max.driver import Device
 from max.graph import TensorType
@@ -308,7 +309,9 @@ class LTX2AudioUpsample(Module[[Tensor], Tensor]):
 
     def forward(self, x: Tensor) -> Tensor:
         x = Tensor.from_dlpack(
-            F_torch.interpolate(torch.from_dlpack(x), scale_factor=2, mode="nearest")
+            F_torch.interpolate(
+                torch.from_dlpack(x), scale_factor=2, mode="nearest"
+            )
         )
         if self.conv is not None:
             x = self.conv(x)
