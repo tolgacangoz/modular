@@ -11,10 +11,15 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from max.driver import Device, load_devices
 from max.graph import DeviceRef
-from max.pipelines.lib import MAXModelConfigBase
+from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
+from typing_extensions import Self
+
+if TYPE_CHECKING:
+    from max.pipelines.lib.config import PipelineConfig
 
 
 class LTX2ConfigBase(MAXModelConfigBase):
@@ -67,56 +72,64 @@ class LTX2ConfigBase(MAXModelConfigBase):
 class LTX2Config(LTX2ConfigBase):
     config_name: ClassVar[str] = "config.json"
 
+    @classmethod
+    def initialize(cls, pipeline_config: "PipelineConfig") -> Self:
+        """Initialize LTX2Config from a PipelineConfig.
+
+        Args:
+            pipeline_config: The pipeline configuration.
+
+        Returns:
+            An initialized LTX2Config instance.
+        """
+        if pipeline_config.model.quantization_encoding is None:
+            raise ValueError("Quantization encoding is required for LTX2Config")
+
+        # Get the huggingface config if available
+        hf_config = pipeline_config.model.huggingface_config
+        config_dict = hf_config.to_dict() if hf_config is not None else {}
+
+        # Convert device specs to devices
+        devices = load_devices(pipeline_config.model.device_specs)
+
+        # Generate config using the existing generate method
+        config_base = cls.generate(
+            config_dict,
+            pipeline_config.model.quantization_encoding,
+            devices,
+        )
+
+        # Convert to LTX2Config (which is just LTX2ConfigBase with extra methods)
+        return cls(**config_base.model_dump())
+
+    def get_max_seq_len(self) -> int:
+        """Get the maximum sequence length.
+
+        For pixel generation models, this returns a placeholder value
+        as sequence length is not applicable.
+
+        Returns:
+            A placeholder sequence length value.
+        """
+        # Pixel generation models don't have a text sequence length constraint
+        # Return a reasonable default
+        return 128  # Standard Gemma3ForConditionalGeneration text encoder max length used in diffusion models
+
     @staticmethod
     def generate(
-        pipeline_config: Any,
-        **kwargs: Any,
+        config_dict: dict[str, Any],
+        encoding: SupportedEncoding,
+        devices: list[Device],
     ) -> LTX2ConfigBase:
-        # Extract generic config from pipeline_config if available
-        config_dict = {}
-        if hasattr(pipeline_config, "model") and hasattr(
-            pipeline_config.model, "config"
-        ):
-            config_dict = pipeline_config.model.config
-
-        # Merge with transformer_config or other kwargs if they contain base params
-        if "transformer_config" in kwargs:
-            config_dict.update(kwargs["transformer_config"])
-
         init_dict = {
             key: value
             for key, value in config_dict.items()
             if key in LTX2ConfigBase.__annotations__
         }
-
-        # Handle specific nested configs
-        for cfg_name in [
-            "transformer_config",
-            "vae_config",
-            "vae_audio_config",
-            "text_encoder_config",
-            "connectors_config",
-            "vocoder_config",
-        ]:
-            if cfg_name in kwargs:
-                init_dict[cfg_name] = kwargs[cfg_name]
-
-        # Handle mandatory fields from pipeline_config/kwargs
-        if "dtype" in kwargs:
-            init_dict["dtype"] = kwargs["dtype"]
-        elif hasattr(pipeline_config, "model"):
-            init_dict["dtype"] = (
-                pipeline_config.model.quantization_encoding.dtype
-            )
-
-        if "device" in kwargs:
-            init_dict["device"] = kwargs["device"]
-        elif (
-            hasattr(pipeline_config, "device_specs")
-            and pipeline_config.device_specs
-        ):
-            init_dict["device"] = DeviceRef.from_device(
-                pipeline_config.device_specs[0]
-            )
-
+        init_dict.update(
+            {
+                "dtype": encoding.dtype,
+                "device": DeviceRef.from_device(devices[0]),
+            }
+        )
         return LTX2ConfigBase(**init_dict)
