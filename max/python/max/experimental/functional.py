@@ -643,7 +643,12 @@ def interpolate(
                 + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
                 + list(tiled_shape[spatial_axis + 2:])
             )
-            result = tiled.reshape(new_shape)
+            # Use rebind to assert that the element counts match when combining
+            # symbolic dimensions (e.g. W and 2 -> W * 2). This avoids reshape
+            # failures in cases where the compiler cannot prove equivalence of
+            # symbolic products, even though the total number of elements is
+            # unchanged.
+            result = tiled.rebind(new_shape)
 
     return result
 
