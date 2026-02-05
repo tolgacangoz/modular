@@ -631,17 +631,21 @@ def interpolate(
             # For nearest neighbor: repeat each element 'repeat_factor' times
             # Use reshape + tile + reshape pattern
             current_shape = list(result.shape)
+            spatial_dim_size = current_shape[spatial_axis]
+
             # Insert a new axis after spatial_axis, then tile it
-            # [B, C, D, H, W] -> [B, C, D, 1, H, W] -> tile [1,1,1,r,1,1] -> reshape
+            # [B, C, D, H, W] -> [B, C, D, H, 1, W] -> tile -> [B, C, D, H, r, W] -> reshape
             unsqueezed = ops.unsqueeze(result, spatial_axis + 1)
             # Create tile pattern
             tile_reps = [1] * (len(current_shape) + 1)
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
-            # Flatten the repeated dimension back using [-1] for inference
+
+            # Reshape to merge the tiled dimension back
+            # Calculate new shape: spatial_dim * repeat_factor
             new_shape = (
                 current_shape[:spatial_axis]
-                + [-1]
+                + [spatial_dim_size * repeat_factor]
                 + current_shape[spatial_axis + 1 :]
             )
             result = tiled.reshape(new_shape)
