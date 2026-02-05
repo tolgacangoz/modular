@@ -636,15 +636,16 @@ def interpolate(
             tile_reps[spatial_axis + 1] = repeat_factor
             tiled = ops.tile(unsqueezed, tile_reps)
 
-            # Reshape to merge the two dimensions, using Dim objects from tiled.shape
-            # This allows MAX's shape algebra to correctly compute the product
+            # Reshape to merge the two dimensions
+            # Use -1 to let reshape infer the merged dimension automatically
+            # This avoids symbolic shape verification issues
             tiled_shape = tiled.shape
             new_shape = (
-                tiled_shape[:spatial_axis]
-                + [tiled_shape[spatial_axis] * tiled_shape[spatial_axis + 1]]
-                + tiled_shape[spatial_axis + 2:]
+                list(tiled_shape[:spatial_axis])
+                + [-1]  # Automatic dimension inference
+                + list(tiled_shape[spatial_axis + 2:])
             )
-            result = tiled.reshape(list(new_shape))
+            result = tiled.reshape(new_shape)
 
     return result
 
