@@ -15,9 +15,12 @@
 import numpy as np
 import torch
 
-from ..configuration_utils import ConfigMixin, register_to_config
-from ..utils import BaseOutput, is_scipy_available, logging
-from .scheduling_utils import SchedulerMixin
+from max import functional as F
+from max import random
+from max.driver import CPU, Device
+from max.dtype import DType
+from max.random import set_seed
+from max.tensor import Tensor
 
 
 if is_scipy_available():
