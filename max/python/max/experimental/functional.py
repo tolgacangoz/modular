@@ -49,6 +49,7 @@ from max.graph import (
     Type,
     ops,
 )
+from max.driver import Device
 from max.graph.type import DeviceRef
 from max.graph.value import Value
 from typing_extensions import ParamSpec
@@ -627,8 +628,12 @@ def interpolate(
         if isinstance(old_size, int):
             new_spatial_sizes.append(int(old_size * scale))
         else:
-            # Symbolic dimension - try to compute
-            new_spatial_sizes.append(int(old_size * scale))
+            # Symbolic dimension - Dim doesn't support float multiplication.
+            # If scale is an integer (e.g. 2.0), cast to int to allow Dim algebra.
+            if scale == float(int(scale)):
+                new_spatial_sizes.append(old_size * int(scale))
+            else:
+                new_spatial_sizes.append(int(old_size * scale))
 
     # Build target shape: [batch, channels, new_spatial...]
     batch_size = shape[0]
