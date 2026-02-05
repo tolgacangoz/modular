@@ -13,12 +13,12 @@
 
 from max.graph.weights import WeightsFormat
 from max.interfaces import PipelineTask
+from max.pipelines.core import PixelContext
 from max.pipelines.lib import (
     PixelGenerationTokenizer,
     SupportedArchitecture,
     SupportedEncoding,
 )
-from max.pipelines.core import PixelContext
 
 from .pipeline_ltx2 import LTX2Pipeline
 
@@ -30,6 +30,7 @@ ltx2_arch = SupportedArchitecture(
     example_repo_ids=["Lightricks/LTX-2"],
     pipeline_model=LTX2Pipeline,  # type: ignore[arg-type]
     context_type=PixelContext,
+    config=FluxConfig,
     default_weights_format=WeightsFormat.safetensors,
     tokenizer=PixelGenerationTokenizer,
 )
