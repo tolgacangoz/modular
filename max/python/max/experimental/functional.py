@@ -648,6 +648,14 @@ def interpolate(
                 + [spatial_dim_size * repeat_factor]
                 + current_shape[spatial_axis + 1 :]
             )
+            
+            # Use rebind to assert the reshape is valid for symbolic shapes
+            tiled_shape = list(tiled.shape)
+            tiled = tiled.rebind(
+                tiled_shape[:spatial_axis]
+                + [spatial_dim_size * repeat_factor]
+                + tiled_shape[spatial_axis + 2 :]
+            )
             result = tiled.reshape(new_shape)
 
     return result
