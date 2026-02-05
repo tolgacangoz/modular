@@ -86,7 +86,6 @@ def _run(coro: Coroutine[Any, Any, Result]) -> Result:
     If not inside an event loop, uses ``asyncio.run()``. If already inside
     an event loop (e.g., in Jupyter), runs the coroutine in a separate
     thread to avoid blocking.
-
     Args:
         coro: The coroutine to execute.
 
@@ -706,7 +705,7 @@ def interpolate(
         )
 
         # Interleave indices: [0, 1, 2, 3] // 2 -> [0, 0, 1, 1]
-        idx = ops.cast(idx // K_const, DType.int32)
+        idx = ops.cast(idx // K_const, DType.int32).to(result.device)
 
         # Gather along spatial axis
         result = ops.gather(result, idx, axis=spatial_axis)
