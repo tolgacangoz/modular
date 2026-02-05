@@ -17,7 +17,15 @@ from typing import Any, ClassVar
 from max import functional as F
 from max.driver import Device
 from max.graph.weights import Weights
-from max.nn import Conv3d, Dropout, Identity, LayerNorm, Module, ModuleList, Sequential
+from max.nn import (
+    Conv3d,
+    Dropout,
+    Identity,
+    LayerNorm,
+    Module,
+    ModuleList,
+    Sequential,
+)
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
