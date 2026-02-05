@@ -27,7 +27,11 @@ ltx2_arch = SupportedArchitecture(
     name="LTX2Pipeline",
     task=PipelineTask.PIXEL_GENERATION,
     default_encoding=SupportedEncoding.bfloat16,
-    supported_encodings={SupportedEncoding.bfloat16: []},
+    supported_encodings={
+        SupportedEncoding.bfloat16: [],
+        SupportedEncoding.float8_e4m3fn: [],
+        SupportedEncoding.float4_e2m1fnx2: [],
+    },
     example_repo_ids=["Lightricks/LTX-2"],
     pipeline_model=LTX2Pipeline,  # type: ignore[arg-type]
     context_type=PixelContext,
