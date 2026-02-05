@@ -19,7 +19,7 @@ from max import functional as F
 from max import random
 from max.driver import CPU, Device
 from max.dtype import DType
-from max.realization_context import set_seed
+from max.random import set_seed
 from max.tensor import Tensor
 
 # Note: scipy.stats.beta.ppf is used for beta sigmas but requires scipy
