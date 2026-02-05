@@ -24,10 +24,9 @@ from max.nn import FeedForward, Linear, Module, ModuleList, RMSNorm, SiLU
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
-from ...embeddings import (
-    PixArtAlphaCombinedTimestepSizeEmbeddings,
-    PixArtAlphaTextProjection,
-)
+from ...embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
+from ...flux1.layers.embeddings import PixArtAlphaTextProjection
+
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 logger = logging.getLogger(__name__)
