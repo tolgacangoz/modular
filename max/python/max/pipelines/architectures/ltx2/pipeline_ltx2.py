@@ -189,7 +189,7 @@ class LTX2Pipeline(DiffusionPipeline):
         """
         Packs and normalizes text encoder hidden states, respecting padding.
         """
-        batch_size, seq_len, hidden_dim, num_layers = text_hidden_states.shape
+        batch_size, seq_len, hidden_dim, _num_layers = text_hidden_states.shape
         # original_dtype = text_hidden_states.dtype
 
         # Create padding mask [batch_size, seq_len, 1, 1]
@@ -263,7 +263,7 @@ class LTX2Pipeline(DiffusionPipeline):
         latents: Tensor, patch_size: int = 1, patch_size_t: int = 1
     ) -> Tensor:
         """Pack latents from [B, C, F, H, W] to [B, S, D] token sequence."""
-        batch_size, num_channels, num_frames, height, width = latents.shape
+        batch_size, _num_channels, num_frames, height, width = latents.shape
         post_patch_num_frames = num_frames // patch_size_t
         post_patch_height = height // patch_size
         post_patch_width = width // patch_size
