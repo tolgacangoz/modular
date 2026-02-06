@@ -122,7 +122,9 @@ class DiffusionPipeline(ABC):
         for name, component_cls in tqdm(
             self.components.items(), desc="Loading sub models"
         ):
-            print(f"DEBUG: Loading sub-model '{name}' ({component_cls.__name__})...")
+            print(
+                f"DEBUG: Loading sub-model '{name}' ({component_cls.__name__})..."
+            )
             if not issubclass(component_cls, ComponentModel):
                 continue
 

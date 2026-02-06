@@ -10,16 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
+from typing import Any
 
-from typing import TYPE_CHECKING, Any, ClassVar
-
-from max.driver import Device, load_devices
+from max.driver import Device
+from max.dtype import DType
 from max.graph import DeviceRef
 from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
-from typing_extensions import Self
-
-if TYPE_CHECKING:
-    from max.pipelines.lib.config import PipelineConfig
+from pydantic import Field
 
 
 class LTX2ConfigBase(MAXModelConfigBase):
@@ -59,62 +56,11 @@ class LTX2ConfigBase(MAXModelConfigBase):
     rope_type: str = "split"
     timestep_scale_multiplier: int = 1000
     vae_scale_factors: tuple[int, int, int] = (8, 32, 32)
-
-    # Added to store nested configs if provided
-    transformer_config: dict[str, Any] = {}
-    vae_config: dict[str, Any] = {}
-    vae_audio_config: dict[str, Any] = {}
-    text_encoder_config: dict[str, Any] = {}
-    connectors_config: dict[str, Any] = {}
-    vocoder_config: dict[str, Any] = {}
+    dtype: DType = DType.bfloat16
+    device: DeviceRef = Field(default_factory=DeviceRef.GPU)
 
 
 class LTX2Config(LTX2ConfigBase):
-    config_name: ClassVar[str] = "config.json"
-
-    @classmethod
-    def initialize(cls, pipeline_config: "PipelineConfig") -> Self:
-        """Initialize LTX2Config from a PipelineConfig.
-
-        Args:
-            pipeline_config: The pipeline configuration.
-
-        Returns:
-            An initialized LTX2Config instance.
-        """
-        if pipeline_config.model.quantization_encoding is None:
-            raise ValueError("Quantization encoding is required for LTX2Config")
-
-        # Get the huggingface config if available
-        hf_config = pipeline_config.model.huggingface_config
-        config_dict = hf_config.to_dict() if hf_config is not None else {}
-
-        # Convert device specs to devices
-        devices = load_devices(pipeline_config.model.device_specs)
-
-        # Generate config using the existing generate method
-        config_base = cls.generate(
-            config_dict,
-            pipeline_config.model.quantization_encoding,
-            devices,
-        )
-
-        # Convert to LTX2Config (which is just LTX2ConfigBase with extra methods)
-        return cls(**config_base.model_dump())
-
-    def get_max_seq_len(self) -> int:
-        """Get the maximum sequence length.
-
-        For pixel generation models, this returns a placeholder value
-        as sequence length is not applicable.
-
-        Returns:
-            A placeholder sequence length value.
-        """
-        # Pixel generation models don't have a text sequence length constraint
-        # Return a reasonable default
-        return 128  # Standard Gemma3ForConditionalGeneration text encoder max length used in diffusion models
-
     @staticmethod
     def generate(
         config_dict: dict[str, Any],

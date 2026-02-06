@@ -65,9 +65,7 @@ class AutoencoderKLConfig(AutoencoderKLConfigBase):
         return AutoencoderKLConfig(**init_dict)
 
 
-class AutoencoderKLLTX2VideoConfigBase(MAXModelConfigBase):
-    in_channels: int = 3
-    out_channels: int = 3
+class AutoencoderKLLTX2VideoConfig(AutoencoderKLConfigBase):
     latent_channels: int = 128
     decoder_block_out_channels: tuple[int, ...] = (256, 512, 1024)
     decoder_layers_per_block: tuple[int, ...] = (5, 5, 5, 5)
@@ -82,12 +80,6 @@ class AutoencoderKLLTX2VideoConfigBase(MAXModelConfigBase):
     scaling_factor: float = 1.0
     decoder_causal: bool = True
     decoder_spatial_padding_mode: str = "reflect"
-    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
-    dtype: DType = DType.bfloat16
-
-
-class AutoencoderKLLTX2VideoConfig(AutoencoderKLLTX2VideoConfigBase):
-    config_name: ClassVar[str] = "config.json"
 
     @staticmethod
     def generate(
@@ -98,8 +90,26 @@ class AutoencoderKLLTX2VideoConfig(AutoencoderKLLTX2VideoConfigBase):
         init_dict = {
             key: value
             for key, value in config_dict.items()
-            if key in AutoencoderKLLTX2VideoConfigBase.__annotations__
+            if key in AutoencoderKLLTX2VideoConfig.__annotations__
         }
+        # Add LTX-2-specific parameters if present
+        ltx2_params = [
+            "decoder_block_out_channels",
+            "decoder_layers_per_block",
+            "decoder_spatio_temporal_scaling",
+            "decoder_inject_noise",
+            "upsample_residual",
+            "upsample_factor",
+            "timestep_conditioning",
+            "patch_size",
+            "patch_size_t",
+            "resnet_norm_eps",
+            "decoder_causal",
+            "decoder_spatial_padding_mode",
+        ]
+        for param in ltx2_params:
+            if param in config_dict:
+                init_dict[param] = config_dict[param]
         init_dict.update(
             {
                 "dtype": encoding.dtype,
@@ -109,13 +119,13 @@ class AutoencoderKLLTX2VideoConfig(AutoencoderKLLTX2VideoConfigBase):
         return AutoencoderKLLTX2VideoConfig(**init_dict)
 
 
-class AutoencoderKLLTX2AudioConfigBase(MAXModelConfigBase):
+class AutoencoderKLLTX2AudioConfig(AutoencoderKLConfigBase):
     base_channels: int = 128
+    in_channels: int = 2
     output_channels: int = 2
     ch_mult: tuple[int, ...] = (1, 2, 4)
     num_res_blocks: int = 2
     attn_resolutions: list[int] | None = None
-    in_channels: int = 2
     resolution: int = 256
     latent_channels: int = 8
     norm_type: str = "pixel"
@@ -127,12 +137,6 @@ class AutoencoderKLLTX2AudioConfigBase(MAXModelConfigBase):
     is_causal: bool = True
     mel_bins: int | None = 64
     double_z: bool = True
-    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
-    dtype: DType = DType.bfloat16
-
-
-class AutoencoderKLLTX2AudioConfig(AutoencoderKLLTX2AudioConfigBase):
-    config_name: ClassVar[str] = "config.json"
 
     @staticmethod
     def generate(
@@ -143,8 +147,27 @@ class AutoencoderKLLTX2AudioConfig(AutoencoderKLLTX2AudioConfigBase):
         init_dict = {
             key: value
             for key, value in config_dict.items()
-            if key in AutoencoderKLLTX2AudioConfigBase.__annotations__
+            if key in AutoencoderKLLTX2AudioConfig.__annotations__
         }
+        # Add LTX-2-specific parameters if present
+        ltx2_params = [
+            "base_channels",
+            "ch_mult",
+            "num_res_blocks",
+            "attn_resolutions",
+            "resolution",
+            "norm_type",
+            "causality_axis",
+            "dropout",
+            "sample_rate",
+            "mel_hop_length",
+            "is_causal",
+            "mel_bins",
+            "double_z",
+        ]
+        for param in ltx2_params:
+            if param in config_dict:
+                init_dict[param] = config_dict[param]
         init_dict.update(
             {
                 "dtype": encoding.dtype,

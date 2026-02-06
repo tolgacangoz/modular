@@ -12,7 +12,6 @@
 # ===----------------------------------------------------------------------=== #
 
 from .arch import ltx2_arch
+from .model import LTX2TransformerModel
 
-ARCHITECTURES = [ltx2_arch]
-
-__all__ = ["ARCHITECTURES", "ltx2_arch"]
+__all__ = ["LTX2TransformerModel", "ltx2_arch"]
