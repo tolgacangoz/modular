@@ -12,7 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 """LTX2 Audio Autoencoder Architecture."""
 
-from typing import Any, ClassVar
+from typing import Any
 
 from max import functional as F
 from max.driver import Device
@@ -509,6 +509,7 @@ class AutoencoderKLLTX2Audio(Module[[Tensor], Tensor]):
 
 class AutoencoderKLLTX2AudioModel(BaseAutoencoderModel):
     """ComponentModel wrapper for LTX2 Audio Autoencoder."""
+
     def __init__(
         self,
         config: dict[str, Any],

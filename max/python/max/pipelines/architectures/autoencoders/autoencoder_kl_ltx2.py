@@ -12,7 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 """LTX2 Video Autoencoder Architecture."""
 
-from typing import Any, ClassVar
+from typing import Any
 
 from max import functional as F
 from max.driver import Device
@@ -474,6 +474,7 @@ class AutoencoderKLLTX2Video(Module[[Tensor, Tensor | None, bool], Tensor]):
 
 class AutoencoderKLLTX2VideoModel(BaseAutoencoderModel):
     """ComponentModel wrapper for LTX2 Video Autoencoder."""
+
     def __init__(
         self,
         config: dict[str, Any],
