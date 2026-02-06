@@ -39,7 +39,7 @@ from ..autoencoders import (
     AutoencoderKLLTX2VideoModel,
 )
 from .nn.connectors import LTX2TextConnectors
-from .nn.transformer_ltx2 import LTX2VideoTransformer3DModel
+from .ltx2 import LTX2VideoTransformer3DModel
 from .nn.vocoder import LTX2Vocoder
 
 logger = logging.getLogger("max.pipelines")
