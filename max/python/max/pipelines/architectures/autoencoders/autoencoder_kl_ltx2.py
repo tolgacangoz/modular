@@ -15,6 +15,7 @@
 from typing import Any
 
 from max import functional as F
+from max import random
 from max.driver import Device
 from max.dtype import DType
 from max.graph import TensorType
@@ -120,14 +121,17 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         out_channels: int | None = None,
         dropout: float = 0.0,
         eps: float = 1e-6,
+        non_linearity: str = "swish",
         inject_noise: bool = False,
         timestep_conditioning: bool = False,
-        spatial_padding_mode: str = "reflect",
+        spatial_padding_mode: str = "zeros",
     ) -> None:
         super().__init__()
         out_channels = out_channels or in_channels
 
-        self.norm1 = PerChannelRMSNorm(eps=eps)
+        self.nonlinearity = get_activation(non_linearity)
+
+        self.norm1 = PerChannelRMSNorm()
         self.conv1 = LTX2VideoCausalConv3d(
             in_channels,
             out_channels,
@@ -135,7 +139,7 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
             spatial_padding_mode=spatial_padding_mode,
         )
 
-        self.norm2 = PerChannelRMSNorm(eps=eps)
+        self.norm2 = PerChannelRMSNorm()
         self.dropout = Dropout(dropout)
         self.conv2 = LTX2VideoCausalConv3d(
             out_channels,
@@ -162,52 +166,74 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         self.per_channel_scale1: Tensor | None = None
         self.per_channel_scale2: Tensor | None = None
         if inject_noise:
-            # Parameters for noise injection.
-            # In MAX, we'll store these as attributes that will be loaded from weights.
-            pass
+            self.per_channel_scale1 = Tensor.constant(Tensor.zeros((in_channels, 1, 1)))
+            self.per_channel_scale2 = Tensor.constant(Tensor.zeros((in_channels, 1, 1)))
 
-        self.timestep_conditioning = timestep_conditioning
         self.scale_shift_table: Tensor | None = None
+        if timestep_conditioning:
+            self.scale_shift_table = Tensor.constant(random.gaussian((4, in_channels)) / in_channels**0.5)
 
     def forward(
-        self, x: Tensor, temb: Tensor | None = None, causal: bool = True
+        self,
+        inputs: Tensor,
+        temb: Tensor | None = None,
+        seed: Tensor | None = None,
+        causal: bool = True,
     ) -> Tensor:
-        residual = x
+        hidden_states = inputs
+
+        hidden_states = self.norm1(hidden_states)
+
+        if self.scale_shift_table is not None:
+            # LTX2 uses unflatten(1, (4, -1)) + table[None, ..., None, None, None]
+            # In MAX, we reshape and broadcast manually.
+            # temb: [B, 4*C] -> [B, 4, C, 1, 1, 1]
+            temb = temb.reshape((temb.shape[0], 4, -1, 1, 1, 1))
+            # table: [4, C] -> [1, 4, C, 1, 1, 1]
+            table = self.scale_shift_table.reshape((1, 4, -1, 1, 1, 1))
+            temb = temb + table
+
+            shift_1 = temb[:, 0]
+            scale_1 = temb[:, 1]
+            shift_2 = temb[:, 2]
+            scale_2 = temb[:, 3]
+
+            hidden_states = hidden_states * (1 + scale_1) + shift_1
+
+        hidden_states = self.nonlinearity(hidden_states)
+        hidden_states = self.conv1(hidden_states, causal=causal)
+
+        if self.per_channel_scale1 is not None:
+            spatial_shape = hidden_states.shape[-2:]
+            spatial_noise = random.gaussian(
+                spatial_shape, seed=seed, device=hidden_states.device, dtype=hidden_states.dtype
+            )[None]
+            hidden_states = hidden_states + (spatial_noise * self.per_channel_scale1)[None, :, None, ...]
+
+        hidden_states = self.norm2(hidden_states)
+
+        if self.scale_shift_table is not None:
+            hidden_states = hidden_states * (1 + scale_2) + shift_2
+
+        hidden_states = self.nonlinearity(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.conv2(hidden_states, causal=causal)
+
+        if self.per_channel_scale2 is not None:
+            spatial_shape = hidden_states.shape[-2:]
+            spatial_noise = torch.randn(
+                spatial_shape, generator=generator, device=hidden_states.device, dtype=hidden_states.dtype
+            )[None]
+            hidden_states = hidden_states + (spatial_noise * self.per_channel_scale2)[None, :, None, ...]
+
         if self.norm3 is not None:
-            # norm3 is applied to [B, C, D, H, W] but LayerNorm expects C as last dim
-            # x shape: [B, C, D, H, W]
-            x_norm = x.permute((0, 2, 3, 4, 1))  # [B, D, H, W, C]
-            x_norm = self.norm3(x_norm)
-            residual = x_norm.permute((0, 4, 1, 2, 3))  # [B, C, D, H, W]
+            inputs = self.norm3(inputs.movedim(1, -1)).movedim(-1, 1)
 
         if self.conv_shortcut is not None:
-            residual = self.conv_shortcut(residual)
+            inputs = self.conv_shortcut(inputs)
 
-        h = self.norm1(x)
-
-        if self.timestep_conditioning and temb is not None:
-            # temb shape: [B, 4, C]
-            # split along second dim (unbind)
-            chunks = F.split(temb, 4, axis=1)
-            shift_1 = F.squeeze(chunks[0], axis=1)[:, :, None, None, None]
-            scale_1 = F.squeeze(chunks[1], axis=1)[:, :, None, None, None]
-            shift_2 = F.squeeze(chunks[2], axis=1)[:, :, None, None, None]
-            scale_2 = F.squeeze(chunks[3], axis=1)[:, :, None, None, None]
-
-            h = h * (1 + scale_1) + shift_1
-
-        h = F.silu(h)
-        h = self.conv1(h, causal=causal)
-
-        h = self.norm2(h)
-        if self.timestep_conditioning and temb is not None:
-            h = h * (1 + scale_2) + shift_2
-
-        h = F.silu(h)
-        h = self.dropout(h)
-        h = self.conv2(h, causal=causal)
-
-        return h + residual
+        hidden_states = hidden_states + inputs
+        return hidden_states
 
 
 class LTX2VideoUpsample3d(Module[[Tensor], Tensor]):
@@ -335,7 +361,7 @@ class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         if config.timestep_conditioning:
             # We'll use the one we just created in architectures/embeddings.py
             self.time_embed = PixArtAlphaCombinedTimestepSizeEmbeddings(
-                embedding_dim=config.decoder_block_out_channels[0],
+                embedding_dim=config.decoder_block_out_channels[0] * 4,
                 size_emb_dim=config.decoder_block_out_channels[0],
                 use_additional_conditions=False,
             )
