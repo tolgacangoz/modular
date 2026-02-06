@@ -20,7 +20,7 @@ from max.dtype import DType
 from max.nn import FeedForward, Linear, Module, ModuleList, RMSNorm
 from max.tensor import Tensor
 
-from .transformer_ltx2 import LTX2Attention
+from ..transformer_ltx2 import LTX2Attention
 
 
 class LTX2RotaryPosEmbed1d(Module[[int, int, Device], tuple[Tensor, Tensor]]):
