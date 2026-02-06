@@ -21,7 +21,7 @@ from max.pipelines.lib import SupportedEncoding
 from max.pipelines.lib.interfaces.component_model import ComponentModel
 from max.tensor import Tensor
 
-from .ltx2 import LTX2Transformer3DModel
+from .ltx2 import LTX2VideoTransformer3DModel
 from .model_config import LTX2Config
 
 
@@ -49,7 +49,7 @@ class LTX2TransformerModel(ComponentModel):
     def load_model(self) -> Callable[..., Any]:
         state_dict = {key: value.data() for key, value in self.weights.items()}
         with F.lazy():
-            ltx2 = LTX2Transformer3DModel(self.config)
+            ltx2 = LTX2VideoTransformer3DModel(self.config)
             ltx2.to(self.devices[0])
         self.model = ltx2.compile(*ltx2.input_types(), weights=state_dict)
         return self.model
