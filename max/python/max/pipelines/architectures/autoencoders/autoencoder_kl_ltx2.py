@@ -473,10 +473,7 @@ class AutoencoderKLLTX2Video(Module[[Tensor, Tensor | None, bool], Tensor]):
 
 
 class AutoencoderKLLTX2VideoModel(BaseAutoencoderModel):
-    """MaxModel wrapper for LTX2 Video Autoencoder."""
-
-    config_name: ClassVar[str] = AutoencoderKLLTX2VideoConfig.config_name
-
+    """ComponentModel wrapper for LTX2 Video Autoencoder."""
     def __init__(
         self,
         config: dict[str, Any],

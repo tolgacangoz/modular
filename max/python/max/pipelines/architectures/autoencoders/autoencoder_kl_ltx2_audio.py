@@ -508,10 +508,7 @@ class AutoencoderKLLTX2Audio(Module[[Tensor], Tensor]):
 
 
 class AutoencoderKLLTX2AudioModel(BaseAutoencoderModel):
-    """MaxModel wrapper for LTX2 Audio Autoencoder."""
-
-    config_name: ClassVar[str] = AutoencoderKLLTX2AudioConfig.config_name
-
+    """ComponentModel wrapper for LTX2 Audio Autoencoder."""
     def __init__(
         self,
         config: dict[str, Any],
