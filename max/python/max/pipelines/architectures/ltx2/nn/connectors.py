@@ -119,8 +119,8 @@ class LTX2RotaryPosEmbed1d(
             b = cos_freq.shape[0]
             t = cos_freq.shape[1]
 
-            cos_freq = cos_freq.reshape(b, t, self.num_attention_heads, -1)
-            sin_freq = sin_freq.reshape(b, t, self.num_attention_heads, -1)
+            cos_freq = cos_freq.reshape((b, t, self.num_attention_heads, -1))
+            sin_freq = sin_freq.reshape((b, t, self.num_attention_heads, -1))
 
             cos_freqs = cos_freq.transpose(1, 2)  # (B,H,T,D//2)
             sin_freqs = sin_freq.transpose(1, 2)  # (B,H,T,D//2)
@@ -372,7 +372,7 @@ class LTX2TextConnectors(
         if not additive_mask:
             text_dtype = text_encoder_hidden_states.dtype
             attention_mask = (attention_mask - 1).reshape(
-                attention_mask.shape[0], 1, -1, attention_mask.shape[-1]
+                (attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
             )
             attention_mask = (
                 attention_mask.cast(text_dtype) * DType.finfo(text_dtype).max
@@ -388,7 +388,7 @@ class LTX2TextConnectors(
 
         attn_mask = (new_attn_mask < 1e-6).cast(DType.int64)
         attn_mask = attn_mask.reshape(
-            video_text_embedding.shape[0], video_text_embedding.shape[1], 1
+            (video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
         )
         video_text_embedding = video_text_embedding * attn_mask
         new_attn_mask = attn_mask.squeeze(-1)
