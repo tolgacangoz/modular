@@ -111,7 +111,7 @@ class LTX2AudioAttnBlock(nn.Module[[Tensor], Tensor]):
         self.in_channels = in_channels
 
         if norm_type == "group":
-            self.norm = GroupNorm(
+            self.norm = nn.GroupNorm(
                 num_groups=32, num_channels=in_channels, eps=1e-6, affine=True
             )
         elif norm_type == "pixel":
