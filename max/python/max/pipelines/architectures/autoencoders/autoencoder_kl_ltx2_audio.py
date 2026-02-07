@@ -27,7 +27,7 @@ from .model_config import AutoencoderKLLTX2AudioConfig
 LATENT_DOWNSAMPLE_FACTOR = 4
 
 
-class LTX2AudioCausalConv2d(Module[[Tensor], Tensor]):
+class LTX2AudioCausalConv2d(nn.Module[[Tensor], Tensor]):
     """A causal 2D convolution that pads asymmetrically along the causal axis."""
 
     def __init__(
@@ -69,7 +69,7 @@ class LTX2AudioCausalConv2d(Module[[Tensor], Tensor]):
         else:
             raise ValueError(f"Invalid causality_axis: {causality_axis}")
 
-        self.conv = Conv2d(
+        self.conv = nn.Conv2d(
             in_channels,
             out_channels,
             kernel_size,
@@ -85,7 +85,7 @@ class LTX2AudioCausalConv2d(Module[[Tensor], Tensor]):
         return self.conv(x)
 
 
-class LTX2AudioPixelNorm(Module[[Tensor], Tensor]):
+class LTX2AudioPixelNorm(nn.Module[[Tensor], Tensor]):
     """Per-pixel (per-location) RMS normalization layer."""
 
     def __init__(self, dim: int = 1, eps: float = 1e-8) -> None:
@@ -99,7 +99,7 @@ class LTX2AudioPixelNorm(Module[[Tensor], Tensor]):
         return x / rms
 
 
-class LTX2AudioAttnBlock(Module[[Tensor], Tensor]):
+class LTX2AudioAttnBlock(nn.Module[[Tensor], Tensor]):
     """Attention block for LTX2 Audio."""
 
     def __init__(
@@ -119,10 +119,10 @@ class LTX2AudioAttnBlock(Module[[Tensor], Tensor]):
         else:
             raise ValueError(f"Invalid normalization type: {norm_type}")
 
-        self.q = Conv2d(in_channels, in_channels, kernel_size=1)
-        self.k = Conv2d(in_channels, in_channels, kernel_size=1)
-        self.v = Conv2d(in_channels, in_channels, kernel_size=1)
-        self.proj_out = Conv2d(in_channels, in_channels, kernel_size=1)
+        self.q = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.k = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.v = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+        self.proj_out = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
     def forward(self, x: Tensor) -> Tensor:
         h = self.norm(x)
@@ -146,7 +146,7 @@ class LTX2AudioAttnBlock(Module[[Tensor], Tensor]):
         return x + self.proj_out(h)
 
 
-class LTX2AudioResnetBlock(Module[[Tensor, Tensor | None], Tensor]):
+class LTX2AudioResnetBlock(nn.Module[[Tensor, Tensor | None], Tensor]):
     def __init__(
         self,
         in_channels: int,
@@ -276,7 +276,7 @@ class LTX2AudioResnetBlock(Module[[Tensor, Tensor | None], Tensor]):
         return x + h
 
 
-class LTX2AudioUpsample(Module[[Tensor], Tensor]):
+class LTX2AudioUpsample(nn.Module[[Tensor], Tensor]):
     def __init__(
         self,
         in_channels: int,
@@ -320,7 +320,7 @@ class LTX2AudioUpsample(Module[[Tensor], Tensor]):
         return x
 
 
-class LTX2AudioAudioPatchifier(Module[[Tensor], Tensor]):
+class LTX2AudioAudioPatchifier(nn.Module[[Tensor], Tensor]):
     """Patchifier for spectrogram/audio latents."""
 
     def __init__(
@@ -356,7 +356,7 @@ class LTX2AudioAudioPatchifier(Module[[Tensor], Tensor]):
         return self._patch_size
 
 
-class LTX2AudioDecoder(Module[[Tensor], Tensor]):
+class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
     """
     Symmetric decoder that reconstructs audio spectrograms from latent features.
 
@@ -566,7 +566,7 @@ class LTX2AudioDecoder(Module[[Tensor], Tensor]):
         hidden = self.non_linearity(hidden)
         decoded_output = self.conv_out(hidden)
         decoded_output = (
-            torch.tanh(decoded_output) if self.tanh_out else decoded_output
+            F.tanh(decoded_output) if self.tanh_out else decoded_output
         )
 
         _, _, current_time, current_freq = decoded_output.shape
@@ -599,7 +599,7 @@ class LTX2AudioDecoder(Module[[Tensor], Tensor]):
         return decoded_output
 
 
-class AutoencoderKLLTX2Audio(Module[[Tensor], Tensor]):
+class AutoencoderKLLTX2Audio(nn.Module[[Tensor], Tensor]):
     """Refactored LTX2 Audio Autoencoder (Decode-only)."""
 
     def __init__(self, config: AutoencoderKLLTX2AudioConfig) -> None:

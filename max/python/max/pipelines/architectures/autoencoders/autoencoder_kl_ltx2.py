@@ -15,26 +15,20 @@
 from typing import Any
 
 from max import functional as F
-from max import random
+from max import nn, random
 from max.driver import Device
 from max.dtype import DType
 from max.graph.weights import Weights
-from max.nn import (
-    Conv3d,
-    Dropout,
-    LayerNorm,
-    Module,
-    ModuleList,
-)
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
+from ..flux2.layers.activations import ACT2FN
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
 
 
-class PerChannelRMSNorm(Module[[Tensor], Tensor]):
+class PerChannelRMSNorm(nn.Module[[Tensor], Tensor]):
     """Per-channel RMS normalization layer."""
 
     def __init__(self, channel_dim: int = 1, eps: float = 1e-8) -> None:
@@ -48,7 +42,7 @@ class PerChannelRMSNorm(Module[[Tensor], Tensor]):
         return x / rms
 
 
-class LTX2VideoCausalConv3d(Module[[Tensor, bool], Tensor]):
+class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
     """Causal or non-causal 3D convolution."""
 
     def __init__(
@@ -81,7 +75,7 @@ class LTX2VideoCausalConv3d(Module[[Tensor, bool], Tensor]):
         # Padding for [depth, height, width]
         padding = (0, height_pad, width_pad)
 
-        self.conv = Conv3d(
+        self.conv = nn.Conv3d(
             kernel_size=self.kernel_size,
             in_channels=in_channels,
             out_channels=out_channels,
@@ -109,7 +103,7 @@ class LTX2VideoCausalConv3d(Module[[Tensor, bool], Tensor]):
         return self.conv(x)
 
 
-class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
+class LTX2VideoResnetBlock3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
     """3D ResNet block used in LTX2 Video decoder."""
 
     def __init__(
@@ -126,7 +120,7 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         super().__init__()
         out_channels = out_channels or in_channels
 
-        self.nonlinearity = get_activation(non_linearity)
+        self.nonlinearity = ACT2FN[non_linearity]
 
         self.norm1 = PerChannelRMSNorm()
         self.conv1 = LTX2VideoCausalConv3d(
@@ -137,7 +131,7 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         )
 
         self.norm2 = PerChannelRMSNorm()
-        self.dropout = Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         self.conv2 = LTX2VideoCausalConv3d(
             out_channels,
             out_channels,
@@ -145,14 +139,14 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
             spatial_padding_mode=spatial_padding_mode,
         )
 
-        self.norm3: LayerNorm | None = None
-        self.conv_shortcut: Module[[Tensor], Tensor] | None = None
+        self.norm3: nn.LayerNorm | None = None
+        self.conv_shortcut: nn.Module[[Tensor], Tensor] | None = None
         if in_channels != out_channels:
-            self.norm3 = LayerNorm(
+            self.norm3 = nn.LayerNorm(
                 in_channels, eps=eps, elementwise_affine=True, use_bias=True
             )
             # LTX 2.0 uses a normal Conv3d here rather than LTXVideoCausalConv3d
-            self.conv_shortcut = Conv3d(
+            self.conv_shortcut = nn.Conv3d(
                 kernel_size=1,
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -246,7 +240,7 @@ class LTX2VideoResnetBlock3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         return hidden_states
 
 
-class LTXVideoUpsampler3d(Module[[Tensor, bool], Tensor]):
+class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
     def __init__(
         self,
         in_channels: int,
@@ -329,7 +323,7 @@ class LTXVideoUpsampler3d(Module[[Tensor, bool], Tensor]):
 
 
 class LTX2VideoDownBlock3D(
-    Module[[Tensor, int | None, int | None, bool], Tensor]
+    nn.Module[[Tensor, int | None, int | None, bool], Tensor]
 ):
     def __init__(
         self,
@@ -359,11 +353,11 @@ class LTX2VideoDownBlock3D(
                     spatial_padding_mode=spatial_padding_mode,
                 )
             )
-        self.resnets = ModuleList(resnets)
+        self.resnets = nn.ModuleList(resnets)
 
         self.downsamplers = None
         if spatio_temporal_scale:
-            self.downsamplers = ModuleList()
+            self.downsamplers = nn.ModuleList()
 
             if downsample_type == "conv":
                 self.downsamplers.append(
@@ -423,7 +417,7 @@ class LTX2VideoDownBlock3D(
 
 
 class LTX2VideoMidBlock3d(
-    Module[[Tensor, Tensor | None, int | None, bool], Tensor]
+    nn.Module[[Tensor, Tensor | None, int | None, bool], Tensor]
 ):
     def __init__(
         self,
@@ -458,7 +452,7 @@ class LTX2VideoMidBlock3d(
                     spatial_padding_mode=spatial_padding_mode,
                 )
             )
-        self.resnets = ModuleList(resnets)
+        self.resnets = nn.ModuleList(resnets)
 
     def forward(
         self,
@@ -485,7 +479,7 @@ class LTX2VideoMidBlock3d(
         return hidden_states
 
 
-class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
+class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
     def __init__(
         self,
         in_channels: int = 128,
@@ -537,7 +531,7 @@ class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
 
         # up blocks
         num_block_out_channels = len(block_out_channels)
-        self.up_blocks = ModuleList([])
+        self.up_blocks = nn.ModuleList([])
         for i in range(num_block_out_channels):
             input_channel = output_channel // upsample_factor[i]
             output_channel = block_out_channels[i] // upsample_factor[i]
@@ -559,7 +553,7 @@ class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
 
         # out
         self.norm_out = PerChannelRMSNorm()
-        self.conv_act = SiLU()
+        self.conv_act = ACT2FN["silu"]
         self.conv_out = LTX2VideoCausalConv3d(
             output_channel,
             self.out_channels,
@@ -641,7 +635,7 @@ class LTX2VideoDecoder3d(Module[[Tensor, Tensor | None, bool], Tensor]):
         return hidden_states
 
 
-class AutoencoderKLLTX2Video(Module[[Tensor, Tensor | None, bool], Tensor]):
+class AutoencoderKLLTX2Video(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
     """Refactored LTX2 Video Autoencoder."""
 
     def __init__(self, config: AutoencoderKLLTX2VideoConfig) -> None:
