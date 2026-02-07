@@ -14,10 +14,10 @@
 import math
 
 import max.functional as F
-from max import random
+from max import nn, random
 from max.driver import Device
 from max.dtype import DType
-from max.nn import FeedForward, Linear, Module, ModuleList, RMSNorm
+from max.nn import FeedForward
 from max.tensor import Tensor
 
 from ..ltx2 import LTX2Attention
@@ -59,8 +59,8 @@ class LTX2RotaryPosEmbed1d(Module[[int, int, Device], tuple[Tensor, Tensor]]):
         grid_1d = Tensor.arange(pos, dtype=DType.float32, device=device)
         # Get fractional indices relative to self.base_seq_len
         grid_1d = grid_1d / self.base_seq_len
-        grid = grid_1d.unsqueeze(0).repeat(
-            batch_size, 1
+        grid = F.tile(
+            grid_1d.unsqueeze(0), (batch_size, 1)
         )  # [batch_size, seq_len]
 
         # 2. Calculate 1D RoPE frequencies
@@ -138,7 +138,8 @@ class LTX2TransformerBlock1d(
         eps: float = 1e-6,
         rope_type: str = "interleaved",
     ):
-        self.norm1 = RMSNorm(dim, eps=eps, elementwise_affine=False)
+        super().__init__()
+        self.norm1 = nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
         self.attn1 = LTX2Attention(
             query_dim=dim,
             heads=num_attention_heads,
@@ -147,7 +148,7 @@ class LTX2TransformerBlock1d(
             rope_type=rope_type,
         )
 
-        self.norm2 = RMSNorm(dim, eps=eps, elementwise_affine=False)
+        self.norm2 = nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
         self.ff = FeedForward(dim, activation_fn=activation_fn)
 
     def forward(
@@ -193,6 +194,7 @@ class LTX2ConnectorTransformer1d(
         causal_temporal_positioning: bool = False,
         rope_type: str = "interleaved",
     ):
+        super().__init__()
         self.num_attention_heads = num_attention_heads
         self.inner_dim = num_attention_heads * attention_head_dim
         self.causal_temporal_positioning = causal_temporal_positioning
@@ -227,7 +229,7 @@ class LTX2ConnectorTransformer1d(
             ]
         )
 
-        self.norm_out = RMSNorm(
+        self.norm_out = nn.RMSNorm(
             self.inner_dim, eps=eps, elementwise_affine=False
         )
 
@@ -257,7 +259,7 @@ class LTX2ConnectorTransformer1d(
             binary_attn_mask = (
                 attention_mask >= attn_mask_binarize_threshold
             ).int()
-            if binary_attn_mask.ndim == 4:
+            if binary_attn_mask.rank == 4:
                 binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
@@ -277,7 +279,7 @@ class LTX2ConnectorTransformer1d(
                 )
             ]
             padded_hidden_states = F.concat(
-                [x.unsqueeze(0) for x in padded_hidden_states], dim=0
+                [x.unsqueeze(0) for x in padded_hidden_states], axis=0
             )  # [B, L, D]
 
             flipped_mask = binary_attn_mask[:, ::-1].unsqueeze(-1)  # [B, L, 1]
@@ -331,7 +333,8 @@ class LTX2TextConnectors(
         causal_temporal_positioning: bool,
         rope_type: str = "interleaved",
     ):
-        self.text_proj_in = Linear(
+        super().__init__()
+        self.text_proj_in = nn.Linear(
             caption_channels * text_proj_in_factor, caption_channels, bias=False
         )
         self.video_connector = LTX2ConnectorTransformer1d(
@@ -381,7 +384,7 @@ class LTX2TextConnectors(
             text_encoder_hidden_states, attention_mask
         )
 
-        attn_mask = (new_attn_mask > -1e-6).cast(DType.int64)
+        attn_mask = (new_attn_mask < 1e-6).cast(DType.int64)
         attn_mask = attn_mask.reshape(
             video_text_embedding.shape[0], video_text_embedding.shape[1], 1
         )

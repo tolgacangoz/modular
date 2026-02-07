@@ -17,19 +17,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import max.functional as F
-from max import random
+from max import nn, random
 from max.driver import Device
 from max.dtype import DType
-from max.nn import (
-    Dropout,
-    FeedForward,
-    LayerNorm,
-    Linear,
-    Module,
-    ModuleList,
-    RMSNorm,
-    SiLU,
-)
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
@@ -51,9 +41,11 @@ def apply_interleaved_rotary_emb(
     x: Tensor, freqs: tuple[Tensor, Tensor]
 ) -> Tensor:
     cos, sin = freqs
-    x_real, x_imag = x.unflatten(2, (-1, 2)).unbind(-1)  # [B, S, C // 2]
-    x_rotated = F.stack([-x_imag, x_real], dim=-1).flatten(2)
-    out = (x.float() * cos + x_rotated.float() * sin).cast(x.dtype)
+    x_real, x_imag = x.reshape(x.shape[0], x.shape[1], -1, 2).unbind(-1)
+    x_rotated = F.flatten(F.stack([-x_imag, x_real], axis=-1), 2)
+    out = (
+        x.cast(DType.float32) * cos + x_rotated.cast(DType.float32) * sin
+    ).cast(x.dtype)
     return out
 
 
@@ -62,7 +54,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
 
     x_dtype = x.dtype
     needs_reshape = False
-    if x.ndim != 4 and cos.ndim == 4:
+    if x.rank != 4 and cos.rank == 4:
         # cos is (#b, h, t, r) -> reshape x to (b, h, t, dim_per_head)
         # The cos/sin batch dim may only be broadcastable, so take batch size from x
         b = x.shape[0]
@@ -79,9 +71,9 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     r = last // 2
 
     # (..., 2, r)
-    split_x = x.reshape(
-        *x.shape[:-1], 2, r
-    ).float()  # Explicitly upcast to float
+    split_x = x.reshape(*x.shape[:-1], 2, r).cast(
+        DType.float32
+    )  # Explicitly upcast to float
     first_x = split_x[..., :1, :]  # (..., 1, r)
     second_x = split_x[..., 1:, :]  # (..., 1, r)
 
@@ -157,8 +149,8 @@ class LTX2AdaLayerNormSingle(
             use_additional_conditions=use_additional_conditions,
         )
 
-        self.silu = SiLU()
-        self.linear = Linear(
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(
             embedding_dim, self.num_mod_params * embedding_dim, bias=True
         )
 
@@ -227,26 +219,28 @@ class LTX2Attention(Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         self.heads = heads
         self.rope_type = rope_type
 
-        self.norm_q = RMSNorm(
+        self.norm_q = nn.RMSNorm(
             dim_head * heads,
             eps=norm_eps,
             elementwise_affine=norm_elementwise_affine,
         )
-        self.norm_k = RMSNorm(
+        self.norm_k = nn.RMSNorm(
             dim_head * kv_heads,
             eps=norm_eps,
             elementwise_affine=norm_elementwise_affine,
         )
-        self.to_q = Linear(query_dim, self.inner_dim, bias=bias)
-        self.to_k = Linear(
+        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
+        self.to_k = nn.Linear(
             self.cross_attention_dim, self.inner_kv_dim, bias=bias
         )
-        self.to_v = Linear(
+        self.to_v = nn.Linear(
             self.cross_attention_dim, self.inner_kv_dim, bias=bias
         )
-        self.to_out = ModuleList([])
-        self.to_out.append(Linear(self.inner_dim, self.out_dim, bias=out_bias))
-        self.to_out.append(Dropout(dropout))
+        self.to_out = nn.ModuleList([])
+        self.to_out.append(
+            nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
+        )
+        self.to_out.append(nn.Dropout(dropout))
 
     def forward(
         self,
@@ -298,9 +292,9 @@ class LTX2Attention(Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     else query_rotary_emb,
                 )
 
-        query = query.unflatten(2, (self.heads, -1))
-        key = key.unflatten(2, (self.heads, -1))
-        value = value.unflatten(2, (self.heads, -1))
+        query = query.reshape(batch_size, sequence_length, self.heads, -1)
+        key = key.reshape(batch_size, sequence_length, self.heads, -1)
+        value = value.reshape(batch_size, sequence_length, self.heads, -1)
 
         hidden_states = flash_attention_gpu(
             query,
@@ -309,7 +303,7 @@ class LTX2Attention(Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             attention_mask,
             self.scale,
         )
-        hidden_states = hidden_states.flatten(2, 3)
+        hidden_states = F.flatten(hidden_states, 2, 3)
         hidden_states = hidden_states.cast(query.dtype)
 
         hidden_states = self.to_out[0](hidden_states)
@@ -379,7 +373,7 @@ class LTX2VideoTransformerBlock(
         rope_type: str = "interleaved",
     ):
         # 1. Self-Attention (video and audio)
-        self.norm1 = RMSNorm(
+        self.norm1 = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.attn1 = LTX2Attention(
@@ -394,7 +388,7 @@ class LTX2VideoTransformerBlock(
             rope_type=rope_type,
         )
 
-        self.audio_norm1 = RMSNorm(
+        self.audio_norm1 = nn.RMSNorm(
             audio_dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.audio_attn1 = LTX2Attention(
@@ -410,7 +404,7 @@ class LTX2VideoTransformerBlock(
         )
 
         # 2. Prompt Cross-Attention
-        self.norm2 = RMSNorm(
+        self.norm2 = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.attn2 = LTX2Attention(
@@ -425,7 +419,7 @@ class LTX2VideoTransformerBlock(
             rope_type=rope_type,
         )
 
-        self.audio_norm2 = RMSNorm(
+        self.audio_norm2 = nn.RMSNorm(
             audio_dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.audio_attn2 = LTX2Attention(
@@ -442,7 +436,7 @@ class LTX2VideoTransformerBlock(
 
         # 3. Audio-to-Video (a2v) and Video-to-Audio (v2a) Cross-Attention
         # Audio-to-Video (a2v) Attention --> Q: Video; K,V: Audio
-        self.audio_to_video_norm = RMSNorm(
+        self.audio_to_video_norm = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.audio_to_video_attn = LTX2Attention(
@@ -458,7 +452,7 @@ class LTX2VideoTransformerBlock(
         )
 
         # Video-to-Audio (v2a) Attention --> Q: Audio; K,V: Video
-        self.video_to_audio_norm = RMSNorm(
+        self.video_to_audio_norm = nn.RMSNorm(
             audio_dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.video_to_audio_attn = LTX2Attention(
@@ -474,12 +468,12 @@ class LTX2VideoTransformerBlock(
         )
 
         # 4. Feedforward layers
-        self.norm3 = RMSNorm(
+        self.norm3 = nn.RMSNorm(
             dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.ff = FeedForward(dim, activation_fn=activation_fn)
 
-        self.audio_norm3 = RMSNorm(
+        self.audio_norm3 = nn.RMSNorm(
             audio_dim, eps=eps, elementwise_affine=elementwise_affine
         )
         self.audio_ff = FeedForward(audio_dim, activation_fn=activation_fn)
@@ -518,7 +512,7 @@ class LTX2VideoTransformerBlock(
         a2v_cross_attention_mask: Tensor | None = None,
         v2a_cross_attention_mask: Tensor | None = None,
     ) -> Tensor:
-        batch_size = hidden_states.size(0)
+        batch_size = hidden_states.shape[0]
 
         # 1. Video and Audio Self-Attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -526,9 +520,9 @@ class LTX2VideoTransformerBlock(
         num_ada_params = self.scale_shift_table.shape[0]
         ada_values = self.scale_shift_table[None, None].to(
             temb.device
-        ) + temb.reshape(batch_size, temb.size(1), num_ada_params, -1)
+        ) + temb.reshape(batch_size, temb.shape[1], num_ada_params, -1)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            ada_values.unbind(dim=2)
+            ada_values.unbind(axis=2)
         )
         norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
 
@@ -545,7 +539,7 @@ class LTX2VideoTransformerBlock(
         audio_ada_values = self.audio_scale_shift_table[None, None].to(
             temb_audio.device
         ) + temb_audio.reshape(
-            batch_size, temb_audio.size(1), num_audio_ada_params, -1
+            batch_size, temb_audio.shape[1], num_audio_ada_params, -1
         )
         (
             audio_shift_msa,
@@ -554,7 +548,7 @@ class LTX2VideoTransformerBlock(
             audio_shift_mlp,
             audio_scale_mlp,
             audio_gate_mlp,
-        ) = audio_ada_values.unbind(dim=2)
+        ) = audio_ada_values.unbind(axis=2)
         norm_audio_hidden_states = (
             norm_audio_hidden_states * (1 + audio_scale_msa) + audio_shift_msa
         )
@@ -607,11 +601,11 @@ class LTX2VideoTransformerBlock(
             + temb_ca_scale_shift.reshape(
                 batch_size, temb_ca_scale_shift.shape[1], 4, -1
             )
-        ).unbind(dim=2)
+        ).unbind(axis=2)
         video_ca_gate = (
             video_per_layer_ca_gate[:, :, ...].cast(temb_ca_gate.dtype)
             + temb_ca_gate.reshape(batch_size, temb_ca_gate.shape[1], 1, -1)
-        ).unbind(dim=2)
+        ).unbind(axis=2)
 
         (
             video_a2v_ca_scale,
@@ -636,13 +630,13 @@ class LTX2VideoTransformerBlock(
             + temb_ca_audio_scale_shift.reshape(
                 batch_size, temb_ca_audio_scale_shift.shape[1], 4, -1
             )
-        ).unbind(dim=2)
+        ).unbind(axis=2)
         audio_ca_gate = (
             audio_per_layer_ca_gate[:, :, ...].cast(temb_ca_audio_gate.dtype)
             + temb_ca_audio_gate.reshape(
                 batch_size, temb_ca_audio_gate.shape[1], 1, -1
             )
-        ).unbind(dim=2)
+        ).unbind(axis=2)
 
         (
             audio_a2v_ca_scale,
@@ -856,7 +850,7 @@ class LTX2AudioVideoRotaryPosEmbed(
             [grid, patch_ends], axis=-1
         )  # [3, N_F, N_H, N_W, 2]
         # Reshape to (batch_size, 3, num_patches, 2)
-        latent_coords = latent_coords.flatten(1, 3)
+        latent_coords = F.flatten(latent_coords, 1, 3)
         latent_coords = latent_coords.unsqueeze(0).repeat(batch_size, 1, 1, 1)
 
         # 3. Calculate the pixel space patch boundaries from the latent boundaries.
@@ -864,7 +858,7 @@ class LTX2AudioVideoRotaryPosEmbed(
             self.scale_factors, device=latent_coords.device
         )
         # Broadcast the VAE scale factors such that they are compatible with latent_coords's shape
-        broadcast_shape = [1] * latent_coords.ndim
+        broadcast_shape = [1] * latent_coords.rank
         broadcast_shape[1] = -1  # This is the (frame, height, width) dim
         # Apply per-axis scaling to convert latent coordinates to pixel space coordinates
         pixel_coords = latent_coords * scale_tensor.reshape(*broadcast_shape)
@@ -967,7 +961,7 @@ class LTX2AudioVideoRotaryPosEmbed(
 
         # 1. If the coords are patch boundaries [start, end), use the midpoint of these boundaries as the patch
         # position index
-        if coords.ndim == 4:
+        if coords.rank == 4:
             coords_start, coords_end = coords.chunk(2, dim=-1)
             coords = (coords_start + coords_end) / 2.0
             coords = coords.squeeze(-1)  # [B, num_pos_dims, num_patches]
@@ -1008,16 +1002,16 @@ class LTX2AudioVideoRotaryPosEmbed(
         freqs = (
             grid.unsqueeze(-1) * 2 - 1
         ) * freqs  # [B, num_patches, num_pos_dims, self.dim // num_elems]
-        freqs = freqs.transpose(-1, -2).flatten(
-            2
+        freqs = F.flatten(
+            freqs.transpose(-1, -2), 2
         )  # [B, num_patches, self.dim // 2]
 
         # 5. Get real, interleaved (cos, sin) frequencies, padded to self.dim
         # TODO: consider implementing this as a utility and reuse in `connectors.py`.
         # src/diffusers/pipelines/ltx2/connectors.py
         if self.rope_type == "interleaved":
-            cos_freqs = freqs.cos().repeat_interleave(2, dim=-1)
-            sin_freqs = freqs.sin().repeat_interleave(2, dim=-1)
+            cos_freqs = F.repeat_interleave(freqs.cos(), 2, axis=-1)
+            sin_freqs = F.repeat_interleave(freqs.sin(), 2, axis=-1)
 
             if self.dim % num_rope_elems != 0:
                 cos_padding = Tensor.ones_like(
@@ -1026,8 +1020,8 @@ class LTX2AudioVideoRotaryPosEmbed(
                 sin_padding = Tensor.zeros_like(
                     cos_freqs[:, :, : self.dim % num_rope_elems]
                 )
-                cos_freqs = F.concat([cos_padding, cos_freqs], dim=-1)
-                sin_freqs = F.concat([sin_padding, sin_freqs], dim=-1)
+                cos_freqs = F.concat([cos_padding, cos_freqs], axis=-1)
+                sin_freqs = F.concat([sin_padding, sin_freqs], axis=-1)
 
         elif self.rope_type == "split":
             expected_freqs = self.dim // 2
@@ -1150,8 +1144,8 @@ class LTX2VideoTransformer3DModel(
         audio_inner_dim = audio_num_attention_heads * audio_attention_head_dim
 
         # 1. Patchification input projections
-        self.proj_in = Linear(in_channels, inner_dim)
-        self.audio_proj_in = Linear(audio_in_channels, audio_inner_dim)
+        self.proj_in = nn.Linear(in_channels, inner_dim)
+        self.audio_proj_in = nn.Linear(audio_in_channels, audio_inner_dim)
 
         # 2. Prompt embeddings
         self.caption_projection = PixArtAlphaTextProjection(
@@ -1268,7 +1262,7 @@ class LTX2VideoTransformer3DModel(
         )
 
         # 5. Transformer Blocks
-        self.transformer_blocks = ModuleList(
+        self.transformer_blocks = nn.ModuleList(
             [
                 LTX2VideoTransformerBlock(
                     dim=inner_dim,
@@ -1292,13 +1286,15 @@ class LTX2VideoTransformer3DModel(
         )
 
         # 6. Output layers
-        self.norm_out = LayerNorm(inner_dim, eps=1e-6, elementwise_affine=False)
-        self.proj_out = Linear(inner_dim, out_channels)
+        self.norm_out = nn.LayerNorm(
+            inner_dim, eps=1e-6, elementwise_affine=False
+        )
+        self.proj_out = nn.Linear(inner_dim, out_channels)
 
-        self.audio_norm_out = LayerNorm(
+        self.audio_norm_out = nn.LayerNorm(
             audio_inner_dim, eps=1e-6, elementwise_affine=False
         )
-        self.audio_proj_out = Linear(audio_inner_dim, audio_out_channels)
+        self.audio_proj_out = nn.Linear(audio_inner_dim, audio_out_channels)
 
     def forward(
         self,
@@ -1346,7 +1342,7 @@ class LTX2VideoTransformer3DModel(
         # convert encoder_attention_mask to a bias the same way we do for attention_mask
         if (
             encoder_attention_mask is not None
-            and encoder_attention_mask.ndim == 2
+            and encoder_attention_mask.rank == 2
         ):
             encoder_attention_mask = (
                 1 - encoder_attention_mask.cast(hidden_states.dtype)
@@ -1355,7 +1351,7 @@ class LTX2VideoTransformer3DModel(
 
         if (
             audio_encoder_attention_mask is not None
-            and audio_encoder_attention_mask.ndim == 2
+            and audio_encoder_attention_mask.rank == 2
         ):
             audio_encoder_attention_mask = (
                 1 - audio_encoder_attention_mask.cast(audio_hidden_states.dtype)
@@ -1364,7 +1360,7 @@ class LTX2VideoTransformer3DModel(
                 audio_encoder_attention_mask.unsqueeze(1)
             )
 
-        batch_size = hidden_states.size(0)
+        batch_size = hidden_states.shape[0]
 
         # 1. Prepare RoPE positional embeddings
         if video_coords is None:
@@ -1410,33 +1406,33 @@ class LTX2VideoTransformer3DModel(
         # temb is used in the transformer blocks (as expected), while embedded_timestep is used for the output layer
         # modulation with scale_shift_table (and similarly for audio)
         temb, embedded_timestep = self.time_embed(
-            timestep.flatten(),
+            F.flatten(timestep),
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
         )
-        temb = temb.reshape(batch_size, -1, temb.size(-1))
+        temb = temb.reshape(batch_size, -1, temb.shape[-1])
         embedded_timestep = embedded_timestep.reshape(
-            batch_size, -1, embedded_timestep.size(-1)
+            batch_size, -1, embedded_timestep.shape[-1]
         )
 
         temb_audio, audio_embedded_timestep = self.audio_time_embed(
-            audio_timestep.flatten(),
+            F.flatten(audio_timestep),
             batch_size=batch_size,
             hidden_dtype=audio_hidden_states.dtype,
         )
-        temb_audio = temb_audio.reshape(batch_size, -1, temb_audio.size(-1))
+        temb_audio = temb_audio.reshape(batch_size, -1, temb_audio.shape[-1])
         audio_embedded_timestep = audio_embedded_timestep.reshape(
-            batch_size, -1, audio_embedded_timestep.size(-1)
+            batch_size, -1, audio_embedded_timestep.shape[-1]
         )
 
         # 3.2. Prepare global modality cross attention modulation parameters
         video_cross_attn_scale_shift, _ = self.av_cross_attn_video_scale_shift(
-            timestep.flatten(),
+            F.flatten(timestep),
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
         )
         video_cross_attn_a2v_gate, _ = self.av_cross_attn_video_a2v_gate(
-            timestep.flatten() * timestep_cross_attn_gate_scale_factor,
+            F.flatten(timestep) * timestep_cross_attn_gate_scale_factor,
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
         )
@@ -1448,12 +1444,12 @@ class LTX2VideoTransformer3DModel(
         )
 
         audio_cross_attn_scale_shift, _ = self.av_cross_attn_audio_scale_shift(
-            audio_timestep.flatten(),
+            F.flatten(audio_timestep),
             batch_size=batch_size,
             hidden_dtype=audio_hidden_states.dtype,
         )
         audio_cross_attn_v2a_gate, _ = self.av_cross_attn_audio_v2a_gate(
-            audio_timestep.flatten() * timestep_cross_attn_gate_scale_factor,
+            F.flatten(audio_timestep) * timestep_cross_attn_gate_scale_factor,
             batch_size=batch_size,
             hidden_dtype=audio_hidden_states.dtype,
         )
@@ -1467,14 +1463,14 @@ class LTX2VideoTransformer3DModel(
         # 4. Prepare prompt embeddings
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.reshape(
-            batch_size, -1, hidden_states.size(-1)
+            batch_size, -1, hidden_states.shape[-1]
         )
 
         audio_encoder_hidden_states = self.audio_caption_projection(
             audio_encoder_hidden_states
         )
         audio_encoder_hidden_states = audio_encoder_hidden_states.reshape(
-            batch_size, -1, audio_hidden_states.size(-1)
+            batch_size, -1, audio_hidden_states.shape[-1]
         )
 
         # 5. Run transformer blocks

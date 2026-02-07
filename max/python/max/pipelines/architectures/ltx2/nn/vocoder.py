@@ -169,7 +169,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         if not time_last:
             hidden_states = hidden_states.transpose(2, 3)
         # Combine channels and frequency (mel bins) dimensions
-        hidden_states = hidden_states.flatten(1, 2)
+        hidden_states = F.flatten(hidden_states, 1, 2)
 
         hidden_states = self.conv_in(hidden_states)
 

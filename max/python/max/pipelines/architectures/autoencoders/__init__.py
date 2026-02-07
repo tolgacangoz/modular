@@ -12,6 +12,6 @@
 # ===----------------------------------------------------------------------=== #
 
 from .autoencoder_kl import AutoencoderKLModel
+from .autoencoder_kl_flux2 import AutoencoderKLFlux2Model
 from .autoencoder_kl_ltx2 import AutoencoderKLLTX2VideoModel
 from .autoencoder_kl_ltx2_audio import AutoencoderKLLTX2AudioModel
-from .autoencoder_kl_flux2 import AutoencoderKLFlux2Model
