@@ -62,9 +62,9 @@ class ResBlock(nn.Module[[Tensor], Tensor]):
 
     def forward(self, x: Tensor) -> Tensor:
         for conv1, conv2 in zip(self.convs1, self.convs2, strict=False):
-            xt = F.leaky_relu(x, negative_slope=self.negative_slope)
+            xt = F.max(0, x) + self.negative_slope * F.min(0, x)
             xt = conv1(xt)
-            xt = F.leaky_relu(xt, negative_slope=self.negative_slope)
+            xt = F.max(0, xt) + self.negative_slope * F.min(0, xt)
             xt = conv2(xt)
             x = x + xt
         return x
@@ -174,9 +174,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = self.conv_in(hidden_states)
 
         for i in range(self.num_upsample_layers):
-            hidden_states = F.leaky_relu(
-                hidden_states, negative_slope=self.negative_slope
-            )
+            hidden_states = F.max(0, hidden_states) + self.negative_slope * F.min(0, hidden_states)
             hidden_states = self.upsamplers[i](hidden_states)
 
             # Run all resnets in parallel on hidden_states
@@ -191,7 +189,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
 
         # NOTE: unlike the first leaky ReLU, this leaky ReLU is set to use the default F.leaky_relu negative slope of
         # 0.01 (whereas the others usually use a slope of 0.1). Not sure if this is intended
-        hidden_states = F.leaky_relu(hidden_states, negative_slope=0.01)
+        hidden_states = F.max(0, hidden_states) + 0.01 * F.min(0, hidden_states)
         hidden_states = self.conv_out(hidden_states)
         hidden_states = F.tanh(hidden_states)
 
