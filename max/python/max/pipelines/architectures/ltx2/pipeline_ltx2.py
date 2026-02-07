@@ -38,8 +38,8 @@ from ..autoencoders import (
     AutoencoderKLLTX2AudioModel,
     AutoencoderKLLTX2VideoModel,
 )
-from .nn.connectors import LTX2TextConnectors
 from .ltx2 import LTX2VideoTransformer3DModel
+from .nn.connectors import LTX2TextConnectors
 from .nn.vocoder import LTX2Vocoder
 
 logger = logging.getLogger("max.pipelines")
@@ -181,60 +181,73 @@ class LTX2Pipeline(DiffusionPipeline):
     @staticmethod
     def _pack_text_embeds(
         text_hidden_states: Tensor,
-        attention_mask: Tensor,
+        sequence_lengths: Tensor,
         device: Device,
+        padding_side: str = "left",
         scale_factor: int = 8,
         eps: float = 1e-6,
     ) -> Tensor:
         """
-        Packs and normalizes text encoder hidden states, respecting padding.
+        Packs and normalizes text encoder hidden states, respecting padding. Normalization is performed per-batch and
+        per-layer in a masked fashion (only over non-padded positions).
+
+        Args:
+            text_hidden_states (`Tensor` of shape `(batch_size, seq_len, hidden_dim, num_layers)`):
+                Per-layer hidden_states from a text encoder (e.g. `Gemma3ForConditionalGeneration`).
+            sequence_lengths (`Tensor of shape `(batch_size,)`):
+                The number of valid (non-padded) tokens for each batch instance.
+            device: (`Device`, *optional*):
+                torch device to place the resulting embeddings on
+            padding_side: (`str`, *optional*, defaults to `"left"`):
+                Whether the text tokenizer performs padding on the `"left"` or `"right"`.
+            scale_factor (`int`, *optional*, defaults to `8`):
+                Scaling factor to multiply the normalized hidden states by.
+            eps (`float`, *optional*, defaults to `1e-6`):
+                A small positive value for numerical stability when performing normalization.
+
+        Returns:
+            `Tensor` of shape `(batch_size, seq_len, hidden_dim * num_layers)`:
+                Normed and flattened text encoder hidden states.
         """
-        batch_size, seq_len, hidden_dim, _num_layers = text_hidden_states.shape
-        # original_dtype = text_hidden_states.dtype
+        batch_size, seq_len, hidden_dim, num_layers = text_hidden_states.shape
+        original_dtype = text_hidden_states.dtype
 
-        # Create padding mask [batch_size, seq_len, 1, 1]
-        mask = attention_mask.unsqueeze(-1).unsqueeze(-1)
-        sequence_lengths = attention_mask.sum(axis=1)
+        # Create padding mask
+        token_indices = F.arange(seq_len, device=device).unsqueeze(0)
+        if padding_side == "right":
+            # For right padding, valid tokens are from 0 to sequence_length-1
+            mask = (
+                token_indices < sequence_lengths[:, None]
+            )  # [batch_size, seq_len]
+        elif padding_side == "left":
+            # For left padding, valid tokens are from (T - sequence_length) to T-1
+            start_indices = (
+                seq_len - sequence_lengths[:, None]
+            )  # [batch_size, 1]
+            mask = token_indices >= start_indices  # [B, T]
+        else:
+            raise ValueError(
+                f"padding_side must be 'left' or 'right', got {padding_side}"
+            )
+        mask = mask[
+            :, :, None, None
+        ]  # [batch_size, seq_len] --> [batch_size, seq_len, 1, 1]
 
-        # Compute masked mean over non-padding positions
-        masked_text_hidden_states = F.where(
-            mask.cast(DType.bool),
-            text_hidden_states,
-            F.constant(0.0, dtype=text_hidden_states.dtype),
-        )
+        # Compute masked mean over non-padding positions of shape (batch_size, 1, 1, seq_len)
+        masked_text_hidden_states = text_hidden_states.masked_fill(~mask, 0.0)
         num_valid_positions = (sequence_lengths * hidden_dim).reshape(
             batch_size, 1, 1, 1
         )
-
-        # masked_mean = masked_text_hidden_states.sum(dim=(1, 2), keepdim=True) / (num_valid_positions + eps)
-        # MAX doesn't support sum(dim=(1,2)), we do it sequentially
-        masked_sum = (
-            masked_text_hidden_states.sum(axis=1)
-            .sum(axis=1)
-            .unsqueeze(1)
-            .unsqueeze(2)
-        )
-        masked_mean = masked_sum / (
-            num_valid_positions.cast(text_hidden_states.dtype) + eps
+        masked_mean = masked_text_hidden_states.sum(axis=(1, 2)) / (
+            num_valid_positions + eps
         )
 
-        # Compute min/max over non-padding positions
-        inf_val = F.constant(float("inf"), dtype=text_hidden_states.dtype)
-        neg_inf_val = F.constant(float("-inf"), dtype=text_hidden_states.dtype)
-
-        x_min = (
-            F.where(mask.cast(DType.bool), text_hidden_states, inf_val)
-            .min(axis=1)
-            .min(axis=1)
-            .unsqueeze(1)
-            .unsqueeze(2)
+        # Compute min/max over non-padding positions of shape (batch_size, 1, 1 seq_len)
+        x_min = text_hidden_states.masked_fill(~mask, float("inf")).amin(
+            axis=(1, 2)
         )
-        x_max = (
-            F.where(mask.cast(DType.bool), text_hidden_states, neg_inf_val)
-            .max(axis=1)
-            .max(axis=1)
-            .unsqueeze(1)
-            .unsqueeze(2)
+        x_max = text_hidden_states.masked_fill(~mask, float("-inf")).amax(
+            axis=(1, 2)
         )
 
         # Normalization
@@ -244,25 +257,22 @@ class LTX2Pipeline(DiffusionPipeline):
         normalized_hidden_states = normalized_hidden_states * scale_factor
 
         # Pack the hidden states to a 3D tensor (batch_size, seq_len, hidden_dim * num_layers)
-        normalized_hidden_states = normalized_hidden_states.reshape(
-            batch_size, seq_len, -1
+        normalized_hidden_states = normalized_hidden_states.flatten(2)
+        mask_flat = mask.squeeze(-1).expand(-1, -1, hidden_dim * num_layers)
+        normalized_hidden_states = normalized_hidden_states.masked_fill(
+            ~mask_flat, 0.0
         )
-
-        # Mask out padding in the final result
-        mask_flat = attention_mask.unsqueeze(-1)
-        normalized_hidden_states = F.where(
-            mask_flat.cast(DType.bool),
-            normalized_hidden_states,
-            F.constant(0.0, dtype=normalized_hidden_states.dtype),
-        )
-
+        normalized_hidden_states = normalized_hidden_states.cast(original_dtype)
         return normalized_hidden_states
 
     @staticmethod
     def _pack_latents(
         latents: Tensor, patch_size: int = 1, patch_size_t: int = 1
     ) -> Tensor:
-        """Pack latents from [B, C, F, H, W] to [B, S, D] token sequence."""
+        # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
+        # The patch dimensions are then permuted and collapsed into the channel dimension of shape:
+        # [B, F // p_t * H // p * W // p, C * p_t * p * p] (an ndim=3 tensor).
+        # dim=0 is the batch size, dim=1 is the effective video sequence length, dim=2 is the effective number of input features
         batch_size, _num_channels, num_frames, height, width = latents.shape
         post_patch_num_frames = num_frames // patch_size_t
         post_patch_height = height // patch_size
@@ -277,8 +287,8 @@ class LTX2Pipeline(DiffusionPipeline):
             post_patch_width,
             patch_size,
         )
-        latents = (
-            latents.permute(0, 2, 4, 6, 1, 3, 5, 7).flatten(4, 7).flatten(1, 3)
+        latents = F.flatten(
+            F.flatten(latents.permute(0, 2, 4, 6, 1, 3, 5, 7), 4, 7), 1, 3
         )
         return latents
 
@@ -291,7 +301,9 @@ class LTX2Pipeline(DiffusionPipeline):
         patch_size: int = 1,
         patch_size_t: int = 1,
     ) -> Tensor:
-        """Unpack latents from [B, S, D] to [B, C, F, H, W]."""
+        # Packed latents of shape [B, S, D] (S is the effective video sequence length, D is the effective feature dimensions)
+        # are unpacked and reshaped into a video tensor of shape [B, C, F, H, W]. This is the inverse operation of
+        # what happens in the `_pack_latents` method.
         batch_size = latents.shape[0]
         latents = latents.reshape(
             batch_size,
@@ -303,28 +315,77 @@ class LTX2Pipeline(DiffusionPipeline):
             patch_size,
             patch_size,
         )
-        latents = (
-            latents.permute(0, 4, 1, 5, 2, 6, 3, 7)
-            .flatten(6, 7)
-            .flatten(4, 5)
-            .flatten(2, 3)
+        latents = F.flatten(
+            F.flatten(
+                F.flatten(latents.permute(0, 4, 1, 5, 2, 6, 3, 7), 6, 7), 4, 5
+            ),
+            2,
+            3,
         )
         return latents
 
     @staticmethod
-    def _pack_audio_latents(latents: Tensor) -> Tensor:
-        """Pack audio latents from [B, C, L, M] to [B, L, C*M]."""
-        # Transpose [B, C, L, M] -> [B, L, C, M] then flatten to [B, L, C*M]
-        latents = latents.transpose(1, 2).flatten(2, 3)
+    def _pack_audio_latents(
+        latents: Tensor,
+        patch_size: int | None = None,
+        patch_size_t: int | None = None,
+    ) -> Tensor:
+        # Audio latents shape: [B, C, L, M], where L is the latent audio length and M is the number of mel bins
+        if patch_size is not None and patch_size_t is not None:
+            # Packs the latents into a patch sequence of shape [B, L // p_t * M // p, C * p_t * p] (a ndim=3 tnesor).
+            # dim=1 is the effective audio sequence length and dim=2 is the effective audio input feature size.
+            batch_size, _num_channels, latent_length, latent_mel_bins = (
+                latents.shape
+            )
+            post_patch_latent_length = latent_length / patch_size_t
+            post_patch_mel_bins = latent_mel_bins / patch_size
+            latents = latents.reshape(
+                batch_size,
+                -1,
+                post_patch_latent_length,
+                patch_size_t,
+                post_patch_mel_bins,
+                patch_size,
+            )
+            latents = F.flatten(
+                F.flatten(latents.permute(0, 2, 4, 1, 3, 5), 3, 5), 1, 2
+            )
+        else:
+            # Packs the latents into a patch sequence of shape [B, L, C * M]. This implicitly assumes a (mel)
+            # patch_size of M (all mel bins constitutes a single patch) and a patch_size_t of 1.
+            latents = F.flatten(
+                latents.transpose(1, 2), 2, 3
+            )  # [B, C, L, M] --> [B, L, C * M]
         return latents
 
     @staticmethod
     def _unpack_audio_latents(
-        latents: Tensor, latent_length: int, num_mel_bins: int
+        latents: Tensor,
+        latent_length: int,
+        num_mel_bins: int,
+        patch_size: int | None = None,
+        patch_size_t: int | None = None,
     ) -> Tensor:
-        """Unpack audio latents from [B, L, C*M] to [B, C, L, M]."""
-        # Unflatten [B, L, C*M] -> [B, L, C, M] then transpose to [B, C, L, M]
-        latents = latents.unflatten(2, (-1, num_mel_bins)).transpose(1, 2)
+        # Unpacks an audio patch sequence of shape [B, S, D] into a latent spectrogram tensor of shape [B, C, L, M],
+        # where L is the latent audio length and M is the number of mel bins.
+        if patch_size is not None and patch_size_t is not None:
+            batch_size = latents.shape[0]
+            latents = latents.reshape(
+                batch_size,
+                latent_length,
+                num_mel_bins,
+                -1,
+                patch_size_t,
+                patch_size,
+            )
+            latents = F.flatten(
+                F.flatten(latents.permute(0, 3, 1, 4, 2, 5), 4, 5), 2, 3
+            )
+        else:
+            # Assume [B, S, D] = [B, L, C * M], which implies that patch_size = M and patch_size_t = 1.
+            latents = latents.reshape(
+                latents.shape[0], latents.shape[1], -1, num_mel_bins
+            ).transpose(1, 2)
         return latents
 
     def _denormalize_latents(self, latents: Tensor) -> Tensor:
