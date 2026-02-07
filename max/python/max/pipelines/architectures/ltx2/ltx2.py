@@ -114,7 +114,7 @@ class AudioVisualModelOutput:
 class LTX2AdaLayerNormSingle(
     nn.Module[
         [Tensor, dict[str, Tensor] | None, int | None, DType | None],
-        tuple[Tensor, Tensor, Tensor, Tensor, Tensor],
+        tuple[Tensor, Tensor],
     ]
 ):
     r"""
@@ -718,7 +718,7 @@ class LTX2VideoTransformerBlock(
 
 
 class LTX2AudioVideoRotaryPosEmbed(
-    Module[[Tensor, Device | None], tuple[Tensor, Tensor]]
+    nn.Module[[Tensor, Device | None], tuple[Tensor, Tensor]]
 ):
     """
     Video and audio rotary positional embeddings (RoPE) for the LTX-2.0 model.
@@ -785,9 +785,9 @@ class LTX2AudioVideoRotaryPosEmbed(
     def prepare_video_coords(
         self,
         batch_size: int,
-        num_frames: int,
-        height: int,
-        width: int,
+        num_frames: int | None,
+        height: int | None,
+        width: int | None,
         device: Device,
         fps: float = 25.0,
     ) -> Tensor:
@@ -983,6 +983,7 @@ class LTX2AudioVideoRotaryPosEmbed(
             coords = coords.squeeze(-1)  # [B, num_pos_dims, num_patches]
 
         # 2. Get coordinates as a fraction of the base data shape
+        max_positions: tuple[int, ...] = ()
         if self.modality == "video":
             max_positions = (
                 self.base_num_frames,
@@ -994,7 +995,7 @@ class LTX2AudioVideoRotaryPosEmbed(
         # [B, num_pos_dims, num_patches] --> [B, num_patches, num_pos_dims]
         grid = F.stack(
             [coords[:, i] / max_positions[i] for i in range(num_pos_dims)],
-            dim=-1,
+            axis=-1,
         ).to(device)
         # Number of spatiotemporal dimensions (3 for video, 1 for audio and cross attn) times 2 for cos, sin
         num_rope_elems = num_pos_dims * 2
@@ -1067,7 +1068,7 @@ class LTX2AudioVideoRotaryPosEmbed(
 
 
 class LTX2VideoTransformer3DModel(
-    Module[
+    nn.Module[
         [
             Tensor,
             Tensor,
@@ -1235,7 +1236,7 @@ class LTX2VideoTransformer3DModel(
             base_num_frames=audio_pos_embed_max_pos,
             sampling_rate=audio_sampling_rate,
             hop_length=audio_hop_length,
-            scale_factors=[audio_scale_factor],
+            scale_factors=(audio_scale_factor,),
             theta=rope_theta,
             causal_offset=causal_offset,
             modality="audio",
