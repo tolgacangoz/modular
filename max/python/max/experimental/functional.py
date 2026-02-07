@@ -786,27 +786,6 @@ def linspace(
 #: Applies the ReLU activation function.
 #: See :func:`max.graph.ops.relu` for details.
 relu = functional(ops.relu)
-
-
-@functional
-def leaky_relu(x: TensorValueLike, negative_slope: float = 0.01) -> TensorValue:
-    """Applies the Leaky ReLU activation function element-wise.
-
-    The Leaky ReLU function is defined as:
-        leaky_relu(x) = x if x > 0, else negative_slope * x
-
-    Args:
-        x: The input tensor.
-        negative_slope: The slope for negative values. Default: 0.01
-
-    Returns:
-        A tensor containing the leaky ReLU of the input values.
-    """
-    x = TensorValue(x)
-    zero = ops.constant(0, dtype=x.dtype)
-    return ops.where(x > zero, x, x * negative_slope)
-
-
 #: Repeats elements of a tensor.
 #: See :func:`max.graph.ops.repeat_interleave` for details.
 repeat_interleave = functional(ops.repeat_interleave)

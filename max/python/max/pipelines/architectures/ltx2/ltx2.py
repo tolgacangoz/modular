@@ -20,28 +20,26 @@ import max.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
+from max.nn.activations import FeedForward
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux1.layers.embeddings import PixArtAlphaTextProjection
+from .activations import ACT2FN
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 logger = logging.getLogger(__name__)
-
-
-# Simple BaseOutput class for structured return values
-class BaseOutput:
-    """Base class for structured model outputs."""
-
-    pass
 
 
 def apply_interleaved_rotary_emb(
     x: Tensor, freqs: tuple[Tensor, Tensor]
 ) -> Tensor:
     cos, sin = freqs
-    x_real, x_imag = x.reshape(x.shape[0], x.shape[1], -1, 2).unbind(-1)
+    x_real, x_imag = (
+        x.reshape(x.shape[0], x.shape[1], -1, 2)[..., 0],
+        x.reshape(x.shape[0], x.shape[1], -1, 2)[..., 1],
+    )
     x_rotated = F.flatten(F.stack([-x_imag, x_real], axis=-1), 2)
     out = (
         x.cast(DType.float32) * cos + x_rotated.cast(DType.float32) * sin
@@ -97,7 +95,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
 
 
 @dataclass
-class AudioVisualModelOutput(BaseOutput):
+class AudioVisualModelOutput:
     r"""
     Holds the output of an audiovisual model which produces both visual (e.g. video) and audio outputs.
 
@@ -114,7 +112,7 @@ class AudioVisualModelOutput(BaseOutput):
 
 
 class LTX2AdaLayerNormSingle(
-    Module[
+    nn.Module[
         [Tensor, dict[str, Tensor] | None, int | None, DType | None],
         tuple[Tensor, Tensor, Tensor, Tensor, Tensor],
     ]
@@ -149,7 +147,7 @@ class LTX2AdaLayerNormSingle(
             use_additional_conditions=use_additional_conditions,
         )
 
-        self.silu = nn.SiLU()
+        self.silu = ACT2FN["silu"]
         self.linear = nn.Linear(
             embedding_dim, self.num_mod_params * embedding_dim, bias=True
         )
@@ -175,7 +173,7 @@ class LTX2AdaLayerNormSingle(
         return self.linear(self.silu(embedded_timestep)), embedded_timestep
 
 
-class LTX2Attention(Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
+class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
     r"""
     Processor for implementing attention (SDPA is used by default if you're using PyTorch 2.0) for the LTX-2.0 model.
     Compared to the LTX-1.0 model, we allow the RoPE embeddings for the queries and keys to be separate so that we can
@@ -312,7 +310,7 @@ class LTX2Attention(Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
 
 
 class LTX2VideoTransformerBlock(
-    Module[
+    nn.Module[
         [
             Tensor,
             Tensor,
@@ -522,7 +520,12 @@ class LTX2VideoTransformerBlock(
             temb.device
         ) + temb.reshape(batch_size, temb.shape[1], num_ada_params, -1)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            ada_values.unbind(axis=2)
+            ada_values[:, :, 0],
+            ada_values[:, :, 1],
+            ada_values[:, :, 2],
+            ada_values[:, :, 3],
+            ada_values[:, :, 4],
+            ada_values[:, :, 5],
         )
         norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
 
@@ -548,7 +551,14 @@ class LTX2VideoTransformerBlock(
             audio_shift_mlp,
             audio_scale_mlp,
             audio_gate_mlp,
-        ) = audio_ada_values.unbind(axis=2)
+        ) = (
+            audio_ada_values[:, :, 0],
+            audio_ada_values[:, :, 1],
+            audio_ada_values[:, :, 2],
+            audio_ada_values[:, :, 3],
+            audio_ada_values[:, :, 4],
+            audio_ada_values[:, :, 5],
+        )
         norm_audio_hidden_states = (
             norm_audio_hidden_states * (1 + audio_scale_msa) + audio_shift_msa
         )
@@ -594,26 +604,27 @@ class LTX2VideoTransformerBlock(
             4:, :
         ]
 
-        video_ca_scale_shift_table = (
-            video_per_layer_ca_scale_shift[:, :, ...].cast(
-                temb_ca_scale_shift.dtype
-            )
-            + temb_ca_scale_shift.reshape(
-                batch_size, temb_ca_scale_shift.shape[1], 4, -1
-            )
-        ).unbind(axis=2)
-        video_ca_gate = (
-            video_per_layer_ca_gate[:, :, ...].cast(temb_ca_gate.dtype)
-            + temb_ca_gate.reshape(batch_size, temb_ca_gate.shape[1], 1, -1)
-        ).unbind(axis=2)
+        video_ca_scale_shift_table = video_per_layer_ca_scale_shift[
+            :, :, ...
+        ].cast(temb_ca_scale_shift.dtype) + temb_ca_scale_shift.reshape(
+            batch_size, temb_ca_scale_shift.shape[1], 4, -1
+        )
+        video_ca_gate = video_per_layer_ca_gate[:, :, ...].cast(
+            temb_ca_gate.dtype
+        ) + temb_ca_gate.reshape(batch_size, temb_ca_gate.shape[1], 1, -1)
 
         (
             video_a2v_ca_scale,
             video_a2v_ca_shift,
             video_v2a_ca_scale,
             video_v2a_ca_shift,
-        ) = video_ca_scale_shift_table
-        a2v_gate = video_ca_gate[0].squeeze(2)
+        ) = (
+            video_ca_scale_shift_table[:, :, 0],
+            video_ca_scale_shift_table[:, :, 1],
+            video_ca_scale_shift_table[:, :, 2],
+            video_ca_scale_shift_table[:, :, 3],
+        )
+        a2v_gate = video_ca_gate[:, :, 0].squeeze(2)
 
         # Audio
         audio_per_layer_ca_scale_shift = (
@@ -623,28 +634,31 @@ class LTX2VideoTransformerBlock(
             4:, :
         ]
 
-        audio_ca_scale_shift_table = (
-            audio_per_layer_ca_scale_shift[:, :, ...].cast(
-                temb_ca_audio_scale_shift.dtype
-            )
-            + temb_ca_audio_scale_shift.reshape(
-                batch_size, temb_ca_audio_scale_shift.shape[1], 4, -1
-            )
-        ).unbind(axis=2)
-        audio_ca_gate = (
-            audio_per_layer_ca_gate[:, :, ...].cast(temb_ca_audio_gate.dtype)
-            + temb_ca_audio_gate.reshape(
-                batch_size, temb_ca_audio_gate.shape[1], 1, -1
-            )
-        ).unbind(axis=2)
+        audio_ca_scale_shift_table = audio_per_layer_ca_scale_shift[
+            :, :, ...
+        ].cast(
+            temb_ca_audio_scale_shift.dtype
+        ) + temb_ca_audio_scale_shift.reshape(
+            batch_size, temb_ca_audio_scale_shift.shape[1], 4, -1
+        )
+        audio_ca_gate = audio_per_layer_ca_gate[:, :, ...].cast(
+            temb_ca_audio_gate.dtype
+        ) + temb_ca_audio_gate.reshape(
+            batch_size, temb_ca_audio_gate.shape[1], 1, -1
+        )
 
         (
             audio_a2v_ca_scale,
             audio_a2v_ca_shift,
             audio_v2a_ca_scale,
             audio_v2a_ca_shift,
-        ) = audio_ca_scale_shift_table
-        v2a_gate = audio_ca_gate[0].squeeze(2)
+        ) = (
+            audio_ca_scale_shift_table[:, :, 0],
+            audio_ca_scale_shift_table[:, :, 1],
+            audio_ca_scale_shift_table[:, :, 2],
+            audio_ca_scale_shift_table[:, :, 3],
+        )
+        v2a_gate = audio_ca_gate[:, :, 0].squeeze(2)
 
         # Audio-to-Video Cross Attention: Q: Video; K,V: Audio
         mod_norm_hidden_states = norm_hidden_states * (
@@ -793,7 +807,7 @@ class LTX2AudioVideoRotaryPosEmbed(
                 Latent height of the video latents.
             width (`int`):
                 Latent width of the video latents.
-            device (`torch.device`):
+            device (`Device`):
                 Device on which to create the video grid.
 
         Returns:
@@ -825,13 +839,13 @@ class LTX2AudioVideoRotaryPosEmbed(
             device=device,
         )
         # indexing='ij' ensures that the dimensions are kept in order as (frames, height, width)
-        grid_f_3d = grid_f.reshape(-1, 1, 1).expand(
+        grid_f_3d = grid_f.reshape(-1, 1, 1).broadcast_to(
             -1, grid_h.shape[0], grid_w.shape[0]
         )
-        grid_h_3d = grid_h.reshape(1, -1, 1).expand(
+        grid_h_3d = grid_h.reshape(1, -1, 1).broadcast_to(
             grid_f.shape[0], -1, grid_w.shape[0]
         )
-        grid_w_3d = grid_w.reshape(1, 1, -1).expand(
+        grid_w_3d = grid_w.reshape(1, 1, -1).broadcast_to(
             grid_f.shape[0], grid_h.shape[0], -1
         )
         grid = F.stack(
@@ -864,10 +878,10 @@ class LTX2AudioVideoRotaryPosEmbed(
         pixel_coords = latent_coords * scale_tensor.reshape(*broadcast_shape)
 
         # As the VAE temporal stride for the first frame is 1 instead of self.vae_scale_factors[0], we need to shift
-        # and clamp to keep the first-frame timestamps causal and non-negative.
+        # and clip to keep the first-frame timestamps causal and non-negative.
         pixel_coords[:, 0, ...] = (
             pixel_coords[:, 0, ...] + self.causal_offset - self.scale_factors[0]
-        ).clamp(min=0)
+        ).clip(min=0)
 
         # Scale the temporal coordinates by the video FPS
         pixel_coords[:, 0, ...] = pixel_coords[:, 0, ...] / fps
@@ -933,9 +947,9 @@ class LTX2AudioVideoRotaryPosEmbed(
         grid_end_s = grid_end_mel * self.hop_length / self.sampling_rate
 
         audio_coords = F.stack(
-            [grid_start_s, grid_end_s], dim=-1
+            [grid_start_s, grid_end_s], axis=-1
         )  # [num_patches, 2]
-        audio_coords = audio_coords.unsqueeze(0).expand(
+        audio_coords = audio_coords.unsqueeze(0).broadcast_to(
             batch_size, -1, -1
         )  # [batch_size, num_patches, 2]
         audio_coords = audio_coords.unsqueeze(
@@ -962,7 +976,7 @@ class LTX2AudioVideoRotaryPosEmbed(
         # 1. If the coords are patch boundaries [start, end), use the midpoint of these boundaries as the patch
         # position index
         if coords.rank == 4:
-            coords_start, coords_end = coords.chunk(2, dim=-1)
+            coords_start, coords_end = F.chunk(coords, 2, axis=-1)
             coords = (coords_start + coords_end) / 2.0
             coords = coords.squeeze(-1)  # [B, num_pos_dims, num_patches]
 

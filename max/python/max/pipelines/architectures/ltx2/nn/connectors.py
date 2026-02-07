@@ -17,13 +17,15 @@ import max.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
-from max.nn import FeedForward
+from max.nn.activations import FeedForward
 from max.tensor import Tensor
 
 from ..ltx2 import LTX2Attention
 
 
-class LTX2RotaryPosEmbed1d(Module[[int, int, Device], tuple[Tensor, Tensor]]):
+class LTX2RotaryPosEmbed1d(
+    nn.Module[[int, int, Device], tuple[Tensor, Tensor]]
+):
     """
     1D rotary positional embeddings (RoPE) for the LTX 2.0 text encoder connectors.
     """
@@ -127,7 +129,7 @@ class LTX2RotaryPosEmbed1d(Module[[int, int, Device], tuple[Tensor, Tensor]]):
 
 
 class LTX2TransformerBlock1d(
-    Module[[Tensor, Tensor | None, Tensor | None], Tensor]
+    nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]
 ):
     def __init__(
         self,
@@ -173,7 +175,7 @@ class LTX2TransformerBlock1d(
 
 
 class LTX2ConnectorTransformer1d(
-    Module[[Tensor, Tensor | None, float], tuple[Tensor, Tensor]]
+    nn.Module[[Tensor, Tensor | None, float], tuple[Tensor, Tensor]]
 ):
     """
     A 1D sequence transformer for modalities such as text.
@@ -217,7 +219,7 @@ class LTX2ConnectorTransformer1d(
             num_attention_heads=num_attention_heads,
         )
 
-        self.transformer_blocks = ModuleList(
+        self.transformer_blocks = nn.ModuleList(
             [
                 LTX2TransformerBlock1d(
                     dim=self.inner_dim,
@@ -308,7 +310,7 @@ class LTX2ConnectorTransformer1d(
 
 
 class LTX2TextConnectors(
-    Module[[Tensor, Tensor, bool], tuple[Tensor, Tensor, Tensor]]
+    nn.Module[[Tensor, Tensor, bool], tuple[Tensor, Tensor, Tensor]]
 ):
     """
     Text connector stack used by LTX 2.0 to process the packed text encoder hidden states for both the video and audio

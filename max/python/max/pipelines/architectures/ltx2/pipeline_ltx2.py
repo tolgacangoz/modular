@@ -197,7 +197,7 @@ class LTX2Pipeline(DiffusionPipeline):
             sequence_lengths (`Tensor of shape `(batch_size,)`):
                 The number of valid (non-padded) tokens for each batch instance.
             device: (`Device`, *optional*):
-                torch device to place the resulting embeddings on
+                Device to place the resulting embeddings on
             padding_side: (`str`, *optional*, defaults to `"left"`):
                 Whether the text tokenizer performs padding on the `"left"` or `"right"`.
             scale_factor (`int`, *optional*, defaults to `8`):
@@ -258,7 +258,9 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Pack the hidden states to a 3D tensor (batch_size, seq_len, hidden_dim * num_layers)
         normalized_hidden_states = normalized_hidden_states.flatten(2)
-        mask_flat = mask.squeeze(-1).expand(-1, -1, hidden_dim * num_layers)
+        mask_flat = mask.squeeze(-1).broadcast_to(
+            -1, -1, hidden_dim * num_layers
+        )
         normalized_hidden_states = normalized_hidden_states.masked_fill(
             ~mask_flat, 0.0
         )
@@ -575,7 +577,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 )
             else:
                 # Use zeros for negative prompt if not provided
-                negative_prompt_embeds = F.zeros_like(prompt_embeds)
+                negative_prompt_embeds = Tensor.zeros_like(prompt_embeds)
             # Concatenate for CFG: [negative, positive]
             prompt_embeds = F.concat(
                 [negative_prompt_embeds, prompt_embeds], axis=0
