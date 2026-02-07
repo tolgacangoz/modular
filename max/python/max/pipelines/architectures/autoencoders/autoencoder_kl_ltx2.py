@@ -86,21 +86,29 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
             permute=True,  # LTX2 uses PyTorch format internally but we refactoring to MAX
         )
 
-    def forward(self, x: Tensor, causal: bool = True) -> Tensor:
+    def forward(self, hidden_states: Tensor, causal: bool = True) -> Tensor:
         tk = self.kernel_size[0]
 
         if causal:
             # Pad left (past) for causality
             # x shape: [B, C, D, H, W]
-            pad_left = F.tile(x[:, :, :1, :, :], [1, 1, tk - 1, 1, 1])
-            x = F.concat([pad_left, x], axis=2)
+            pad_left = F.tile(
+                hidden_states[:, :, :1, :, :], [1, 1, tk - 1, 1, 1]
+            )
+            hidden_states = F.concat([pad_left, hidden_states], axis=2)
         else:
             # Pad both sides for non-causal
-            pad_left = F.tile(x[:, :, :1, :, :], [1, 1, (tk - 1) // 2, 1, 1])
-            pad_right = F.tile(x[:, :, -1:, :, :], [1, 1, (tk - 1) // 2, 1, 1])
-            x = F.concat([pad_left, x, pad_right], axis=2)
+            pad_left = F.tile(
+                hidden_states[:, :, :1, :, :], [1, 1, (tk - 1) // 2, 1, 1]
+            )
+            pad_right = F.tile(
+                hidden_states[:, :, -1:, :, :], [1, 1, (tk - 1) // 2, 1, 1]
+            )
+            hidden_states = F.concat(
+                [pad_left, hidden_states, pad_right], axis=2
+            )
 
-        return self.conv(x)
+        return self.conv(hidden_states)
 
 
 class LTX2VideoResnetBlock3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
@@ -246,8 +254,7 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
         in_channels: int,
         out_channels: int,
         stride: int | tuple[int, int, int] = 1,
-        is_causal: bool = True,
-        padding_mode: str = "zeros",
+        spatial_padding_mode: str = "zeros",
     ):
         super().__init__()
 
@@ -267,10 +274,10 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
             out_channels=out_channels,
             kernel_size=3,
             stride=1,
-            spatial_padding_mode=padding_mode,
+            spatial_padding_mode=spatial_padding_mode,
         )
 
-    def forward(self, hidden_states: Tensor) -> Tensor:
+    def forward(self, hidden_states: Tensor, causal: bool = True) -> Tensor:
         hidden_states = F.concat(
             [hidden_states[:, :, : self.stride[0] - 1], hidden_states], axis=2
         )
@@ -297,7 +304,7 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
         )
         residual = residual.mean(axis=2)
 
-        hidden_states = self.conv(hidden_states)
+        hidden_states = self.conv(hidden_states, causal=causal)
 
         N, C, D, H, W = hidden_states.shape
         hidden_states = hidden_states.reshape(
