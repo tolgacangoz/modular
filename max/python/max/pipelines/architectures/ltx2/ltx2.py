@@ -1327,7 +1327,6 @@ class LTX2VideoTransformer3DModel(
         audio_num_frames: int | None = None,
         video_coords: Tensor | None = None,
         audio_coords: Tensor | None = None,
-        attention_kwargs: dict[str, Any] | None = None,
     ) -> Tensor:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.

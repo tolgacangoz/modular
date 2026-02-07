@@ -59,11 +59,17 @@ class LTX2ModelInputs(PixelModelInputs):
     Only LTX2-specific optional fields are added here.
     """
 
-    # Optional attention kwargs forwarded to the transformer.
-    attention_kwargs: dict[str, Any] | None = None
+    width: int = 768
+    height: int = 512
+    guidance_scale: float = 4.0
+    num_inference_steps: int = 40
+    num_frames: int = 121
+    frame_rate: float = 24.0
+    num_visuals_per_prompt: int = 1
 
-    # Optional attention mask coming from PixelContext.mask (numpy boolean array).
-    mask: npt.NDArray[np.bool_] | None = None
+    @property
+    def do_true_cfg(self) -> bool:
+        return self.negative_tokens is not None
 
 
 @dataclass
@@ -729,7 +735,6 @@ class LTX2Pipeline(DiffusionPipeline):
                     audio_num_frames=audio_num_frames,
                     video_coords=video_coords,
                     audio_coords=audio_coords,
-                    attention_kwargs=model_inputs.attention_kwargs,
                 )
                 noise_pred_video = noise_pred_video.cast(DType.float32)
                 noise_pred_audio = noise_pred_audio.cast(DType.float32)
@@ -770,8 +775,8 @@ class LTX2Pipeline(DiffusionPipeline):
         video = self.vae.decode(latents.cast(DType.bfloat16))
 
         # Scale to [0, 1] and permute to [B, F, H, W, C]
-        video = (video / 2.0 + 0.5).clip(0.0, 1.0)
-        video = video.permute(0, 2, 3, 4, 1)
+        video = (video / 2.0 + 0.5).clip(min=0.0, max=1.0)
+        video = video.permute([0, 2, 3, 4, 1])
 
         # 10. Decode audio
         audio_latents = self._unpack_audio_latents(
