@@ -11,15 +11,15 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-"""Offline video generation example using LTX-2 diffusion model.
+"""Simple offline pixel generation example using diffusion models.
 
 This module demonstrates end-to-end video generation using:
-- PixelGenerationRequest: Create generation requests with prompts
+- OpenResponsesRequest: Create generation requests with prompts
 - PixelGenerationTokenizer: Tokenize prompts and prepare model context
-- LTX2Pipeline: Execute the LTX-2 diffusion model to generate video frames
+- PixelGenerationPipeline: Execute the diffusion model to generate pixels
 
 Usage:
-    python ltx2_offline_generation.py \
+    ./bazelw run //max/examples/diffusion:simple_offline_video_generation -- \
         --model Lightricks/LTX-2 \
         --prompt "A cat walking in a garden" \
         --num-frames 24 \
@@ -30,20 +30,25 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import os
 
-import numpy as np
-from max.driver import CPU, DeviceSpec, load_devices
-from max.engine import InferenceSession
+from max.driver import DeviceSpec
 from max.interfaces import (
-    PixelGenerationRequest,
+    PixelGenerationInputs,
     RequestID,
 )
-from max.pipelines import PipelineConfig, SupportedEncoding
-from max.pipelines.architectures.ltx2.pipeline_ltx2 import LTX2Pipeline
+from max.interfaces.provider_options import (
+    ProviderOptions,
+)
+from max.interfaces.request import OpenResponsesRequest
+from max.interfaces.request.open_responses import OpenResponsesRequestBody
+from max.pipelines import PipelineConfig
+from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
-from max.pipelines.lib.pipeline_variants.utils import get_weight_paths
-from max.tensor import Tensor
+from max.pipelines.lib.pipeline_variants.pixel_generation import (
+    PixelGenerationPipeline,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -147,194 +152,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-# Copyright 2025 The Lightricks team and The HuggingFace Team.
-# All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from fractions import Fraction
-
-import av
-
-
-def _prepare_audio_stream(
-    container: av.container.Container, audio_sample_rate: int
-) -> av.audio.AudioStream:
-    """
-    Prepare the audio stream for writing.
-    """
-    audio_stream = container.add_stream("aac", rate=audio_sample_rate)
-    audio_stream.codec_context.sample_rate = audio_sample_rate
-    audio_stream.codec_context.layout = "stereo"
-    audio_stream.codec_context.time_base = Fraction(1, audio_sample_rate)
-    return audio_stream
-
-
-def _resample_audio(
-    container: av.container.Container,
-    audio_stream: av.audio.AudioStream,
-    frame_in: av.AudioFrame,
-) -> None:
-    cc = audio_stream.codec_context
-
-    # Use the encoder's format/layout/rate as the *target*
-    target_format = cc.format or "fltp"  # AAC → usually fltp
-    target_layout = cc.layout or "stereo"
-    target_rate = cc.sample_rate or frame_in.sample_rate
-
-    audio_resampler = av.audio.resampler.AudioResampler(
-        format=target_format,
-        layout=target_layout,
-        rate=target_rate,
-    )
-
-    audio_next_pts = 0
-    for rframe in audio_resampler.resample(frame_in):
-        if rframe.pts is None:
-            rframe.pts = audio_next_pts
-        audio_next_pts += rframe.samples
-        rframe.sample_rate = frame_in.sample_rate
-        container.mux(audio_stream.encode(rframe))
-
-    # flush audio encoder
-    for packet in audio_stream.encode():
-        container.mux(packet)
-
-
-def _write_audio(
-    container: av.container.Container,
-    audio_stream: av.audio.AudioStream,
-    samples: Tensor,
-    audio_sample_rate: int,
-) -> None:
-    if samples.rank == 1:
-        samples = samples[:, None]
-
-    if samples.shape[1] != 2 and samples.shape[0] == 2:
-        samples = samples.T
-
-    if samples.shape[1] != 2:
-        raise ValueError(
-            f"Expected samples with 2 channels; got shape {samples.shape}."
-        )
-
-    # Convert to int16 packed for ingestion; resampler converts to encoder fmt.
-    if samples.dtype != DType.int16:
-        samples = Tensor.clip(samples, -1.0, 1.0)
-        samples = (samples * 32767.0).cast(DType.int16)
-
-    frame_in = av.AudioFrame.from_ndarray(
-        np.from_dlpack(samples.reshape(1, -1).to(CPU())),
-        format="s16",
-        layout="stereo",
-    )
-    frame_in.sample_rate = audio_sample_rate
-
-    _resample_audio(container, audio_stream, frame_in)
-
-
-def video_postprocess(
-    video: Tensor,
-    fps: int,
-    audio: Tensor | None = None,
-    audio_sample_rate: int | None = None,
-    output_path: str = "./output.mp4",
-) -> None:
-    video_np = np.from_dlpack(video.to(CPU()).cast(DType.float32))
-    # Scale from [0, 1] to [0, 255] uint8
-    video_np = (video_np * 255.0).round().astype(np.uint8)
-
-    # Take first sample from batch
-    if video_np.ndim == 5:
-        video_np = video_np[0]
-
-    height, width = video_np.shape[1], video_np.shape[2]
-
-    container = av.open(output_path, mode="w")
-    stream = container.add_stream("libx264", rate=int(fps))
-    stream.width = width
-    stream.height = height
-    stream.pix_fmt = "yuv420p"
-
-    if audio is not None:
-        if audio_sample_rate is None:
-            raise ValueError(
-                "audio_sample_rate is required when audio is provided"
-            )
-
-        audio_stream = _prepare_audio_stream(container, audio_sample_rate)
-
-    for frame_array in video_np:
-        frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
-        for packet in stream.encode(frame):
-            container.mux(packet)
-
-    # Flush encoder
-    for packet in stream.encode():
-        container.mux(packet)
-
-    if audio is not None:
-        _write_audio(container, audio_stream, audio, audio_sample_rate)
-
-    container.close()
-
-
-def save_video(
-    pixel_data: np.ndarray, output_path: str, frame_rate: int = 24
-) -> None:
-    """Save generated pixel data as a video file.
+def save_video(video_data: str, output_path: str) -> None:
+    """Save base64-encoded video data to a file.
 
     Args:
-        pixel_data: Numpy array of shape (F, H, W, C) with values in [0, 1]
+        video_data: Base64-encoded video data string
         output_path: Path where the video should be saved
-        frame_rate: Frame rate for the output video
     """
     try:
-        import imageio
-
-        # Convert from float [0, 1] to uint8 [0, 255]
-        pixel_data = (pixel_data * 255).clip(0, 255).astype(np.uint8)
-
-        # Save as video
-        imageio.mimwrite(output_path, pixel_data, fps=frame_rate)
+        video_bytes = base64.b64decode(video_data)
+        with open(output_path, "wb") as f:
+            f.write(video_bytes)
         print(f"Video saved to: {output_path}")
-    except ImportError:
-        print("WARNING: imageio not available, saving as numpy array instead")
-        np.save(output_path.replace(".mp4", ".npy"), pixel_data)
-        print(f"Pixel data saved to: {output_path.replace('.mp4', '.npy')}")
-
-
-def save_image(pixel_data: np.ndarray, output_path: str) -> None:
-    """Save generated pixel data as an image file.
-
-    Args:
-        pixel_data: Numpy array of shape (H, W, C) with values in [0, 1]
-        output_path: Path where the image should be saved
-    """
-    try:
-        from PIL import Image
-
-        # Convert from float [0, 1] to uint8 [0, 255]
-        pixel_data = (pixel_data * 255).clip(0, 255).astype(np.uint8)
-
-        # Create and save image
-        image = Image.fromarray(pixel_data)
-        image.save(output_path)
-        print(f"Image saved to: {output_path}")
-    except ImportError:
-        print("WARNING: PIL not available, saving as numpy array instead")
-        np.save(output_path.replace(".png", ".npy"), pixel_data)
-        print(f"Pixel data saved to: {output_path.replace('.png', '.npy')}")
+    except Exception as e:
+        print(f"WARNING: Cannot save video: {e}")
+        print(f"Base64 data length: {len(video_data)} chars")
 
 
 async def generate_video(args: argparse.Namespace) -> None:
@@ -350,49 +182,42 @@ async def generate_video(args: argparse.Namespace) -> None:
         model_path=args.model,
         device_specs=[DeviceSpec.accelerator()],
         use_legacy_module=False,
-        quantization_encoding=args.encoding,
     )
 
     # Step 2: Initialize the tokenizer
     # The tokenizer handles prompt encoding and context preparation
-    # LTX-2 uses Gemma3 text encoder, so we use the text_encoder subfolder
     tokenizer = PixelGenerationTokenizer(
         model_path=args.model,
         pipeline_config=config,
-        subfolder="tokenizer",  # Gemma3 tokenizer subfolder
-        max_length=256,  # Gemma3 max length
+        subfolder="tokenizer",  # Tokenizer is in a subfolder for diffusion models
+        max_length=1024,
     )
 
-    # Step 3: Initialize devices, session, weights, and the LTX2 pipeline
-    devices = load_devices(config.model.device_specs)
-    session = InferenceSession(devices=devices)
-    config.configure_session(session)
-    weight_paths = get_weight_paths(config.model)
-
-    pipeline = LTX2Pipeline(
+    # Step 3: Initialize the pipeline
+    # The pipeline executes the diffusion model
+    pipeline = PixelGenerationPipeline[PixelContext](
         pipeline_config=config,
-        session=session,
-        devices=devices,
-        weight_paths=weight_paths,
+        pipeline_model=LTX2Pipeline,
     )
 
     print(f"Generating video for prompt: '{args.prompt}'")
-    print(f"Video settings: {args.num_frames} frames at {args.frame_rate} fps")
 
-    # Step 4: Create a PixelGenerationRequest
-    request = PixelGenerationRequest(
-        request_id=RequestID(),
-        model_name=args.model,
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt,
-        height=args.height,
-        width=args.width,
-        num_inference_steps=args.num_inference_steps,
-        guidance_scale=args.guidance_scale,
+    # Step 4: Create a OpenResponsesRequest
+    body = OpenResponsesRequestBody(
+        model=args.model,
+        input=args.prompt,
         seed=args.seed,
-        num_frames=args.num_frames,
-        frame_rate=args.frame_rate,
+        provider_options=ProviderOptions(
+            video=VideoProviderOptions(
+                negative_prompt=args.negative_prompt,
+                height=args.height,
+                width=args.width,
+                steps=args.num_inference_steps,
+                guidance_scale=args.guidance_scale,
+            )
+        ),
     )
+    request = OpenResponsesRequest(request_id=RequestID(), body=body)
 
     print(
         f"Parameters: steps={args.num_inference_steps}, guidance={args.guidance_scale}"
@@ -407,26 +232,49 @@ async def generate_video(args: argparse.Namespace) -> None:
         f"Context created: {context.height}x{context.width}, {context.num_inference_steps} steps"
     )
 
-    # Step 6: Prepare inputs and execute the LTX2 pipeline directly
+    # Step 6: Prepare inputs for the pipeline
+    # Create a batch with a single context
+    inputs = PixelGenerationInputs[PixelContext](
+        batch={context.request_id: context}
+    )
+
+    # Step 7: Execute the pipeline
     print("Running diffusion model...")
-    model_inputs = pipeline.prepare_inputs(context)
-    pipeline_output = pipeline.execute(model_inputs)
+    outputs = pipeline.execute(inputs)
+
+    # Step 8: Get the output for our request
+    output = outputs[context.request_id]
+
+    # Check if generation completed successfully
+    if not output.is_done:
+        print(f"WARNING: Generation status: {output.final_status}")
+        return
 
     print("Generation complete!")
 
-    # Step 7: Post-process the pixel and audio data
-    # LTX2Pipeline now returns a Flux-style LTX2PipelineOutput with Max tensors for video and audio
-    video_tensor = pipeline_output.video
-    audio_tensor = pipeline_output.audio
+    # Step 9: Extract and save videos from OutputVideoContent
+    # The output now contains a list of OutputVideoContent objects with base64-encoded videos
+    if not output.output:
+        print("ERROR: No videos generated")
+        return
 
-    # LTX2 usage: 24kHz audio sample rate
-    video_postprocess(
-        video_tensor,
-        fps=args.frame_rate,
-        audio=audio_tensor,
-        audio_sample_rate=24000,
-        output_path=args.output,
-    )
+    # Save each generated video
+    for idx, video_content in enumerate(output.output):
+        # Determine output filename
+        if len(output.output) > 1:
+            # Multiple videos: add index to filename
+            base_name, ext = os.path.splitext(args.output)
+            output_path = f"{base_name}_{idx}{ext}"
+        else:
+            output_path = args.output
+
+        # Save the video
+        if video_content.video_data:
+            save_video(video_content.video_data, output_path)
+        elif video_content.video_url:
+            print(f"Video available at URL: {video_content.video_url}")
+        else:
+            print("ERROR: No video data or URL in output")
 
 
 def main(argv: list[str] | None = None) -> int:

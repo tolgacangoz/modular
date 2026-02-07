@@ -25,15 +25,12 @@ from typing import Any
 from max.interfaces import (
     PixelGenerationInputs,
     PixelGenerationOutput,
-    PixelGenerationRequest,
     RequestID,
 )
+from max.interfaces.request import OpenResponsesRequest
 from max.pipelines import PixelContext, PixelGenerationPipeline
 from max.pipelines.lib import PIPELINE_REGISTRY, PipelineConfig
 from max.pipelines.lib.tokenizer import PixelGenerationTokenizer
-
-# from max.serve.config import Settings
-# from max.serve.scheduler.queues import SchedulerZmqConfigs
 
 
 def normalize_sequence(value: Any, length: int) -> Sequence[Any]:
@@ -261,7 +258,7 @@ async def _async_worker(
             strict=False,
         ):
             request_id = RequestID()
-            request = PixelGenerationRequest(
+            request = OpenResponsesRequest(
                 request_id=request_id,
                 model_name=request.model_name,
                 prompt=prompt,
