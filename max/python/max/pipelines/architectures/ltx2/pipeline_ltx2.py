@@ -179,7 +179,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 output_hidden_states=True,
             )
             # Stack all hidden states: [batch_size, seq_len, hidden_dim, num_layers]
-            hidden_states = torch.stack(outputs.hidden_states, dim=-1)
+            hidden_states = torch.stack(outputs.hidden_states, axis=-1)
 
         # Convert to MAX Tensor
         return Tensor.from_dlpack(hidden_states.to(torch.bfloat16))
