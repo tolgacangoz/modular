@@ -174,7 +174,9 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = self.conv_in(hidden_states)
 
         for i in range(self.num_upsample_layers):
-            hidden_states = F.max(0, hidden_states) + self.negative_slope * F.min(0, hidden_states)
+            hidden_states = F.max(
+                0, hidden_states
+            ) + self.negative_slope * F.min(0, hidden_states)
             hidden_states = self.upsamplers[i](hidden_states)
 
             # Run all resnets in parallel on hidden_states
