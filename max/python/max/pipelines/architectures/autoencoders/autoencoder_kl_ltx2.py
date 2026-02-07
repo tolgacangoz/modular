@@ -240,6 +240,58 @@ class LTX2VideoResnetBlock3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         return hidden_states
 
 
+
+class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int | tuple[int, int, int] = 1,
+        is_causal: bool = True,
+        padding_mode: str = "zeros",
+    ):
+        super().__init__()
+
+        self.stride = stride if isinstance(stride, tuple) else (stride, stride, stride)
+        self.group_size = (in_channels * stride[0] * stride[1] * stride[2]) // out_channels
+
+        out_channels = out_channels // (self.stride[0] * self.stride[1] * self.stride[2])
+
+        self.conv = LTX2VideoCausalConv3d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            stride=1,
+            spatial_padding_mode=padding_mode,
+        )
+
+
+    def forward(self, hidden_states: Tensor) -> Tensor:
+        hidden_states = F.concat([hidden_states[:, :, : self.stride[0] - 1], hidden_states], axis=2)
+
+        N, C, D, H, W = hidden_states.shape
+        s0, s1, s2 = self.stride
+
+        residual = hidden_states.reshape((N, C, D // s0, s0, H // s1, s1, W // s2, s2))
+        residual = residual.permute((0, 1, 3, 5, 7, 2, 4, 6))
+        residual = F.flatten(residual, 1, 4)
+
+        r_shape = residual.shape
+        residual = residual.reshape((r_shape[0], -1, self.group_size, r_shape[2], r_shape[3], r_shape[4]))
+        residual = residual.mean(axis=2)
+
+        hidden_states = self.conv(hidden_states)
+
+        N, C, D, H, W = hidden_states.shape
+        hidden_states = hidden_states.reshape((N, C, D // s0, s0, H // s1, s1, W // s2, s2))
+        hidden_states = hidden_states.permute((0, 1, 3, 5, 7, 2, 4, 6))
+        hidden_states = F.flatten(hidden_states, 1, 4)
+
+        hidden_states = hidden_states + residual
+
+        return hidden_states
+
+
 class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
     def __init__(
         self,
@@ -479,6 +531,126 @@ class LTX2VideoMidBlock3d(
         return hidden_states
 
 
+
+class LTX2VideoUpBlock3d(nn.Module[[Tensor, Tensor | None, int | None, bool], Tensor]):
+    r"""
+    Up block used in the LTXVideo model.
+
+    Args:
+        in_channels (`int`):
+            Number of input channels.
+        out_channels (`int`, *optional*):
+            Number of output channels. If None, defaults to `in_channels`.
+        num_layers (`int`, defaults to `1`):
+            Number of resnet layers.
+        dropout (`float`, defaults to `0.0`):
+            Dropout rate.
+        resnet_eps (`float`, defaults to `1e-6`):
+            Epsilon value for normalization layers.
+        resnet_act_fn (`str`, defaults to `"swish"`):
+            Activation function to use.
+        spatio_temporal_scale (`bool`, defaults to `True`):
+            Whether or not to use a downsampling layer. If not used, output dimension would be same as input dimension.
+            Whether or not to downsample across temporal dimension.
+        is_causal (`bool`, defaults to `True`):
+            Whether this layer behaves causally (future frames depend only on past frames) or not.
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int | None = None,
+        num_layers: int = 1,
+        dropout: float = 0.0,
+        resnet_eps: float = 1e-6,
+        resnet_act_fn: str = "swish",
+        spatio_temporal_scale: bool = True,
+        inject_noise: bool = False,
+        timestep_conditioning: bool = False,
+        upsample_residual: bool = False,
+        upscale_factor: int = 1,
+        spatial_padding_mode: str = "zeros",
+    ):
+        super().__init__()
+
+        out_channels = out_channels or in_channels
+
+        self.time_embedder = None
+        if timestep_conditioning:
+            self.time_embedder = PixArtAlphaCombinedTimestepSizeEmbeddings(in_channels * 4, 0)
+
+        self.conv_in = None
+        if in_channels != out_channels:
+            self.conv_in = LTX2VideoResnetBlock3d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                dropout=dropout,
+                eps=resnet_eps,
+                non_linearity=resnet_act_fn,
+                inject_noise=inject_noise,
+                timestep_conditioning=timestep_conditioning,
+                spatial_padding_mode=spatial_padding_mode,
+            )
+
+        self.upsamplers = None
+        if spatio_temporal_scale:
+            self.upsamplers = nn.ModuleList(
+                [
+                    LTXVideoUpsampler3d(
+                        out_channels * upscale_factor,
+                        stride=(2, 2, 2),
+                        residual=upsample_residual,
+                        upscale_factor=upscale_factor,
+                        spatial_padding_mode=spatial_padding_mode,
+                    )
+                ]
+            )
+
+        resnets = []
+        for _ in range(num_layers):
+            resnets.append(
+                LTX2VideoResnetBlock3d(
+                    in_channels=out_channels,
+                    out_channels=out_channels,
+                    dropout=dropout,
+                    eps=resnet_eps,
+                    non_linearity=resnet_act_fn,
+                    inject_noise=inject_noise,
+                    timestep_conditioning=timestep_conditioning,
+                    spatial_padding_mode=spatial_padding_mode,
+                )
+            )
+        self.resnets = nn.ModuleList(resnets)
+
+    def forward(
+        self,
+        hidden_states: Tensor,
+        temb: Tensor | None = None,
+        seed: int | None = None,
+        causal: bool = True,
+    ) -> Tensor:
+        if self.conv_in is not None:
+            hidden_states = self.conv_in(hidden_states, temb, seed, causal=causal)
+
+        if self.time_embedder is not None:
+            temb = self.time_embedder(
+                timestep=F.flatten(temb),
+                resolution=None,
+                aspect_ratio=None,
+                batch_size=hidden_states.shape[0],
+                hidden_dtype=hidden_states.dtype,
+            )
+            temb = temb.reshape((hidden_states.shape[0], -1, 1, 1, 1))
+
+        if self.upsamplers is not None:
+            for upsampler in self.upsamplers:
+                hidden_states = upsampler(hidden_states, causal=causal)
+
+        for resnet in self.resnets:
+            hidden_states = resnet(hidden_states, temb, seed, causal=causal)
+
+        return hidden_states
+
+
 class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
     def __init__(
         self,
@@ -494,7 +666,7 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         inject_noise: tuple[bool, ...] = (False, False, False),
         timestep_conditioning: bool = False,
         upsample_residual: tuple[bool, ...] = (True, True, True),
-        upsample_factor: tuple[bool, ...] = (2, 2, 2),
+        upsample_factor: tuple[int, ...] = (2, 2, 2),
         spatial_padding_mode: str = "reflect",
     ) -> None:
         super().__init__()
