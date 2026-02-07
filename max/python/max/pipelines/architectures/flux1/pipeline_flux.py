@@ -43,7 +43,7 @@ class FluxModelInputs(PixelModelInputs):
     - true_cfg_scale: 1.0
     - num_inference_steps: 50
     - guidance_scale: 3.5
-    - num_images_per_prompt: 1
+    - num_visuals_per_prompt: 1
 
     """
 
@@ -52,7 +52,7 @@ class FluxModelInputs(PixelModelInputs):
     true_cfg_scale: float = 1.0
     guidance_scale: float = 3.5
     num_inference_steps: int = 50
-    num_images_per_prompt: int = 1
+    num_visuals_per_prompt: int = 1
 
     @property
     def do_true_cfg(self) -> bool:
@@ -148,7 +148,7 @@ class FluxPipeline(DiffusionPipeline):
         self,
         tokens: TokenBuffer,
         tokens_2: TokenBuffer | None = None,
-        num_images_per_prompt: int = 1,
+        num_visuals_per_prompt: int = 1,
     ) -> tuple[Tensor, Tensor, Tensor]:
         tokens_2 = tokens_2 or tokens
 
@@ -183,16 +183,16 @@ class FluxPipeline(DiffusionPipeline):
         bs_embed = int(prompt_embeds.shape[0])
         seq_len = prompt_embeds.shape[1]
 
-        prompt_embeds = F.tile(prompt_embeds, (1, num_images_per_prompt, 1))
+        prompt_embeds = F.tile(prompt_embeds, (1, num_visuals_per_prompt, 1))
         prompt_embeds = prompt_embeds.reshape(
-            (bs_embed * num_images_per_prompt, seq_len, -1)
+            (bs_embed * num_visuals_per_prompt, seq_len, -1)
         )
 
         pooled_prompt_embeds = F.tile(
-            pooled_prompt_embeds, (1, num_images_per_prompt)
+            pooled_prompt_embeds, (1, num_visuals_per_prompt)
         )
         pooled_prompt_embeds = pooled_prompt_embeds.reshape(
-            (bs_embed * num_images_per_prompt, -1)
+            (bs_embed * num_visuals_per_prompt, -1)
         )
         dtype = prompt_embeds.dtype
         device = prompt_embeds.device
@@ -253,7 +253,7 @@ class FluxPipeline(DiffusionPipeline):
             self._prepare_prompt_embeddings(
                 tokens=model_inputs.tokens,
                 tokens_2=model_inputs.tokens_2,
-                num_images_per_prompt=model_inputs.num_images_per_prompt,
+                num_visuals_per_prompt=model_inputs.num_visuals_per_prompt,
             )
         )
 
@@ -269,7 +269,7 @@ class FluxPipeline(DiffusionPipeline):
             ) = self._prepare_prompt_embeddings(
                 tokens=model_inputs.negative_tokens,
                 tokens_2=model_inputs.negative_tokens_2,
-                num_images_per_prompt=model_inputs.num_images_per_prompt,
+                num_visuals_per_prompt=model_inputs.num_visuals_per_prompt,
             )
 
         # 2. Denoise
