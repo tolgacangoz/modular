@@ -301,22 +301,21 @@ class LTX2Pipeline(DiffusionPipeline):
         latents = latents.rebind(
             (
                 batch_size,
-                num_frames,
+                post_patch_num_frames,
+                post_patch_height,
+                post_patch_width,
                 _num_channels,
                 patch_size_t,
-                height,
                 patch_size,
-                width,
                 patch_size,
             )
         )
-        latents = latents.reshape(
-            (
-                batch_size,
-                post_patch_num_frames * post_patch_height * post_patch_width,
-                _num_channels * patch_size_t * patch_size * patch_size,
-            )
-        )
+        # Flatten (F_post, H_post, W_post) -> S
+        # Indices: 0(B), 1(F), 2(H), 3(W), 4(C), 5(pt), 6(p), 7(p)
+        latents = latents.flatten(1, 3)
+        # Flatten (C, pt, p, p) -> D
+        # Indices after first flatten: 0(B), 1(S), 2(C), 3(pt), 4(p), 5(p)
+        latents = latents.flatten(2, 5)
         return latents
 
     @staticmethod
@@ -332,12 +331,16 @@ class LTX2Pipeline(DiffusionPipeline):
         # are unpacked and reshaped into a video tensor of shape [B, C, F, H, W]. This is the inverse operation of
         # what happens in the `_pack_latents` method.
         batch_size = latents.shape[0]
+        post_patch_num_frames = num_frames // patch_size_t
+        post_patch_height = height // patch_size
+        post_patch_width = width // patch_size
+
         latents = latents.reshape(
             (
                 batch_size,
-                num_frames,
-                height,
-                width,
+                post_patch_num_frames,
+                post_patch_height,
+                post_patch_width,
                 -1,
                 patch_size_t,
                 patch_size,
@@ -350,23 +353,23 @@ class LTX2Pipeline(DiffusionPipeline):
             (
                 batch_size,
                 _num_channels,
-                num_frames,
+                post_patch_num_frames,
                 patch_size_t,
-                height,
+                post_patch_height,
                 patch_size,
-                width,
+                post_patch_width,
                 patch_size,
             )
         )
-        latents = latents.reshape(
-            (
-                batch_size,
-                _num_channels,
-                num_frames * patch_size_t,
-                height * patch_size,
-                width * patch_size,
-            )
-        )
+        # Flatten (F_post, pt) -> F
+        # Indices: 0(B), 1(C), 2(F), 3(pt), 4(H), 5(p), 6(W), 7(p)
+        latents = latents.flatten(2, 3)
+        # Flatten (H_post, p) -> H
+        # Indices: 0(B), 1(C), 2(F), 3(H), 4(p), 5(W), 6(p)
+        latents = latents.flatten(3, 4)
+        # Flatten (W_post, p) -> W
+        # Indices: 0(B), 1(C), 2(F), 3(H), 4(W), 5(p)
+        latents = latents.flatten(4, 5)
         return latents
 
     @staticmethod
@@ -405,13 +408,12 @@ class LTX2Pipeline(DiffusionPipeline):
                     patch_size,
                 )
             )
-            latents = latents.reshape(
-                (
-                    batch_size,
-                    post_patch_latent_length * post_patch_mel_bins,
-                    _num_channels * patch_size_t * patch_size,
-                )
-            )
+            # Flatten (L_post, M_post) -> S
+            # Indices: 0(B), 1(L), 2(M), 3(C), 4(pt), 5(p)
+            latents = latents.flatten(1, 2)
+            # Flatten (C, pt, p) -> D
+            # Indices: 0(B), 1(S), 2(C), 3(pt), 4(p)
+            latents = latents.flatten(2, 4)
         else:
             # Packs the latents into a patch sequence of shape [B, L, C * M]. This implicitly assumes a (mel)
             # patch_size of M (all mel bins constitutes a single patch) and a patch_size_t of 1.
@@ -432,11 +434,13 @@ class LTX2Pipeline(DiffusionPipeline):
         # where L is the latent audio length and M is the number of mel bins.
         if patch_size is not None and patch_size_t is not None:
             batch_size = latents.shape[0]
+            post_patch_latent_length = latent_length // patch_size_t
+            post_patch_mel_bins = num_mel_bins // patch_size
             latents = latents.reshape(
                 (
                     batch_size,
-                    latent_length,
-                    num_mel_bins,
+                    post_patch_latent_length,
+                    post_patch_mel_bins,
                     -1,
                     patch_size_t,
                     patch_size,
@@ -448,20 +452,18 @@ class LTX2Pipeline(DiffusionPipeline):
                 (
                     batch_size,
                     _num_channels,
-                    latent_length,
+                    post_patch_latent_length,
                     patch_size_t,
-                    num_mel_bins,
+                    post_patch_mel_bins,
                     patch_size,
                 )
             )
-            latents = latents.reshape(
-                (
-                    batch_size,
-                    _num_channels,
-                    latent_length * patch_size_t,
-                    num_mel_bins * patch_size,
-                )
-            )
+            # Flatten (L_post, pt) -> L
+            # Indices: 0(B), 1(C), 2(L), 3(pt), 4(M), 5(p)
+            latents = latents.flatten(2, 3)
+            # Flatten (M_post, p) -> M
+            # Indices: 0(B), 1(C), 2(L), 3(M), 4(p)
+            latents = latents.flatten(3, 4)
         else:
             # Assume [B, S, D] = [B, L, C * M], which implies that patch_size = M and patch_size_t = 1.
             latents = latents.reshape(
