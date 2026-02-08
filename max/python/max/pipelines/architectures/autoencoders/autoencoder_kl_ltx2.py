@@ -374,15 +374,16 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
         )
 
     def forward(self, hidden_states: Tensor, causal: bool = True) -> Tensor:
-        batch_size, _num_channels, num_frames, height, width = (
+        batch_size, num_channels, num_frames, height, width = (
             hidden_states.shape
         )
+        stride_prod = self.stride[0] * self.stride[1] * self.stride[2]
 
         if self.residual:
             residual = hidden_states.reshape(
                 (
                     batch_size,
-                    -1,
+                    num_channels // stride_prod,
                     self.stride[0],
                     self.stride[1],
                     self.stride[2],
@@ -392,27 +393,28 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 )
             )
             residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
-            repeats = (
-                self.stride[0] * self.stride[1] * self.stride[2]
-            ) // self.upscale_factor
             residual = unsafe_reshape(
                 residual,
                 (
                     batch_size,
-                    self.conv.out_channels // repeats,
+                    num_channels // stride_prod,
                     num_frames * self.stride[0],
                     height * self.stride[1],
                     width * self.stride[2],
                 ),
             )
+            repeats = (
+                self.stride[0] * self.stride[1] * self.stride[2]
+            ) // self.upscale_factor
             residual = F.tile(residual, (1, repeats, 1, 1, 1))
             residual = residual[:, :, self.stride[0] - 1 :]
 
         hidden_states = self.conv(hidden_states, causal=causal)
+        num_channels = hidden_states.shape[1]
         hidden_states = hidden_states.reshape(
             (
                 batch_size,
-                -1,
+                num_channels // stride_prod,
                 self.stride[0],
                 self.stride[1],
                 self.stride[2],
@@ -422,12 +424,11 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             )
         )
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
-        stride_prod = self.stride[0] * self.stride[1] * self.stride[2]
         hidden_states = unsafe_reshape(
             hidden_states,
             (
                 batch_size,
-                self.conv.out_channels // stride_prod,
+                num_channels // stride_prod,
                 num_frames * self.stride[0],
                 height * self.stride[1],
                 width * self.stride[2],
