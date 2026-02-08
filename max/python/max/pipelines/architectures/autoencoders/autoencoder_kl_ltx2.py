@@ -851,15 +851,15 @@ class AutoencoderKLLTX2Video(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             patch_size=config.patch_size,
             patch_size_t=config.patch_size_t,
             is_causal=config.decoder_causal,
-            block_out_channels=config.block_out_channels,
-            layers_per_block=config.layers_per_block,
-            inject_noise=config.inject_noise,
+            block_out_channels=config.decoder_block_out_channels,
+            layers_per_block=config.decoder_layers_per_block,
+            inject_noise=config.decoder_inject_noise,
             upsample_residual=config.upsample_residual,
             upsample_factor=config.upsample_factor,
-            spatio_temporal_scaling=config.spatio_temporal_scaling,
+            spatio_temporal_scaling=config.decoder_spatio_temporal_scaling,
             resnet_norm_eps=config.resnet_norm_eps,
             timestep_conditioning=config.timestep_conditioning,
-            spatial_padding_mode=config.spatial_padding_mode,
+            spatial_padding_mode=config.decoder_spatial_padding_mode,
         )
 
     def forward(
