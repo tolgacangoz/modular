@@ -42,7 +42,9 @@ def unsafe_reshape(x: Tensor, shape: tuple[int | Any, ...]) -> Tensor:
     # We use x.device for placement.
     # We need to construct a proper Shape object or pass compatible types.
     # BufferType constructor signature usually accepts a sequence of ints/Dims.
-    buf_type = BufferType(x.dtype, shape, x.device)
+    # We must explicitly convert the device to a DeviceRef because BufferType
+    # does not do it automatically in its __init__.
+    buf_type = BufferType(x.dtype, shape, DeviceRef.from_device(x.device))
     buf = buffer_create(buf_type)
 
     # Store the input tensor into the buffer (implicitly "bitcasting" the shape)
