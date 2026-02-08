@@ -38,20 +38,19 @@ from typing import Any, TypeAlias, TypeVar, overload
 
 from max import driver
 from max._mlir_context import MLIRThreadPoolExecutor
+from max.driver import Device
 from max.dtype import DType
 from max.experimental import realization_context as rc
 from max.experimental import tensor
 from max.graph import (
     BufferValue,
+    DeviceRef,
     Graph,
     TensorValue,
     TensorValueLike,
     Type,
     ops,
-    DeviceRef
 )
-from max.driver import Device
-from max.graph.type import DeviceRef
 from max.graph.value import Value
 from typing_extensions import ParamSpec
 
