@@ -1596,6 +1596,21 @@ class Tensor(DLPackArray, HasTensorValue):
         """
         return cast(list[Tensor], F.split(self, split_size_or_sections, axis))
 
+    def rebind(self, shape: ShapeLike) -> Tensor:
+        """Rebinds the tensor to a new shape.
+
+        Returns a tensor with the same data but with the shape re-assigned
+        to the new shape. This is useful for asserting a specific shape
+        when the compiler cannot infer it.
+
+        Args:
+            shape: The desired output shape. Can be a tuple or list of integers.
+
+        Returns:
+            Tensor: A new tensor with the re-bound shape.
+        """
+        return F.rebind(self, shape)
+
     def reshape(self, shape: ShapeLike) -> Tensor:
         """Reshapes the tensor to a new shape.
 

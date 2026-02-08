@@ -790,6 +790,9 @@ relu = functional(ops.relu)
 #: Repeats elements of a tensor.
 #: See :func:`max.graph.ops.repeat_interleave` for details.
 repeat_interleave = functional(ops.repeat_interleave)
+#: Rebinds a tensor to a new shape.
+#: See :func:`max.graph.ops.rebind` for details.
+rebind = functional(ops.rebind)
 #: Reshapes a tensor to a new shape.
 #: See :func:`max.graph.ops.reshape` for details.
 reshape = functional(ops.reshape)
