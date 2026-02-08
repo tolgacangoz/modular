@@ -384,6 +384,17 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             residual = residual.flatten(6, 7)
             # Flatten (height, stride[1]) -> height * stride[1]
             residual = residual.flatten(4, 5)
+            residual = residual.rebind(
+                (
+                    batch_size,
+                    self.conv.out_channels
+                    // (self.stride[0] * self.stride[1] * self.stride[2]),
+                    num_frames,
+                    self.stride[0],
+                    height * self.stride[1],
+                    width * self.stride[2],
+                )
+            )
             # Flatten (num_frames, stride[0]) -> num_frames * stride[0]
             residual = residual.flatten(2, 3)
             repeats = (
@@ -423,6 +434,17 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = hidden_states.flatten(6, 7)
         # Flatten (height, stride[1]) -> height * stride[1]
         hidden_states = hidden_states.flatten(4, 5)
+        hidden_states = hidden_states.rebind(
+            (
+                batch_size,
+                self.conv.out_channels
+                // (self.stride[0] * self.stride[1] * self.stride[2]),
+                num_frames,
+                self.stride[0],
+                height * self.stride[1],
+                width * self.stride[2],
+            )
+        )
         # Flatten (num_frames, stride[0]) -> num_frames * stride[0]
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states[:, :, self.stride[0] - 1 :]
