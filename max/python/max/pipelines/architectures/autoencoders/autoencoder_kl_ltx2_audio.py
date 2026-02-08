@@ -18,6 +18,7 @@ from max import functional as F
 from max import nn
 from max.driver import Device
 from max.graph.weights import Weights
+from max.graph import DeviceRef, TensorType
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
@@ -382,6 +383,8 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         mel_hop_length: int = 160,
         is_causal: bool = True,
         mel_bins: int | None = 64,
+        device: DeviceRef | None = None,
+        dtype: DType | None = None,
     ) -> None:
         super().__init__()
 
@@ -389,6 +392,8 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         self.mel_hop_length = mel_hop_length
         self.is_causal = is_causal
         self.mel_bins = mel_bins
+        self.device = device
+        self.dtype = dtype
         self.patchifier = LTX2AudioAudioPatchifier(
             patch_size=1,
             audio_latent_downsample_factor=LATENT_DOWNSAMPLE_FACTOR,
@@ -526,6 +531,25 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
                 padding=1,
             )
 
+    def input_types(self) -> tuple[TensorType, ...]:
+        if self.dtype is None:
+            raise ValueError("dtype must be set for input_types")
+        if self.device is None:
+            raise ValueError("device must be set for input_types")
+
+        return (
+            TensorType(
+                self.dtype,
+                shape=[
+                    "batch",
+                    self.latent_channels,
+                    "frames",
+                    "mel_bins",
+                ],
+                device=self.device,
+            ),
+        )
+
     def forward(
         self,
         sample: Tensor,
@@ -621,6 +645,8 @@ class AutoencoderKLLTX2Audio(nn.Module[[Tensor], Tensor]):
             mel_hop_length=config.mel_hop_length,
             is_causal=config.is_causal,
             mel_bins=config.mel_bins,
+            device=config.device,
+            dtype=config.dtype,
         )
 
     def forward(self, z: Tensor) -> Tensor:
