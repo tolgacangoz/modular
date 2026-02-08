@@ -355,17 +355,19 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
 
         if self.residual:
             residual = hidden_states.reshape(
-                batch_size,
-                -1,
-                self.stride[0],
-                self.stride[1],
-                self.stride[2],
-                num_frames,
-                height,
-                width,
+                (
+                    batch_size,
+                    -1,
+                    self.stride[0],
+                    self.stride[1],
+                    self.stride[2],
+                    num_frames,
+                    height,
+                    width,
+                )
             )
             residual = (
-                residual.permute(0, 1, 5, 2, 6, 3, 7, 4)
+                residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
                 .flatten(6, 7)
                 .flatten(4, 5)
                 .flatten(2, 3)
@@ -378,17 +380,19 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
 
         hidden_states = self.conv(hidden_states, causal=causal)
         hidden_states = hidden_states.reshape(
-            batch_size,
-            -1,
-            self.stride[0],
-            self.stride[1],
-            self.stride[2],
-            num_frames,
-            height,
-            width,
+            (
+                batch_size,
+                -1,
+                self.stride[0],
+                self.stride[1],
+                self.stride[2],
+                num_frames,
+                height,
+                width,
+            )
         )
         hidden_states = (
-            hidden_states.permute(0, 1, 5, 2, 6, 3, 7, 4)
+            hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
             .flatten(6, 7)
             .flatten(4, 5)
             .flatten(2, 3)
@@ -550,7 +554,7 @@ class LTX2VideoMidBlock3d(
                 batch_size=hidden_states.shape[0],
                 hidden_dtype=hidden_states.dtype,
             )
-            temb = temb.reshape(hidden_states.shape[0], -1, 1, 1, 1)
+            temb = temb.reshape((hidden_states.shape[0], -1, 1, 1, 1))
 
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb, seed, causal=causal)
@@ -835,8 +839,8 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
                 batch_size=hidden_states.shape[0],
                 hidden_dtype=hidden_states.dtype,
             )
-            temb = temb.reshape(hidden_states.shape[0], -1, 1, 1, 1).reshape(
-                temb.shape[0], 2, -1, 1, 1, 1
+            temb = temb.reshape((hidden_states.shape[0], -1, 1, 1, 1)).reshape(
+                (temb.shape[0], 2, -1, 1, 1, 1)
             )  # .unflatten(1, (2, -1))
             temb = temb + self.scale_shift_table[None, ..., None, None, None]
             shift = temb[:, 0]
@@ -853,10 +857,10 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             hidden_states.shape
         )
         hidden_states = hidden_states.reshape(
-            batch_size, -1, p_t, p, p, num_frames, height, width
+            (batch_size, -1, p_t, p, p, num_frames, height, width)
         )
         hidden_states = (
-            hidden_states.permute(0, 1, 5, 2, 6, 4, 7, 3)
+            hidden_states.permute((0, 1, 5, 2, 6, 4, 7, 3))
             .flatten(6, 7)
             .flatten(4, 5)
             .flatten(2, 3)
