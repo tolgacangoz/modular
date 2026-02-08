@@ -48,7 +48,9 @@ from max.graph import (
     TensorValueLike,
     Type,
     ops,
+    DeviceRef
 )
+from max.driver import Device
 from max.graph.type import DeviceRef
 from max.graph.value import Value
 from typing_extensions import ParamSpec
@@ -745,7 +747,7 @@ def linspace(
     steps: int,
     *,
     dtype: DType | None = None,
-    device: Device | graph.DeviceRef | None = None,
+    device: Device | DeviceRef | None = None,
 ) -> TensorValue:
     """Creates a tensor with evenly spaced values between start and end.
 
@@ -769,9 +771,9 @@ def linspace(
         dtype = DType.float32
 
     if device is None:
-        device = graph.DeviceRef.CPU()
+        device = DeviceRef.CPU()
     elif isinstance(device, Device):
-        device = graph.DeviceRef.from_device(device)
+        device = DeviceRef.from_device(device)
 
     if steps == 1:
         return ops.constant(start, dtype, device).reshape([1])

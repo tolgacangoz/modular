@@ -77,12 +77,12 @@ class LTX2PipelineOutput:
     """Output class for LTX2 video+audio generation pipelines.
 
     Args:
-        video: Generated video tensor of shape ``(batch, frames, height, width, channels)``
+        frames: Generated video tensor of shape ``(batch, frames, height, width, channels)``
             with values in ``[0, 1]``.
         audio: Generated audio waveform tensor of shape ``(batch, channels, samples)``.
     """
 
-    video: Tensor
+    frames: Tensor
     audio: Tensor
 
 
@@ -797,6 +797,6 @@ class LTX2Pipeline(DiffusionPipeline):
         audio = self.vocoder(mel_spectrograms)
 
         return LTX2PipelineOutput(
-            video=video,
+            frames=video,
             audio=audio,
         )
