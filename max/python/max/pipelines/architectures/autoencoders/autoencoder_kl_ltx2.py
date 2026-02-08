@@ -18,6 +18,7 @@ from max import functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
+from max.graph import DeviceRef, TensorType
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
@@ -700,6 +701,8 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         upsample_residual: tuple[bool, ...] = (True, True, True),
         upsample_factor: tuple[int, ...] = (2, 2, 2),
         spatial_padding_mode: str = "reflect",
+        device: DeviceRef | None = None,
+        dtype: DType | None = None,
     ) -> None:
         super().__init__()
 
@@ -707,6 +710,9 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         self.patch_size_t = patch_size_t
         self.out_channels = out_channels * patch_size**2
         self.is_causal = is_causal
+        self.device = device
+        self.dtype = dtype
+        self.in_channels = in_channels
 
         block_out_channels = tuple(reversed(block_out_channels))
         spatio_temporal_scaling = tuple(reversed(spatio_temporal_scaling))
@@ -780,6 +786,26 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             self.scale_shift_table = Tensor.constant(
                 random.gaussian(2, output_channel) / output_channel**0.5
             )
+
+    def input_types(self) -> tuple[TensorType, ...]:
+        if self.dtype is None:
+            raise ValueError("dtype must be set for input_types")
+        if self.device is None:
+            raise ValueError("device must be set for input_types")
+
+        return (
+            TensorType(
+                self.dtype,
+                shape=[
+                    "batch",
+                    self.in_channels,
+                    "frames",
+                    "height",
+                    "width",
+                ],
+                device=self.device,
+            ),
+        )
 
     def forward(
         self,
@@ -860,6 +886,8 @@ class AutoencoderKLLTX2Video(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             resnet_norm_eps=config.resnet_norm_eps,
             timestep_conditioning=config.timestep_conditioning,
             spatial_padding_mode=config.decoder_spatial_padding_mode,
+            device=config.device,
+            dtype=config.dtype,
         )
 
     def forward(
