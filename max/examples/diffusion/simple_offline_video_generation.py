@@ -203,10 +203,17 @@ async def generate_video(args: argparse.Namespace) -> None:
     """
     print(f"Loading model: {args.model}")
 
-    # Step 1: Initialize pipeline configuration
+    import max.driver
+
+    if max.driver.accelerator_count() > 0:
+        device_specs = [DeviceSpec.accelerator()]
+    else:
+        print("No accelerator found, using CPU.")
+        device_specs = [DeviceSpec.cpu()]
+
     config = PipelineConfig(
         model_path=args.model,
-        device_specs=[DeviceSpec.accelerator()],
+        device_specs=device_specs,
         use_legacy_module=False,
     )
 

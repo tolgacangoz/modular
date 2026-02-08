@@ -17,6 +17,7 @@ from max import functional as F
 
 ACT2FN = {
     "silu": F.silu,
+    "swish": F.silu,
     "gelu": F.gelu,
     "gelu_tanh": partial(F.gelu, approximate="tanh"),
     "gelu_quick": partial(F.gelu, approximate="quick"),
