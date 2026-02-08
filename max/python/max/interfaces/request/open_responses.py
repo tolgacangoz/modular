@@ -402,9 +402,7 @@ class OutputAudioContent(BaseModel):
         # Convert to int16 if float
         if array.dtype in (np.float32, np.float64):
             # Clip and scale
-            audio_int16 = (
-                np.clip(samples, -1.0, 1.0) * 32767
-            ).astype(np.int16)
+            audio_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
         else:
             audio_int16 = samples.astype(np.int16)
 
