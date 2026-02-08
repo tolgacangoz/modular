@@ -43,7 +43,11 @@ from max.interfaces.provider_options import (
     VideoProviderOptions,
 )
 from max.interfaces.request import OpenResponsesRequest
-from max.interfaces.request.open_responses import OpenResponsesRequestBody
+from max.interfaces.request.open_responses import (
+    OpenResponsesRequestBody,
+    OutputAudioContent,
+    OutputVideoContent,
+)
 from max.pipelines import PipelineConfig
 from max.pipelines.architectures.ltx2.pipeline_ltx2 import (
     LTX2Pipeline,
@@ -174,6 +178,23 @@ def save_video(video_data: str, output_path: str) -> None:
         print(f"Base64 data length: {len(video_data)} chars")
 
 
+def save_audio(audio_data: str, output_path: str) -> None:
+    """Save base64-encoded audio data to a file.
+
+    Args:
+        audio_data: Base64-encoded audio data string
+        output_path: Path where the audio should be saved
+    """
+    try:
+        audio_bytes = base64.b64decode(audio_data)
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+        print(f"Audio saved to: {output_path}")
+    except Exception as e:
+        print(f"WARNING: Cannot save audio: {e}")
+        print(f"Base64 data length: {len(audio_data)} chars")
+
+
 async def generate_video(args: argparse.Namespace) -> None:
     """Main video generation logic.
 
@@ -245,41 +266,59 @@ async def generate_video(args: argparse.Namespace) -> None:
 
     # Step 7: Execute the pipeline
     print("Running diffusion model...")
-    outputs = pipeline.execute(inputs)
+    responses = pipeline.execute(inputs)
 
     # Step 8: Get the output for our request
-    output = outputs[context.request_id]
+    response = responses[context.request_id]
 
     # Check if generation completed successfully
-    if not output.is_done:
-        print(f"WARNING: Generation status: {output.final_status}")
+    if not response.is_done:
+        print(f"WARNING: Generation status: {response.final_status}")
         return
 
     print("Generation complete!")
 
-    # Step 9: Extract and save videos from OutputVideoContent
-    # The output now contains a list of OutputVideoContent objects with base64-encoded videos
-    if not output.output:
-        print("ERROR: No videos generated")
+    # Step 9: Extract and save content
+    if not response.output:
+        print("ERROR: No content generated")
         return
 
-    # Save each generated video
-    for idx, video_content in enumerate(output.output):
-        # Determine output filename
-        if len(output.output) > 1:
-            # Multiple videos: add index to filename
-            base_name, ext = os.path.splitext(args.output)
-            output_path = f"{base_name}_{idx}{ext}"
-        else:
-            output_path = args.output
+    # Save each generated item
+    video_count = 0
+    audio_count = 0
 
-        # Save the video
-        if video_content.video_data:
-            save_video(video_content.video_data, output_path)
-        elif video_content.video_url:
-            print(f"Video available at URL: {video_content.video_url}")
+    for content_item in response.output:
+        if isinstance(content_item, OutputVideoContent):
+            # Determine output filename
+            base_name, ext = os.path.splitext(args.output)
+            if video_count > 0:
+                output_path = f"{base_name}_{video_count}{ext}"
+            else:
+                output_path = args.output
+
+            if content_item.video_data:
+                save_video(content_item.video_data, output_path)
+            elif content_item.video_url:
+                print(f"Video available at URL: {content_item.video_url}")
+            video_count += 1
+
+        elif isinstance(content_item, OutputAudioContent):
+            # Determine output filename (replace extension with .wav or .raw)
+            base_name, _ = os.path.splitext(args.output)
+            # Simple heuristic for audio extension
+            ext = ".wav"
+            if audio_count > 0:
+                output_path = f"{base_name}_{audio_count}{ext}"
+            else:
+                output_path = f"{base_name}{ext}"
+
+            if content_item.audio_data:
+                save_audio(content_item.audio_data, output_path)
+            elif content_item.audio_url:
+                print(f"Audio available at URL: {content_item.audio_url}")
+            audio_count += 1
         else:
-            print("ERROR: No video data or URL in output")
+            print(f"Unknown content type: {content_item.type}")
 
 
 def main(argv: list[str] | None = None) -> int:

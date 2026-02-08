@@ -26,7 +26,7 @@ from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux1.layers.embeddings import PixArtAlphaTextProjection
-from .activations import ACT2FN
+from ..flux2.layers.activations import ACT2FN
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 logger = logging.getLogger(__name__)

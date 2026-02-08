@@ -29,7 +29,11 @@ from max.interfaces import (
     RequestID,
 )
 from max.interfaces.generation import GenerationOutput
-from max.interfaces.request.open_responses import OutputImageContent
+from max.interfaces.request.open_responses import (
+    OutputAudioContent,
+    OutputImageContent,
+    OutputVideoContent,
+)
 
 from ..interfaces.diffusion_pipeline import (  # type: ignore[import-not-found]
     DiffusionPipeline,
@@ -115,9 +119,8 @@ class PixelGenerationPipeline(
             )
             raise
 
-        images = model_outputs.images
-        num_images_per_prompt = model_inputs.num_images_per_prompt
-        expected_images = len(flat_batch) * num_images_per_prompt
+        image_list = getattr(model_outputs, "images", None)
+        num_visuals_per_prompt = model_inputs.num_visuals_per_prompt
 
         # Handle both numpy array (NHWC) and list of images
         if isinstance(images, np.ndarray):
@@ -138,27 +141,69 @@ class PixelGenerationPipeline(
                 for img in images
             ]
 
-        if len(image_list) != expected_images:
-            raise ValueError(
-                "Unexpected number of images returned from pipeline: "
-                f"expected {expected_images}, got {len(image_list)}."
-            )
+        if image_list is not None:
+            expected_images = len(flat_batch) * num_visuals_per_prompt
+            if len(image_list) != expected_images:
+                raise ValueError(
+                    "Unexpected number of images returned from pipeline: "
+                    f"expected {expected_images}, got {len(image_list)}."
+                )
 
         responses: dict[RequestID, GenerationOutput] = {}
         for index, (request_id, _context) in enumerate(flat_batch):
             offset = index * num_visuals_per_prompt
             # Select images for this request (already in NHWC format)
-            pixel_data = np.stack(
-                image_list[offset : offset + num_images_per_prompt], axis=0
-            ).astype(np.float32, copy=False)
+            output_content = []
+            if image_list is not None and len(image_list) > 0:
+                pixel_data = image_list[
+                    offset : offset + num_visuals_per_prompt
+                ]
+                pixel_data = pixel_data.astype(np.float32, copy=False)
+                output_content.extend(
+                    [
+                        OutputImageContent.from_numpy(img, format="png")
+                        for img in pixel_data
+                    ]
+                )
+
+            # Check for video output
+            if (
+                hasattr(model_outputs, "video")
+                and model_outputs.video is not None
+            ):
+                # Video is typically [batch, frames, height, width, channels]
+                video_data = model_outputs.video
+                if isinstance(video_data, np.ndarray):
+                    for i in range(num_visuals_per_prompt):
+                        idx = offset + i
+                        if idx < len(video_data):
+                            output_content.append(
+                                OutputVideoContent.from_numpy(
+                                    video_data[idx], format="raw"
+                                )
+                            )
+
+            # Check for audio output
+            if (
+                hasattr(model_outputs, "audio")
+                and model_outputs.audio is not None
+            ):
+                # Audio is typically [batch, channels, samples]
+                audio_data = model_outputs.audio
+                if isinstance(audio_data, np.ndarray):
+                    for i in range(num_visuals_per_prompt):
+                        idx = offset + i
+                        if idx < len(audio_data):
+                            output_content.append(
+                                OutputAudioContent.from_numpy(
+                                    audio_data[idx], format="wav"
+                                )
+                            )
 
             responses[request_id] = GenerationOutput(
                 request_id=request_id,
                 final_status=GenerationStatus.END_OF_SEQUENCE,
-                output=[
-                    OutputImageContent.from_numpy(img, format="png")
-                    for img in pixel_data
-                ],
+                output=output_content,
             )
 
         return responses
