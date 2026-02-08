@@ -33,7 +33,7 @@ ltx2_arch = SupportedArchitecture(
         SupportedEncoding.float4_e2m1fnx2: [],
     },
     example_repo_ids=["Lightricks/LTX-2"],
-    pipeline_model=LTX2Pipeline,  # type: ignore[arg-type]
+    pipeline_model=LTX2Pipeline,
     context_type=PixelContext,
     config=LTX2Config,
     default_weights_format=WeightsFormat.safetensors,

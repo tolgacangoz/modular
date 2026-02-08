@@ -850,7 +850,7 @@ class AutoencoderKLLTX2Video(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             out_channels=config.out_channels,
             patch_size=config.patch_size,
             patch_size_t=config.patch_size_t,
-            is_causal=config.causal,
+            is_causal=config.decoder_causal,
             block_out_channels=config.block_out_channels,
             layers_per_block=config.layers_per_block,
             inject_noise=config.inject_noise,
