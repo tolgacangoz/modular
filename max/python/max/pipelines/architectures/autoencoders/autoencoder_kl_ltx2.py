@@ -366,11 +366,15 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                     width,
                 )
             )
-            residual = (
-                residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
-                .flatten(6, 7)
-                .flatten(4, 5)
-                .flatten(2, 3)
+            residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
+            residual = residual.reshape(
+                (
+                    batch_size,
+                    -1,
+                    num_frames * self.stride[0],
+                    height * self.stride[1],
+                    width * self.stride[2],
+                )
             )
             repeats = (
                 self.stride[0] * self.stride[1] * self.stride[2]
@@ -391,11 +395,15 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 width,
             )
         )
-        hidden_states = (
-            hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
-            .flatten(6, 7)
-            .flatten(4, 5)
-            .flatten(2, 3)
+        hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
+        hidden_states = hidden_states.reshape(
+            (
+                batch_size,
+                -1,
+                num_frames * self.stride[0],
+                height * self.stride[1],
+                width * self.stride[2],
+            )
         )
         hidden_states = hidden_states[:, :, self.stride[0] - 1 :]
 

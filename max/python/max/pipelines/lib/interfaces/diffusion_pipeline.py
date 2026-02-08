@@ -78,6 +78,16 @@ class DiffusionPipeline(ABC):
     def prepare_inputs(
         self, flat_batch: PixelContext
     ) -> type[PixelModelInputs]:
+        """Prepare inputs for the model.
+
+        Args:
+            flat_batch (`PixelContext`):
+                The flat batch context.
+
+        Returns:
+            `type[PixelModelInputs]`:
+                The model inputs type.
+        """
         raise NotImplementedError(
             f"prepare_inputs is not implemented for {self.__class__.__name__}"
         )
