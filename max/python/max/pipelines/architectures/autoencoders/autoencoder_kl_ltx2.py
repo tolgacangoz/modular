@@ -380,15 +380,12 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                     self.stride[2],
                 )
             )
-            residual = residual.reshape(
-                (
-                    batch_size,
-                    -1,
-                    num_frames * self.stride[0],
-                    height * self.stride[1],
-                    width * self.stride[2],
-                )
-            )
+            # Flatten (width, stride[2]) -> width * stride[2]
+            residual = residual.flatten(6, 7)
+            # Flatten (height, stride[1]) -> height * stride[1]
+            residual = residual.flatten(4, 5)
+            # Flatten (num_frames, stride[0]) -> num_frames * stride[0]
+            residual = residual.flatten(2, 3)
             repeats = (
                 self.stride[0] * self.stride[1] * self.stride[2]
             ) // self.upscale_factor
@@ -422,15 +419,12 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 self.stride[2],
             )
         )
-        hidden_states = hidden_states.reshape(
-            (
-                batch_size,
-                -1,
-                num_frames * self.stride[0],
-                height * self.stride[1],
-                width * self.stride[2],
-            )
-        )
+        # Flatten (width, stride[2]) -> width * stride[2]
+        hidden_states = hidden_states.flatten(6, 7)
+        # Flatten (height, stride[1]) -> height * stride[1]
+        hidden_states = hidden_states.flatten(4, 5)
+        # Flatten (num_frames, stride[0]) -> num_frames * stride[0]
+        hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states[:, :, self.stride[0] - 1 :]
 
         if self.residual:
