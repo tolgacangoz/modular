@@ -367,34 +367,34 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 )
             )
             residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
-            residual = residual.rebind(
-                (
-                    batch_size,
-                    self.conv.out_channels
-                    // (self.stride[0] * self.stride[1] * self.stride[2]),
-                    num_frames,
-                    self.stride[0],
-                    height,
-                    self.stride[1],
-                    width,
-                    self.stride[2],
-                )
-            )
+            # residual = residual.rebind(
+            #     (
+            #         batch_size,
+            #         self.conv.out_channels
+            #         // (self.stride[0] * self.stride[1] * self.stride[2]),
+            #         num_frames,
+            #         self.stride[0],
+            #         height,
+            #         self.stride[1],
+            #         width,
+            #         self.stride[2],
+            #     )
+            # )
             # Flatten (width, stride[2]) -> width * stride[2]
             residual = residual.flatten(6, 7)
             # Flatten (height, stride[1]) -> height * stride[1]
             residual = residual.flatten(4, 5)
-            residual = residual.rebind(
-                (
-                    batch_size,
-                    self.conv.out_channels
-                    // (self.stride[0] * self.stride[1] * self.stride[2]),
-                    num_frames,
-                    self.stride[0],
-                    height * self.stride[1],
-                    width * self.stride[2],
-                )
-            )
+            # residual = residual.rebind(
+            #     (
+            #         batch_size,
+            #         self.conv.out_channels
+            #         // (self.stride[0] * self.stride[1] * self.stride[2]),
+            #         num_frames,
+            #         self.stride[0],
+            #         height * self.stride[1],
+            #         width * self.stride[2],
+            #     )
+            # )
             # Flatten (num_frames, stride[0]) -> num_frames * stride[0]
             residual = residual.flatten(2, 3)
             repeats = (
