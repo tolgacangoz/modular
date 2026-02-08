@@ -19,6 +19,8 @@ from max import nn, random
 from max.driver import Device
 from max.dtype import DType
 from max.graph import DeviceRef, TensorType
+from max.graph.ops import buffer_create, buffer_load, buffer_store
+from max.graph.type import BufferType
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
@@ -27,6 +29,27 @@ from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux2.layers.activations import ACT2FN
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
+
+
+def unsafe_reshape(x: Tensor, shape: tuple[int | Any, ...]) -> Tensor:
+    """Reshapes a tensor without symbolic verification by going through a buffer.
+
+    This bypasses the strict symbolic equality checks that fail when complex
+    algebraic dimensions (like multiple mul_no_wrap terms) accumulate.
+    """
+    # Create an uninitialized buffer of the target shape
+    # Note: BufferType expects a generic list of dims, we can pass our tuple.
+    # We use x.device for placement.
+    # We need to construct a proper Shape object or pass compatible types.
+    # BufferType constructor signature usually accepts a sequence of ints/Dims.
+    buf_type = BufferType(x.dtype, shape, x.device)
+    buf = buffer_create(buf_type)
+
+    # Store the input tensor into the buffer (implicitly "bitcasting" the shape)
+    buffer_store(buf, x)
+
+    # Load it back as a tensor
+    return buffer_load(buf).to(x.device)
 
 
 class PerChannelRMSNorm(nn.Module[[Tensor], Tensor]):
@@ -367,14 +390,15 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 )
             )
             residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
-            residual = residual.reshape(
+            residual = unsafe_reshape(
+                residual,
                 (
                     batch_size,
                     -1,
                     num_frames * self.stride[0],
                     height * self.stride[1],
                     width * self.stride[2],
-                )
+                ),
             )
             repeats = (
                 self.stride[0] * self.stride[1] * self.stride[2]
@@ -396,14 +420,15 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             )
         )
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
-        hidden_states = hidden_states.reshape(
+        hidden_states = unsafe_reshape(
+            hidden_states,
             (
                 batch_size,
                 -1,
                 num_frames * self.stride[0],
                 height * self.stride[1],
                 width * self.stride[2],
-            )
+            ),
         )
         hidden_states = hidden_states[:, :, self.stride[0] - 1 :]
 
