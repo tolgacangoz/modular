@@ -371,9 +371,12 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 (
                     batch_size,
                     -1,
-                    num_frames * self.stride[0],
-                    height * self.stride[1],
-                    width * self.stride[2],
+                    num_frames,
+                    self.stride[0],
+                    height,
+                    self.stride[1],
+                    width,
+                    self.stride[2],
                 )
             )
             residual = residual.reshape(
@@ -409,9 +412,12 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             (
                 batch_size,
                 -1,
-                num_frames * self.stride[0],
-                height * self.stride[1],
-                width * self.stride[2],
+                num_frames,
+                self.stride[0],
+                height,
+                self.stride[1],
+                width,
+                self.stride[2],
             )
         )
         hidden_states = hidden_states.reshape(

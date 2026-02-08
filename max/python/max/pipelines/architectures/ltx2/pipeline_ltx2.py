@@ -301,8 +301,13 @@ class LTX2Pipeline(DiffusionPipeline):
         latents = latents.rebind(
             (
                 batch_size,
-                post_patch_num_frames * post_patch_height * post_patch_width,
-                _num_channels * patch_size_t * patch_size * patch_size,
+                num_frames,
+                _num_channels,
+                patch_size_t,
+                height,
+                patch_size,
+                width,
+                patch_size,
             )
         )
         latents = latents.reshape(
@@ -345,9 +350,12 @@ class LTX2Pipeline(DiffusionPipeline):
             (
                 batch_size,
                 _num_channels,
-                num_frames * patch_size_t,
-                height * patch_size,
-                width * patch_size,
+                num_frames,
+                patch_size_t,
+                height,
+                patch_size,
+                width,
+                patch_size,
             )
         )
         latents = latents.reshape(
@@ -390,15 +398,18 @@ class LTX2Pipeline(DiffusionPipeline):
             latents = latents.rebind(
                 (
                     batch_size,
-                    int(post_patch_latent_length * post_patch_mel_bins),
-                    int(_num_channels * patch_size_t * patch_size),
+                    post_patch_latent_length,
+                    post_patch_mel_bins,
+                    _num_channels,
+                    patch_size_t,
+                    patch_size,
                 )
             )
             latents = latents.reshape(
                 (
                     batch_size,
-                    int(post_patch_latent_length * post_patch_mel_bins),
-                    int(_num_channels * patch_size_t * patch_size),
+                    post_patch_latent_length * post_patch_mel_bins,
+                    _num_channels * patch_size_t * patch_size,
                 )
             )
         else:
@@ -437,8 +448,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 (
                     batch_size,
                     _num_channels,
-                    latent_length * patch_size_t,
-                    num_mel_bins * patch_size,
+                    latent_length,
+                    patch_size_t,
+                    num_mel_bins,
+                    patch_size,
                 )
             )
             latents = latents.reshape(
