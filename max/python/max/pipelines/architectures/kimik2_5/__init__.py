@@ -12,6 +12,20 @@
 # ===----------------------------------------------------------------------=== #
 
 
-"""Kimi K2.5 pipeline architecture."""
+"""Kimi 2.5 pipeline architecture."""
+from max import functional as F
+from functools import partial
+
+ACT2FN = {
+    "silu": F.silu,
+    "swish": F.silu,
+    "gelu": F.gelu,
+    "gelu_tanh": partial(F.gelu, approximate="tanh"),
+    "gelu_quick": partial(F.gelu, approximate="quick"),
+    "quick_gelu": partial(F.gelu, approximate="quick"),
+    "relu": F.relu,
+    "tanh": F.tanh,
+    "sigmoid": F.sigmoid,
+}
 
 __all__ = []
