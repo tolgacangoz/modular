@@ -158,7 +158,7 @@ class LTX2AdaLayerNormSingle(
         added_cond_kwargs: dict[str, Tensor] | None = None,
         batch_size: int | None = None,
         hidden_dtype: DType | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         # No modulation happening here.
         added_cond_kwargs = added_cond_kwargs or {
             "resolution": None,
@@ -1389,6 +1389,10 @@ class LTX2VideoTransformer3DModel(
                 fps=fps,
             )
         if audio_coords is None:
+            if audio_num_frames is None:
+                raise ValueError(
+                    "audio_num_frames must be provided if audio_coords is not provided."
+                )
             audio_coords = self.audio_rope.prepare_audio_coords(
                 batch_size,
                 audio_num_frames,

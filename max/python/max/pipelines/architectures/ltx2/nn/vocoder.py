@@ -107,7 +107,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         if self.resnets_per_upsample != len(resnet_dilations):
             raise ValueError(
                 f"`resnet_kernel_sizes` and `resnet_dilations` should be lists of the same length but are length"
-                f" {len(self.resnets_per_upsample)} and {len(resnet_dilations)}, respectively."
+                f" {self.resnets_per_upsample} and {len(resnet_dilations)}, respectively."
             )
 
         self.conv_in = nn.Conv1d(

@@ -260,7 +260,7 @@ class LTX2ConnectorTransformer1d(
 
             binary_attn_mask = (
                 attention_mask >= attn_mask_binarize_threshold
-            ).int()
+            ).cast(DType.int32)
             if binary_attn_mask.rank == 4:
                 binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(
                     1
