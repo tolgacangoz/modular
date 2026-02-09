@@ -890,15 +890,32 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         p = self.patch_size
         p_t = self.patch_size_t
 
-        batch_size, _num_channels, num_frames, height, width = (
+        batch_size, num_channels, num_frames, height, width = (
             hidden_states.shape
         )
-        hidden_states = hidden_states.reshape(
-            (batch_size, -1, p_t, p, p, num_frames, height, width)
+        target_padding_channels = num_channels // (p_t * p * p)
+        hidden_states = unsafe_reshape(
+            hidden_states,
+            (
+                batch_size,
+                target_padding_channels,
+                p_t,
+                p,
+                p,
+                num_frames,
+                height,
+                width,
+            ),
         )
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 4, 7, 3))
         hidden_states = hidden_states.reshape(
-            (batch_size, -1, num_frames * p_t, height * p, width * p)
+            (
+                batch_size,
+                target_padding_channels,
+                num_frames * p_t,
+                height * p,
+                width * p,
+            )
         )
 
         return hidden_states
