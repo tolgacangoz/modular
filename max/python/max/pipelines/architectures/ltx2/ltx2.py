@@ -1246,7 +1246,7 @@ class LTX2VideoTransformer3DModel(
         )
 
         # Audio-to-Video, Video-to-Audio Cross-Attention
-        cross_attn_pos_embed_max_pos = max(
+        cross_attn_pos_embed_max_pos = F.max(
             pos_embed_max_pos, audio_pos_embed_max_pos
         )
         self.cross_attn_rope = LTX2AudioVideoRotaryPosEmbed(

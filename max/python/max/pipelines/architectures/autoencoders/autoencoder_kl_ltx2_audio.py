@@ -580,7 +580,7 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         target_frames = frames * LATENT_DOWNSAMPLE_FACTOR
 
         if self.causality_axis is not None:
-            target_frames = max(
+            target_frames = F.max(
                 target_frames - (LATENT_DOWNSAMPLE_FACTOR - 1), 1
             )
 
@@ -621,8 +621,8 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         decoded_output = decoded_output[
             :,
             :target_channels,
-            : min(current_time, target_time),
-            : min(current_freq, target_freq),
+            : F.min(current_time, target_time),
+            : F.min(current_freq, target_freq),
         ]
 
         time_padding_needed = target_time - decoded_output.shape[2]
@@ -631,9 +631,9 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         if time_padding_needed > 0 or freq_padding_needed > 0:
             padding = (
                 0,
-                max(freq_padding_needed, 0),
+                F.max(freq_padding_needed, 0),
                 0,
-                max(time_padding_needed, 0),
+                F.max(time_padding_needed, 0),
             )
             decoded_output = F.pad(decoded_output, padding)
 
