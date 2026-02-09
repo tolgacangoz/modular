@@ -79,7 +79,7 @@ class LTX2AudioCausalConv2d(nn.Module[[Tensor], Tensor]):
             padding=0,
             dilation=dilation,
             num_groups=groups,
-            bias=bias,
+            has_bias=bias,
         )
 
     def forward(self, x: Tensor) -> Tensor:
