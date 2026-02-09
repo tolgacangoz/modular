@@ -23,8 +23,8 @@ from max.tensor import Tensor
 
 from .ltx2 import LTX2VideoTransformer3DModel
 from .model_config import (
-    LTX2TransformerConfig,
     LTX2TextConnectorsConfig,
+    LTX2TransformerConfig,
     LTX2VocoderConfig,
 )
 from .nn.connectors import LTX2TextConnectors
@@ -57,7 +57,9 @@ class LTX2TransformerModel(ComponentModel):
         with F.lazy():
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
             ltx2transformer.to(self.devices[0])
-        self.model = ltx2transformer.compile(*ltx2transformer.input_types(), weights=state_dict)
+        self.model = ltx2transformer.compile(
+            *ltx2transformer.input_types(), weights=state_dict
+        )
         return self.model
 
     def __call__(
