@@ -31,27 +31,31 @@ from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
 
 
-def unsafe_reshape(x: Tensor, shape: tuple[int | Any, ...]) -> Tensor:
-    """Reshapes a tensor without symbolic verification by going through a buffer.
 
-    This bypasses the strict symbolic equality checks that fail when complex
-    algebraic dimensions (like multiple mul_no_wrap terms) accumulate.
+def pixel_shuffle_3d_merge(x: Tensor, stride: tuple[int, int, int]) -> Tensor:
+    """Robust 3D pixel shuffle merge using F.concat instead of reshape.
+
+    This bypasses MAX compiler symbolic validation issues with symbolic products.
+    Input x is rank 8: [B, C, D, d, H, h, W, w]
+    Output is rank 5: [B, C, D*d, H*h, W*w]
     """
-    # Create an uninitialized buffer of the target shape
-    # Note: BufferType expects a generic list of dims, we can pass our tuple.
-    # We use x.device for placement.
-    # We need to construct a proper Shape object or pass compatible types.
-    # BufferType constructor signature usually accepts a sequence of ints/Dims.
-    # We must explicitly convert the device to a DeviceRef because BufferType
-    # does not do it automatically in its __init__.
-    buf_type = BufferType(x.dtype, shape, DeviceRef.from_device(x.device))
-    buf = buffer_create(buf_type)
+    d, h_s, w_s = stride
 
-    # Store the input tensor into the buffer (implicitly "bitcasting" the shape)
-    buffer_store(buf, x)
+    # Merge (2, 3) -> D, d
+    slices = [x[:, :, :, i, :, :, :, :] for i in range(d)]
+    x = F.concat(slices, axis=2) # [B, C, D*d, H, h, W, w]
 
-    # Load it back as a tensor
-    return Tensor.from_graph_value(buffer_load(buf).to(x.device))
+    # Merge (4, 5) -> H, h
+    slices = [x[:, :, :, :, i, :, :] for i in range(h_s)]
+    x = F.concat(slices, axis=3) # [B, C, D*d, H*h, W, w]
+
+    # Merge (6, 7) -> W, w
+    slices = [x[:, :, :, :, :, i] for i in range(w_s)]
+    x = F.concat(slices, axis=4) # [B, C, D*d, H*h, W*w]
+
+    return x
+
+
 
 
 class PerChannelRMSNorm(nn.Module[[Tensor], Tensor]):
@@ -118,17 +122,19 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
         if causal:
             # Pad left (past) for causality
             # x shape: [B, C, D, H, W]
-            pad_left = F.tile(
-                hidden_states[:, :, :1, :, :], [1, 1, tk - 1, 1, 1]
+            # Use concat instead of tile for 5D
+            pad_left = F.concat(
+                [hidden_states[:, :, :1, :, :]] * (tk - 1), axis=2
             )
             hidden_states = F.concat([pad_left, hidden_states], axis=2)
         else:
-            # Pad both sides for non-causal
-            pad_left = F.tile(
-                hidden_states[:, :, :1, :, :], [1, 1, (tk - 1) // 2, 1, 1]
+            # Pad left (past) and right (future) for non-causal
+            # Use concat instead of tile for 5D
+            pad_left = F.concat(
+                [hidden_states[:, :, :1, :, :]] * (tk // 2), axis=2
             )
-            pad_right = F.tile(
-                hidden_states[:, :, -1:, :, :], [1, 1, (tk - 1) // 2, 1, 1]
+            pad_right = F.concat(
+                [hidden_states[:, :, -1:, :, :]] * (tk // 2), axis=2
             )
             hidden_states = F.concat(
                 [pad_left, hidden_states, pad_right], axis=2
@@ -311,17 +317,35 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
         N, C, D, H, W = hidden_states.shape
         s0, s1, s2 = self.stride
 
-        residual = hidden_states.reshape(
-            (N, C, D // s0, s0, H // s1, s1, W // s2, s2)
+        # Rebind to satisfy symbolic shape matching
+        depth, h_stride, w_stride = self.stride
+        intermediate_5d_shape = (
+            N,
+            C,
+            (D // depth) * depth,
+            (H // h_stride) * h_stride,
+            (W // w_stride) * w_stride,
+        )
+        residual = hidden_states.rebind(intermediate_5d_shape).reshape(
+            (N, C, D // depth, depth, H // h_stride, h_stride, W // w_stride, w_stride)
         )
         residual = residual.permute((0, 1, 3, 5, 7, 2, 4, 6))
         residual = F.flatten(residual, 1, 4)
 
         r_shape = residual.shape
-        residual = residual.reshape(
+        # Rebind to satisfy symbolic shape matching
+        new_c = r_shape[1] // self.group_size
+        intermediate_5d_shape = (
+            r_shape[0],
+            new_c * self.group_size,
+            r_shape[2],
+            r_shape[3],
+            r_shape[4],
+        )
+        residual = residual.rebind(intermediate_5d_shape).reshape(
             (
                 r_shape[0],
-                -1,
+                new_c,
                 self.group_size,
                 r_shape[2],
                 r_shape[3],
@@ -333,8 +357,15 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = self.conv(hidden_states, causal=causal)
 
         N, C, D, H, W = hidden_states.shape
-        hidden_states = hidden_states.reshape(
-            (N, C, D // s0, s0, H // s1, s1, W // s2, s2)
+        intermediate_5d_shape = (
+            N,
+            C,
+            (D // depth) * depth,
+            (H // h_stride) * h_stride,
+            (W // w_stride) * w_stride,
+        )
+        hidden_states = hidden_states.rebind(intermediate_5d_shape).reshape(
+            (N, C, D // depth, depth, H // h_stride, h_stride, W // w_stride, w_stride)
         )
         hidden_states = hidden_states.permute((0, 1, 3, 5, 7, 2, 4, 6))
         hidden_states = F.flatten(hidden_states, 1, 4)
@@ -393,20 +424,26 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
                 )
             )
             residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
-            residual = unsafe_reshape(
-                residual,
+            depth, h_stride, w_stride = self.stride
+            # Use concat-based merge to avoid symbolic product issues in reshape
+            residual = pixel_shuffle_3d_merge(residual, (depth, h_stride, w_stride))
+            # Rebind to clean symbolic shape for downstream ops
+            residual = residual.rebind(
                 (
                     batch_size,
                     num_channels // stride_prod,
-                    num_frames * self.stride[0],
-                    height * self.stride[1],
-                    width * self.stride[2],
-                ),
+                    num_frames * depth,
+                    height * h_stride,
+                    width * w_stride,
+                )
             )
+            # Already 5D [B, C, D, H, W]
             repeats = (
                 self.stride[0] * self.stride[1] * self.stride[2]
             ) // self.upscale_factor
-            residual = F.tile(residual, (1, repeats, 1, 1, 1))
+            if repeats > 1:
+                # Use concat instead of tile for 5D
+                residual = F.concat([residual] * repeats, axis=1)
             residual = residual[:, :, self.stride[0] - 1 :]
 
         hidden_states = self.conv(hidden_states, causal=causal)
@@ -424,16 +461,20 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             )
         )
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
-        hidden_states = unsafe_reshape(
-            hidden_states,
+        depth, h_stride, w_stride = self.stride
+        # Use concat-based merge to avoid symbolic product issues in reshape
+        hidden_states = pixel_shuffle_3d_merge(hidden_states, (depth, h_stride, w_stride))
+        # Rebind to clean symbolic shape for downstream ops
+        hidden_states = hidden_states.rebind(
             (
                 batch_size,
                 num_channels // stride_prod,
-                num_frames * self.stride[0],
-                height * self.stride[1],
-                width * self.stride[2],
-            ),
+                num_frames * depth,
+                height * h_stride,
+                width * w_stride,
+            )
         )
+        # Already 5D [B, C, D, H, W]
         hidden_states = hidden_states[:, :, self.stride[0] - 1 :]
 
         if self.residual:
@@ -894,8 +935,15 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             hidden_states.shape
         )
         target_padding_channels = num_channels // (p_t * p * p)
-        hidden_states = unsafe_reshape(
-            hidden_states,
+        # Rebind to satisfy symbolic shape matching
+        intermediate_5d_shape = (
+            batch_size,
+            target_padding_channels * p_t * p * p,
+            num_frames,
+            height,
+            width,
+        )
+        hidden_states = hidden_states.rebind(intermediate_5d_shape).reshape(
             (
                 batch_size,
                 target_padding_channels,
@@ -908,7 +956,10 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             ),
         )
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 4, 7, 3))
-        hidden_states = hidden_states.reshape(
+        # Use concat-based merge to avoid symbolic product issues in reshape
+        hidden_states = pixel_shuffle_3d_merge(hidden_states, (p_t, p, p))
+        # Rebind to clean symbolic shape for downstream ops
+        hidden_states = hidden_states.rebind(
             (
                 batch_size,
                 target_padding_channels,
@@ -917,6 +968,7 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
                 width * p,
             )
         )
+        # Already 5D [B, C, D, H, W]
 
         return hidden_states
 
