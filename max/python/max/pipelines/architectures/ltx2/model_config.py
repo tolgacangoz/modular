@@ -103,7 +103,7 @@ class LTX2VocoderConfig(MAXModelConfigBase):
         config_dict: dict[str, Any],
         encoding: SupportedEncoding,
         devices: list[Device],
-    ) -> LTX2VocoderConfig:
+    ) -> MAXModelConfigBase:
         init_dict = {
             key: value
             for key, value in config_dict.items()
@@ -142,7 +142,7 @@ class LTX2TextConnectorsConfig(MAXModelConfigBase):
         config_dict: dict[str, Any],
         encoding: SupportedEncoding,
         devices: list[Device],
-    ) -> LTX2TextConnectorsConfig:
+    ) -> MAXModelConfigBase:
         init_dict = {
             key: value
             for key, value in config_dict.items()
