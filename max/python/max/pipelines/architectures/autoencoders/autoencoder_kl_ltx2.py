@@ -19,8 +19,6 @@ from max import nn, random
 from max.driver import Device
 from max.dtype import DType
 from max.graph import DeviceRef, TensorType
-from max.graph.ops import buffer_create, buffer_load, buffer_store
-from max.graph.type import BufferType
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
@@ -29,7 +27,6 @@ from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux2.layers.activations import ACT2FN
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
-
 
 
 def pixel_shuffle_3d_merge(x: Tensor, stride: tuple[int, int, int]) -> Tensor:
@@ -43,19 +40,17 @@ def pixel_shuffle_3d_merge(x: Tensor, stride: tuple[int, int, int]) -> Tensor:
 
     # Merge (2, 3) -> D, d
     slices = [x[:, :, :, i, :, :, :, :] for i in range(d)]
-    x = F.concat(slices, axis=2) # [B, C, D*d, H, h, W, w]
+    x = F.concat(slices, axis=2)  # [B, C, D*d, H, h, W, w]
 
     # Merge (4, 5) -> H, h
     slices = [x[:, :, :, :, i, :, :] for i in range(h_s)]
-    x = F.concat(slices, axis=3) # [B, C, D*d, H*h, W, w]
+    x = F.concat(slices, axis=3)  # [B, C, D*d, H*h, W, w]
 
     # Merge (6, 7) -> W, w
     slices = [x[:, :, :, :, :, i] for i in range(w_s)]
-    x = F.concat(slices, axis=4) # [B, C, D*d, H*h, W*w]
+    x = F.concat(slices, axis=4)  # [B, C, D*d, H*h, W*w]
 
     return x
-
-
 
 
 class PerChannelRMSNorm(nn.Module[[Tensor], Tensor]):
@@ -315,7 +310,6 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
         )
 
         N, C, D, H, W = hidden_states.shape
-        s0, s1, s2 = self.stride
 
         # Rebind to satisfy symbolic shape matching
         depth, h_stride, w_stride = self.stride
@@ -327,7 +321,16 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
             (W // w_stride) * w_stride,
         )
         residual = hidden_states.rebind(intermediate_5d_shape).reshape(
-            (N, C, D // depth, depth, H // h_stride, h_stride, W // w_stride, w_stride)
+            (
+                N,
+                C,
+                D // depth,
+                depth,
+                H // h_stride,
+                h_stride,
+                W // w_stride,
+                w_stride,
+            )
         )
         residual = residual.permute((0, 1, 3, 5, 7, 2, 4, 6))
         residual = F.flatten(residual, 1, 4)
@@ -365,7 +368,16 @@ class LTXVideoDownsampler3d(nn.Module[[Tensor, bool], Tensor]):
             (W // w_stride) * w_stride,
         )
         hidden_states = hidden_states.rebind(intermediate_5d_shape).reshape(
-            (N, C, D // depth, depth, H // h_stride, h_stride, W // w_stride, w_stride)
+            (
+                N,
+                C,
+                D // depth,
+                depth,
+                H // h_stride,
+                h_stride,
+                W // w_stride,
+                w_stride,
+            )
         )
         hidden_states = hidden_states.permute((0, 1, 3, 5, 7, 2, 4, 6))
         hidden_states = F.flatten(hidden_states, 1, 4)
@@ -426,7 +438,9 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
             residual = residual.permute((0, 1, 5, 2, 6, 3, 7, 4))
             depth, h_stride, w_stride = self.stride
             # Use concat-based merge to avoid symbolic product issues in reshape
-            residual = pixel_shuffle_3d_merge(residual, (depth, h_stride, w_stride))
+            residual = pixel_shuffle_3d_merge(
+                residual, (depth, h_stride, w_stride)
+            )
             # Rebind to clean symbolic shape for downstream ops
             residual = residual.rebind(
                 (
@@ -463,7 +477,9 @@ class LTXVideoUpsampler3d(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 3, 7, 4))
         depth, h_stride, w_stride = self.stride
         # Use concat-based merge to avoid symbolic product issues in reshape
-        hidden_states = pixel_shuffle_3d_merge(hidden_states, (depth, h_stride, w_stride))
+        hidden_states = pixel_shuffle_3d_merge(
+            hidden_states, (depth, h_stride, w_stride)
+        )
         # Rebind to clean symbolic shape for downstream ops
         hidden_states = hidden_states.rebind(
             (

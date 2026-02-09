@@ -80,13 +80,18 @@ class LTX2TransformerConfig(LTX2TransformerConfigBase):
         )
         return LTX2TransformerConfigBase(**init_dict)
 
+
 class LTX2VocoderConfig(MAXModelConfigBase):
     hidden_channels: int = 1024
     in_channels: int = 128
     leaky_relu_negative_slope: float = 0.1
     out_channels: int = 2
     output_sampling_rate: int = 24000
-    resnet_dilations: tuple[tuple[int, ...], ...] = ((1, 3, 5), (1, 3, 5), (1, 3, 5))
+    resnet_dilations: tuple[tuple[int, ...], ...] = (
+        (1, 3, 5),
+        (1, 3, 5),
+        (1, 3, 5),
+    )
     resnet_kernel_sizes: tuple[int, ...] = (3, 7, 11)
     upsample_factors: tuple[int, ...] = (6, 5, 2, 2, 2)
     upsample_kernel_sizes: tuple[int, ...] = (16, 15, 8, 4, 4)
