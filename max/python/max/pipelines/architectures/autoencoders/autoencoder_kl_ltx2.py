@@ -51,7 +51,7 @@ def unsafe_reshape(x: Tensor, shape: tuple[int | Any, ...]) -> Tensor:
     buffer_store(buf, x)
 
     # Load it back as a tensor
-    return buffer_load(buf).to(x.device)
+    return Tensor.from_graph_value(buffer_load(buf).to(x.device))
 
 
 class PerChannelRMSNorm(nn.Module[[Tensor], Tensor]):
