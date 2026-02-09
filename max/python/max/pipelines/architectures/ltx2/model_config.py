@@ -19,7 +19,7 @@ from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
 from pydantic import Field
 
 
-class LTX2ConfigBase(MAXModelConfigBase):
+class LTX2TransformerConfigBase(MAXModelConfigBase):
     activation_fn: str = "gelu-approximate"
     attention_bias: bool = True
     attention_head_dim: int = 128
@@ -60,17 +60,17 @@ class LTX2ConfigBase(MAXModelConfigBase):
     device: DeviceRef = Field(default_factory=DeviceRef.GPU)
 
 
-class LTX2Config(LTX2ConfigBase):
+class LTX2TransformerConfig(LTX2TransformerConfigBase):
     @staticmethod
     def generate(
         config_dict: dict[str, Any],
         encoding: SupportedEncoding,
         devices: list[Device],
-    ) -> LTX2ConfigBase:
+    ) -> LTX2TransformerConfigBase:
         init_dict = {
             key: value
             for key, value in config_dict.items()
-            if key in LTX2ConfigBase.__annotations__
+            if key in LTX2TransformerConfigBase.__annotations__
         }
         init_dict.update(
             {
@@ -78,4 +78,75 @@ class LTX2Config(LTX2ConfigBase):
                 "device": DeviceRef.from_device(devices[0]),
             }
         )
-        return LTX2ConfigBase(**init_dict)
+        return LTX2TransformerConfigBase(**init_dict)
+
+class LTX2VocoderConfig(MAXModelConfigBase):
+    hidden_channels: int = 1024
+    in_channels: int = 128
+    leaky_relu_negative_slope: float = 0.1
+    out_channels: int = 2
+    output_sampling_rate: int = 24000
+    resnet_dilations: tuple[tuple[int, ...], ...] = ((1, 3, 5), (1, 3, 5), (1, 3, 5))
+    resnet_kernel_sizes: tuple[int, ...] = (3, 7, 11)
+    upsample_factors: tuple[int, ...] = (6, 5, 2, 2, 2)
+    upsample_kernel_sizes: tuple[int, ...] = (16, 15, 8, 4, 4)
+    dtype: DType = DType.float32  # Vocoders often run in float32
+    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
+
+    @staticmethod
+    def generate(
+        config_dict: dict[str, Any],
+        encoding: SupportedEncoding,
+        devices: list[Device],
+    ) -> LTX2VocoderConfig:
+        init_dict = {
+            key: value
+            for key, value in config_dict.items()
+            if key in LTX2VocoderConfig.__annotations__
+        }
+        init_dict.update(
+            {
+                "dtype": encoding.dtype,
+                "device": DeviceRef.from_device(devices[0]),
+            }
+        )
+        return LTX2VocoderConfig(**init_dict)
+
+
+class LTX2TextConnectorsConfig(MAXModelConfigBase):
+    audio_connector_attention_head_dim: int = 128
+    audio_connector_num_attention_heads: int = 30
+    audio_connector_num_layers: int = 2
+    audio_connector_num_learnable_registers: int = 128
+    caption_channels: int = 3840
+    causal_temporal_positioning: bool = False
+    connector_rope_base_seq_len: int = 4096
+    rope_double_precision: bool = True
+    rope_theta: float = 10000.0
+    rope_type: str = "split"
+    text_proj_in_factor: int = 49
+    video_connector_attention_head_dim: int = 128
+    video_connector_num_attention_heads: int = 30
+    video_connector_num_layers: int = 2
+    video_connector_num_learnable_registers: int = 128
+    dtype: DType = DType.bfloat16
+    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
+
+    @staticmethod
+    def generate(
+        config_dict: dict[str, Any],
+        encoding: SupportedEncoding,
+        devices: list[Device],
+    ) -> LTX2TextConnectorsConfig:
+        init_dict = {
+            key: value
+            for key, value in config_dict.items()
+            if key in LTX2TextConnectorsConfig.__annotations__
+        }
+        init_dict.update(
+            {
+                "dtype": encoding.dtype,
+                "device": DeviceRef.from_device(devices[0]),
+            }
+        )
+        return LTX2TextConnectorsConfig(**init_dict)
