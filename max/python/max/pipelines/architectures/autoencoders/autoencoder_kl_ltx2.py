@@ -896,11 +896,9 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         hidden_states = hidden_states.reshape(
             (batch_size, -1, p_t, p, p, num_frames, height, width)
         )
-        hidden_states = (
-            hidden_states.permute((0, 1, 5, 2, 6, 4, 7, 3))
-            .flatten(6, 7)
-            .flatten(4, 5)
-            .flatten(2, 3)
+        hidden_states = hidden_states.permute((0, 1, 5, 2, 6, 4, 7, 3))
+        hidden_states = hidden_states.reshape(
+            (batch_size, -1, num_frames * p_t, height * p, width * p)
         )
 
         return hidden_states
