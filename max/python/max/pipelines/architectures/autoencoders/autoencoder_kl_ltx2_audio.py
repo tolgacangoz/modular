@@ -59,15 +59,37 @@ class LTX2AudioCausalConv2d(nn.Module[[Tensor], Tensor]):
 
         if self.causality_axis == "none":
             self.padding = (
-                pad_w // 2,
-                pad_w - pad_w // 2,
+                0,
+                0,
+                0,
+                0,
                 pad_h // 2,
                 pad_h - pad_h // 2,
+                pad_w // 2,
+                pad_w - pad_w // 2,
             )
         elif self.causality_axis in {"width", "width-compatibility"}:
-            self.padding = (pad_w, 0, pad_h // 2, pad_h - pad_h // 2)
+            self.padding = (
+                0,
+                0,
+                0,
+                0,
+                pad_h // 2,
+                pad_h - pad_h // 2,
+                pad_w,
+                0,
+            )
         elif self.causality_axis == "height":
-            self.padding = (pad_w // 2, pad_w - pad_w // 2, pad_h, 0)
+            self.padding = (
+                0,
+                0,
+                0,
+                0,
+                pad_h,
+                0,
+                pad_w // 2,
+                pad_w - pad_w // 2,
+            )
         else:
             raise ValueError(f"Invalid causality_axis: {causality_axis}")
 
@@ -631,9 +653,13 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         if time_padding_needed > 0 or freq_padding_needed > 0:
             padding = (
                 0,
-                F.max(freq_padding_needed, 0),
+                0,
+                0,
+                0,
                 0,
                 F.max(time_padding_needed, 0),
+                0,
+                F.max(freq_padding_needed, 0),
             )
             decoded_output = F.pad(decoded_output, padding)
 
