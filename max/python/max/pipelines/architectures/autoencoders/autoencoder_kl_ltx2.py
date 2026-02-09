@@ -877,8 +877,8 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
                 hidden_dtype=hidden_states.dtype,
             )
             temb = temb.reshape((hidden_states.shape[0], -1, 1, 1, 1)).reshape(
-                (temb.shape[0], 2, -1, 1, 1, 1)
-            )  # .unflatten(1, (2, -1))
+                (hidden_states.shape[0], 2, -1, 1, 1, 1)
+            )
             temb = temb + self.scale_shift_table[None, ..., None, None, None]
             shift = temb[:, 0]
             scale = temb[:, 1]
