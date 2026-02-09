@@ -141,7 +141,7 @@ class LTX2TransformerBlock1d(
         rope_type: str = "interleaved",
     ):
         super().__init__()
-        self.norm1 = nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
+        self.norm1 = nn.RMSNorm(dim, eps)
         self.attn1 = LTX2Attention(
             query_dim=dim,
             heads=num_attention_heads,
@@ -150,7 +150,7 @@ class LTX2TransformerBlock1d(
             rope_type=rope_type,
         )
 
-        self.norm2 = nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
+        self.norm2 = nn.RMSNorm(dim, eps)
         self.ff = FeedForward(dim, activation_fn=activation_fn)
 
     def forward(
@@ -231,9 +231,7 @@ class LTX2ConnectorTransformer1d(
             ]
         )
 
-        self.norm_out = nn.RMSNorm(
-            self.inner_dim, eps=eps, elementwise_affine=False
-        )
+        self.norm_out = nn.RMSNorm(self.inner_dim, eps)
 
     def forward(
         self,
@@ -275,7 +273,7 @@ class LTX2ConnectorTransformer1d(
                 seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
             ]
             padded_hidden_states = [
-                F.pad(x, pad=(0, 0, 0, p), value=0)
+                F.pad(x, pad=(0, p, 0, 0), value=0)
                 for x, p in zip(
                     hidden_states_non_padded, pad_lengths, strict=False
                 )

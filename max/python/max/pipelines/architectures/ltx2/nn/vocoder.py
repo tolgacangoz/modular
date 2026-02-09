@@ -35,9 +35,9 @@ class ResBlock(nn.Module[[Tensor], Tensor]):
         self.convs1 = nn.ModuleList(
             [
                 nn.Conv1d(
-                    channels,
-                    channels,
-                    kernel_size,
+                    in_channels=channels,
+                    out_channels=channels,
+                    kernel_size=kernel_size,
                     stride=stride,
                     dilation=dilation,
                     padding=padding_mode,
@@ -49,9 +49,9 @@ class ResBlock(nn.Module[[Tensor], Tensor]):
         self.convs2 = nn.ModuleList(
             [
                 nn.Conv1d(
-                    channels,
-                    channels,
-                    kernel_size,
+                    in_channels=channels,
+                    out_channels=channels,
+                    kernel_size=kernel_size,
                     stride=stride,
                     dilation=1,
                     padding=padding_mode,
@@ -111,7 +111,11 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             )
 
         self.conv_in = nn.Conv1d(
-            in_channels, hidden_channels, kernel_size=7, stride=1, padding=3
+            in_channels=in_channels,
+            out_channels=hidden_channels,
+            kernel_size=7,
+            stride=1,
+            padding=3,
         )
 
         self.upsamplers = nn.ModuleList()
@@ -123,9 +127,9 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             output_channels = input_channels // 2
             self.upsamplers.append(
                 nn.ConvTranspose1d(
-                    input_channels,  # hidden_channels // (2 ** i)
-                    output_channels,  # hidden_channels // (2 ** (i + 1))
-                    kernel_size,
+                    in_channels=input_channels,
+                    out_channels=output_channels,
+                    kernel_size=kernel_size,
                     stride=stride,
                     padding=(kernel_size - stride) // 2,
                 )
@@ -145,7 +149,11 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             input_channels = output_channels
 
         self.conv_out = nn.Conv1d(
-            output_channels, out_channels, 7, stride=1, padding=3
+            in_channels=output_channels,
+            out_channels=out_channels,
+            kernel_size=7,
+            stride=1,
+            padding=3,
         )
 
     def forward(self, hidden_states: Tensor, time_last: bool = False) -> Tensor:
