@@ -20,7 +20,7 @@ from max.pipelines.lib import (
     SupportedEncoding,
 )
 
-from .model_config import LTX2Config
+from .model_config import LTX2TransformerConfig
 from .pipeline_ltx2 import LTX2Pipeline
 
 ltx2_arch = SupportedArchitecture(
@@ -35,7 +35,7 @@ ltx2_arch = SupportedArchitecture(
     example_repo_ids=["Lightricks/LTX-2"],
     pipeline_model=LTX2Pipeline,
     context_type=PixelContext,
-    config=LTX2Config,
+    config=LTX2TransformerConfig,
     default_weights_format=WeightsFormat.safetensors,
     tokenizer=PixelGenerationTokenizer,
 )
