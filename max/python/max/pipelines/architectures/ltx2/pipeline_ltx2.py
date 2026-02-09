@@ -38,9 +38,11 @@ from ..autoencoders import (
     AutoencoderKLLTX2AudioModel,
     AutoencoderKLLTX2VideoModel,
 )
-from .ltx2 import LTX2VideoTransformer3DModel
-from .nn.connectors import LTX2TextConnectors
-from .nn.vocoder import LTX2Vocoder
+from .model import (
+    LTX2TextConnectorsModel,
+    LTX2TransformerModel,
+    LTX2VocoderModel,
+)
 
 logger = logging.getLogger("max.pipelines")
 
@@ -90,22 +92,24 @@ class LTX2Pipeline(DiffusionPipeline):
     """A LTX2 pipeline for text-to-video and image-to-video generation."""
 
     vae: AutoencoderKLLTX2VideoModel
-    vae_audio: AutoencoderKLLTX2AudioModel
-    transformer: LTX2VideoTransformer3DModel
+    audio_vae: AutoencoderKLLTX2AudioModel
+    transformer: LTX2TransformerModel
+    connectors: LTX2TextConnectorsModel
+    vocoder: LTX2VocoderModel
 
     components = {
         "vae": AutoencoderKLLTX2VideoModel,
-        "vae_audio": AutoencoderKLLTX2AudioModel,
-        "transformer": LTX2VideoTransformer3DModel,
+        "audio_vae": AutoencoderKLLTX2AudioModel,
+        "transformer": LTX2TransformerModel,
+        "connectors": LTX2TextConnectorsModel,
+        "vocoder": LTX2VocoderModel,
     }
 
     def init_remaining_components(self) -> None:
         """Initialize non-ComponentModel parts of the LTX2 pipeline.
 
         Follows the Flux1-style pattern by:
-        - Using pre-loaded component models (vae, vae_audio, transformer)
-        - Instantiating the PyTorch Gemma3 text encoder
-        - Building the LTX2 text connectors and vocoder from diffusers_config
+        - Using pre-loaded component models (vae, audio_vae, transformer, connectors, vocoder)
         - Setting basic VAE/audio compression ratios
         """
 
@@ -132,22 +136,6 @@ class LTX2Pipeline(DiffusionPipeline):
         # Prefer CUDA device if available, otherwise leave on CPU.
         if torch.cuda.is_available():
             self.text_encoder.to("cuda")
-
-        # Build connectors and vocoder from diffusers_config.
-        diff_cfg = self.pipeline_config.model.diffusers_config
-        if diff_cfg is None:
-            raise ValueError("diffusers_config is required for LTX2Pipeline.")
-
-        components_cfg = diff_cfg.get("components", {})
-
-        connectors_cfg = components_cfg.get("connectors", {}).get(
-            "config_dict", {}
-        )
-        vocoder_cfg = components_cfg.get("vocoder", {}).get("config_dict", {})
-
-        # LTX2TextConnectors and LTX2Vocoder expect expanded keyword arguments.
-        self.connectors = LTX2TextConnectors(**connectors_cfg)
-        self.vocoder = LTX2Vocoder(**vocoder_cfg)
 
     def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
         return LTX2ModelInputs.from_context(context)
@@ -488,8 +476,8 @@ class LTX2Pipeline(DiffusionPipeline):
 
     def _denormalize_audio_latents(self, latents: Tensor) -> Tensor:
         """Denormalize audio latents."""
-        latents_mean = getattr(self.vae_audio, "latents_mean", None)
-        latents_std = getattr(self.vae_audio, "latents_std", None)
+        latents_mean = getattr(self.audio_vae, "latents_mean", None)
+        latents_std = getattr(self.audio_vae, "latents_std", None)
 
         if latents_mean is not None and latents_std is not None:
             return (latents * latents_std) + latents_mean
@@ -753,7 +741,7 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_latents = self._pack_audio_latents(audio_latents)
 
         # 7. Pre-compute positional embeddings
-        video_coords = self.model.transformer.rope.prepare_video_coords(
+        video_coords = self.transformer.rope.prepare_video_coords(
             latents.shape[0],
             latent_num_frames,
             latent_height,
@@ -761,7 +749,7 @@ class LTX2Pipeline(DiffusionPipeline):
             device,
             fps=frame_rate,
         )
-        audio_coords = self.model.transformer.audio_rope.prepare_audio_coords(
+        audio_coords = self.transformer.audio_rope.prepare_audio_coords(
             audio_latents.shape[0], audio_num_frames, device
         )
 
@@ -858,7 +846,7 @@ class LTX2Pipeline(DiffusionPipeline):
             audio_latents, audio_num_frames, latent_mel_bins
         )
         audio_latents = self._denormalize_audio_latents(audio_latents)
-        mel_spectrograms = self.vae_audio.decode(
+        mel_spectrograms = self.audio_vae.decode(
             audio_latents.cast(DType.bfloat16)
         )
         audio = self.vocoder(mel_spectrograms)
