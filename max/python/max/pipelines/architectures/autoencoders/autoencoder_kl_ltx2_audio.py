@@ -661,11 +661,15 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         target_time = target_frames
         target_freq = target_mel_bins
 
+        # Use tuple-based slice syntax (slice, out_dim) so the compiler
+        # can handle symbolic TensorValue stops and infer output shapes.
+        time_end = F.min(current_time, target_time)
+        freq_end = F.min(current_freq, target_freq)
         decoded_output = decoded_output[
             :,
             :target_channels,
-            : F.min(current_time, target_time),
-            : F.min(current_freq, target_freq),
+            (slice(None, time_end), time_end),
+            (slice(None, freq_end), freq_end),
         ]
 
         time_padding_needed = target_time - decoded_output.shape[2]
@@ -685,7 +689,10 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
             decoded_output = F.pad(decoded_output, padding)
 
         decoded_output = decoded_output[
-            :, :target_channels, :target_time, :target_freq
+            :,
+            :target_channels,
+            (slice(None, target_time), target_time),
+            (slice(None, target_freq), target_freq),
         ]
 
         return decoded_output
