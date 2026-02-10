@@ -21,6 +21,7 @@ from max.nn.activations import FeedForward
 from max.tensor import Tensor
 
 from ..ltx2 import LTX2Attention
+from ..model_config import LTX2TextConnectorsConfig
 
 
 class LTX2RotaryPosEmbed1d(
@@ -141,7 +142,7 @@ class LTX2TransformerBlock1d(
         rope_type: str = "interleaved",
     ):
         super().__init__()
-        self.norm1 = nn.RMSNorm(dim, eps)
+        self.norm1 = nn.RMSNorm(dim, eps, elementwise_affine=False)
         self.attn1 = LTX2Attention(
             query_dim=dim,
             heads=num_attention_heads,
@@ -150,7 +151,7 @@ class LTX2TransformerBlock1d(
             rope_type=rope_type,
         )
 
-        self.norm2 = nn.RMSNorm(dim, eps)
+        self.norm2 = nn.RMSNorm(dim, eps, elementwise_affine=False)
         self.ff = FeedForward(dim, activation_fn=activation_fn)
 
     def forward(
@@ -231,7 +232,9 @@ class LTX2ConnectorTransformer1d(
             ]
         )
 
-        self.norm_out = nn.RMSNorm(self.inner_dim, eps)
+        self.norm_out = nn.RMSNorm(
+            self.inner_dim, eps, elementwise_affine=False
+        )
 
     def forward(
         self,
@@ -317,23 +320,36 @@ class LTX2TextConnectors(
 
     def __init__(
         self,
-        caption_channels: int,
-        text_proj_in_factor: int,
-        video_connector_num_attention_heads: int,
-        video_connector_attention_head_dim: int,
-        video_connector_num_layers: int,
-        video_connector_num_learnable_registers: int | None,
-        audio_connector_num_attention_heads: int,
-        audio_connector_attention_head_dim: int,
-        audio_connector_num_layers: int,
-        audio_connector_num_learnable_registers: int | None,
-        connector_rope_base_seq_len: int,
-        rope_theta: float,
-        rope_double_precision: bool,
-        causal_temporal_positioning: bool,
-        rope_type: str = "interleaved",
+        config: LTX2TextConnectorsConfig,
     ):
         super().__init__()
+        caption_channels = config.caption_channels
+        text_proj_in_factor = config.text_proj_in_factor
+        video_connector_num_attention_heads = (
+            config.video_connector_num_attention_heads
+        )
+        video_connector_attention_head_dim = (
+            config.video_connector_attention_head_dim
+        )
+        video_connector_num_layers = config.video_connector_num_layers
+        video_connector_num_learnable_registers = (
+            config.video_connector_num_learnable_registers
+        )
+        audio_connector_num_attention_heads = (
+            config.audio_connector_num_attention_heads
+        )
+        audio_connector_attention_head_dim = (
+            config.audio_connector_attention_head_dim
+        )
+        audio_connector_num_layers = config.audio_connector_num_layers
+        audio_connector_num_learnable_registers = (
+            config.audio_connector_num_learnable_registers
+        )
+        connector_rope_base_seq_len = config.connector_rope_base_seq_len
+        rope_theta = config.rope_theta
+        rope_double_precision = config.rope_double_precision
+        causal_temporal_positioning = config.causal_temporal_positioning
+        rope_type = config.rope_type
         self.text_proj_in = nn.Linear(
             caption_channels * text_proj_in_factor, caption_channels, bias=False
         )
