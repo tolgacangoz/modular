@@ -658,19 +658,16 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
             F.tanh(decoded_output) if self.tanh_out else decoded_output
         )
 
-        _, _, current_time, current_freq = decoded_output.shape
         target_time = target_frames
         target_freq = target_mel_bins
 
-        # Pad to ensure output has at least the target dimensions, then crop
-        # to the exact target size. This avoids F.min (which returns a
-        # TensorValue incompatible with the symbolic slice path) and
-        # replaces the original crop-pad-crop with a single pad-crop.
-        time_pad = (target_time - current_time) if (target_time > current_time) else 0
-        freq_pad = (target_freq - current_freq) if (target_freq > current_freq) else 0
-        decoded_output = F.pad(
-            decoded_output, (0, 0, 0, 0, 0, time_pad, 0, freq_pad)
-        )
+        # Use a Safe-Pad + Precise-Slice pattern to avoid symbolic Dim
+        # comparisons in Python (which throw TypeError). By padding with a
+        # small constant (8) that is guaranteed to exceed the maximum
+        # architectural discrepancy (2), and then slicing to the exact
+        # symbolic target, we produce a result mathematically identical to
+        # the original "pad deficit then crop" algorithm.
+        decoded_output = F.pad(decoded_output, (0, 0, 0, 0, 0, 8, 0, 8))
 
         decoded_output = decoded_output[
             :, :target_channels, :target_time, :target_freq
