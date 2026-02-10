@@ -623,9 +623,10 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         target_frames = frames * LATENT_DOWNSAMPLE_FACTOR
 
         if self.causality_axis is not None:
-            target_frames = F.max(
-                target_frames - (LATENT_DOWNSAMPLE_FACTOR - 1), 1
-            )
+            # frames >= 1 (positive tensor dim), so frames*4 - 3 >= 1 always.
+            # Use Dim arithmetic instead of F.max to keep target_frames as a
+            # Dim expression, which the symbolic rmo.slice path requires.
+            target_frames = target_frames - (LATENT_DOWNSAMPLE_FACTOR - 1)
 
         target_channels = self.out_ch
         target_mel_bins = (
@@ -661,38 +662,18 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         target_time = target_frames
         target_freq = target_mel_bins
 
-        # Use tuple-based slice syntax (slice, out_dim) so the compiler
-        # can handle symbolic TensorValue stops and infer output shapes.
-        time_end = F.min(current_time, target_time)
-        freq_end = F.min(current_freq, target_freq)
-        decoded_output = decoded_output[
-            :,
-            :target_channels,
-            (slice(None, time_end), time_end),
-            (slice(None, freq_end), freq_end),
-        ]
-
-        time_padding_needed = target_time - decoded_output.shape[2]
-        freq_padding_needed = target_freq - decoded_output.shape[3]
-
-        if time_padding_needed > 0 or freq_padding_needed > 0:
-            padding = (
-                0,
-                0,
-                0,
-                0,
-                0,
-                F.max(time_padding_needed, 0),
-                0,
-                F.max(freq_padding_needed, 0),
-            )
-            decoded_output = F.pad(decoded_output, padding)
+        # Pad to ensure output has at least the target dimensions, then crop
+        # to the exact target size. This avoids F.min (which returns a
+        # TensorValue incompatible with the symbolic slice path) and
+        # replaces the original crop-pad-crop with a single pad-crop.
+        time_pad = F.max(target_time - current_time, 0)
+        freq_pad = F.max(target_freq - current_freq, 0)
+        decoded_output = F.pad(
+            decoded_output, (0, 0, 0, 0, 0, time_pad, 0, freq_pad)
+        )
 
         decoded_output = decoded_output[
-            :,
-            :target_channels,
-            (slice(None, target_time), target_time),
-            (slice(None, target_freq), target_freq),
+            :, :target_channels, :target_time, :target_freq
         ]
 
         return decoded_output
