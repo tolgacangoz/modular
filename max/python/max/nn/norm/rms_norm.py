@@ -71,32 +71,47 @@ def rms_norm(
 class RMSNorm(Module[[Tensor], Tensor]):
     """Computes the Root Mean Square normalization on inputs."""
 
-    weight: Tensor
+    weight: Tensor | None
     eps: float
 
-    def __init__(self, dim: int, eps: float = 1e-6) -> None:
-        """Constructs RMSNorm.
-
+    def __init__(
+        self, dim: int, eps: float = 1e-6, elementwise_affine: bool = True
+    ) -> None:
+        """Construct RMSNorm.
         Args:
             dim: Size of last dimension of the expected input.
             eps: Value added to denominator for numerical stability.
+            elementwise_affine: Whether to apply learned scale.
         """
-        self.weight = Tensor.ones([dim])
+        super().__init__()
+        self._dim = dim
         self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if elementwise_affine:
+            self.weight = Tensor.ones([dim])
+        else:
+            self.weight = None
 
     @property
     def dim(self) -> Dim:
-        """Returns the embedding dimension."""
-        return self.weight.shape[0]
+        return self._dim
 
     def __rich_repr__(self):
         """Repr matching the Linear constructor."""
         yield "dim", self.dim
         yield "eps", self.eps, 1e-6
+        yield "elementwise_affine", self.elementwise_affine, True
+
+    def _affine_params(self, x: Tensor) -> Tensor:
+        if self.weight is None:
+            return F.broadcast_to(
+                F.constant(1.0, dtype=x.dtype, device=x.device),
+                shape=(x.shape[-1],),
+            )
+        return self.weight
 
     def forward(self, x: Tensor) -> Tensor:
-        """Applies RMS normalization to the input."""
-        return rms_norm(x, self.weight, self.eps)
+        return rms_norm(x, self._affine_params(x), self.eps)
 
 
 class GemmaRMSNorm(RMSNorm):

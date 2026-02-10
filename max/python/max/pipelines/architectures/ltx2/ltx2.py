@@ -27,6 +27,7 @@ from max.tensor import Tensor
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux1.layers.embeddings import PixArtAlphaTextProjection
 from ..flux2.layers.activations import ACT2FN
+from .model_config import LTX2TransformerConfigBase
 
 flash_attention_gpu = F.functional(_flash_attention_gpu)
 logger = logging.getLogger(__name__)
@@ -1118,43 +1119,47 @@ class LTX2VideoTransformer3DModel(
 
     def __init__(
         self,
-        in_channels: int = 128,  # Video Arguments
-        out_channels: int | None = 128,
-        patch_size: int = 1,
-        patch_size_t: int = 1,
-        num_attention_heads: int = 32,
-        attention_head_dim: int = 128,
-        cross_attention_dim: int = 4096,
-        vae_scale_factors: tuple[int, int, int] = (8, 32, 32),
-        pos_embed_max_pos: int = 20,
-        base_height: int = 2048,
-        base_width: int = 2048,
-        audio_in_channels: int = 128,  # Audio Arguments
-        audio_out_channels: int | None = 128,
-        audio_patch_size: int = 1,
-        audio_patch_size_t: int = 1,
-        audio_num_attention_heads: int = 32,
-        audio_attention_head_dim: int = 64,
-        audio_cross_attention_dim: int = 2048,
-        audio_scale_factor: int = 4,
-        audio_pos_embed_max_pos: int = 20,
-        audio_sampling_rate: int = 16000,
-        audio_hop_length: int = 160,
-        num_layers: int = 48,  # Shared arguments
-        activation_fn: str = "gelu-approximate",
-        qk_norm: str = "rms_norm_across_heads",
-        norm_elementwise_affine: bool = False,
-        norm_eps: float = 1e-6,
-        caption_channels: int = 3840,
-        attention_bias: bool = True,
-        attention_out_bias: bool = True,
-        rope_theta: float = 10000.0,
-        rope_double_precision: bool = True,
-        causal_offset: int = 1,
-        timestep_scale_multiplier: int = 1000,
-        cross_attn_timestep_scale_multiplier: int = 1000,
-        rope_type: str = "interleaved",
+        config: LTX2TransformerConfigBase,
     ) -> None:
+        self.config = config
+        in_channels = config.in_channels
+        out_channels = config.out_channels
+        patch_size = config.patch_size
+        patch_size_t = config.patch_size_t
+        num_attention_heads = config.num_attention_heads
+        attention_head_dim = config.attention_head_dim
+        cross_attention_dim = config.cross_attention_dim
+        vae_scale_factors = config.vae_scale_factors
+        pos_embed_max_pos = config.pos_embed_max_pos
+        base_height = config.base_height
+        base_width = config.base_width
+        audio_in_channels = config.audio_in_channels
+        audio_out_channels = config.audio_out_channels
+        audio_patch_size = config.audio_patch_size
+        audio_patch_size_t = config.audio_patch_size_t
+        audio_num_attention_heads = config.audio_num_attention_heads
+        audio_attention_head_dim = config.audio_attention_head_dim
+        audio_cross_attention_dim = config.audio_cross_attention_dim
+        audio_scale_factor = config.audio_scale_factor
+        audio_pos_embed_max_pos = config.audio_pos_embed_max_pos
+        audio_sampling_rate = config.audio_sampling_rate
+        audio_hop_length = config.audio_hop_length
+        num_layers = config.num_layers
+        activation_fn = config.activation_fn
+        qk_norm = config.qk_norm
+        norm_elementwise_affine = config.norm_elementwise_affine
+        norm_eps = config.norm_eps
+        caption_channels = config.caption_channels
+        attention_bias = config.attention_bias
+        attention_out_bias = config.attention_out_bias
+        rope_theta = config.rope_theta
+        rope_double_precision = config.rope_double_precision
+        causal_offset = config.causal_offset
+        timestep_scale_multiplier = config.timestep_scale_multiplier
+        cross_attn_timestep_scale_multiplier = (
+            config.cross_attn_timestep_scale_multiplier
+        )
+        rope_type = config.rope_type
         out_channels = out_channels or in_channels
         audio_out_channels = audio_out_channels or audio_in_channels
         inner_dim = num_attention_heads * attention_head_dim
@@ -1246,7 +1251,7 @@ class LTX2VideoTransformer3DModel(
         )
 
         # Audio-to-Video, Video-to-Audio Cross-Attention
-        cross_attn_pos_embed_max_pos = F.max(
+        cross_attn_pos_embed_max_pos = max(
             pos_embed_max_pos, audio_pos_embed_max_pos
         )
         self.cross_attn_rope = LTX2AudioVideoRotaryPosEmbed(

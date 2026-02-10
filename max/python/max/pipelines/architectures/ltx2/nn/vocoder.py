@@ -17,6 +17,8 @@ import max.functional as F
 from max import nn
 from max.tensor import Tensor
 
+from ..model_config import LTX2VocoderConfig
+
 
 class ResBlock(nn.Module[[Tensor], Tensor]):
     def __init__(
@@ -77,21 +79,18 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
 
     def __init__(
         self,
-        in_channels: int = 128,
-        hidden_channels: int = 1024,
-        out_channels: int = 2,
-        upsample_kernel_sizes: tuple[int, ...] = (16, 15, 8, 4, 4),
-        upsample_factors: tuple[int, ...] = (6, 5, 2, 2, 2),
-        resnet_kernel_sizes: tuple[int, ...] = (3, 7, 11),
-        resnet_dilations: tuple[tuple[int, ...], ...] = (
-            (1, 3, 5),
-            (1, 3, 5),
-            (1, 3, 5),
-        ),
-        leaky_relu_negative_slope: float = 0.1,
-        output_sampling_rate: int = 24000,
+        config: LTX2VocoderConfig,
     ):
         super().__init__()
+        in_channels = config.in_channels
+        hidden_channels = config.hidden_channels
+        out_channels = config.out_channels
+        upsample_kernel_sizes = config.upsample_kernel_sizes
+        upsample_factors = config.upsample_factors
+        resnet_kernel_sizes = config.resnet_kernel_sizes
+        resnet_dilations = config.resnet_dilations
+        leaky_relu_negative_slope = config.leaky_relu_negative_slope
+        output_sampling_rate = config.output_sampling_rate
         self.num_upsample_layers = len(upsample_kernel_sizes)
         self.resnets_per_upsample = len(resnet_kernel_sizes)
         self.out_channels = out_channels
