@@ -23,6 +23,7 @@ from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
+from .layers.upsampling import interpolate_2d_nearest
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2AudioConfig
 
@@ -363,7 +364,7 @@ class LTX2AudioUpsample(nn.Module[[Tensor], Tensor]):
                 )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = F.interpolate(x, scale_factor=2.0, mode="nearest")
+        x = interpolate_2d_nearest(x, scale_factor=2.0)
         if self.with_conv:
             x = self.conv(x)
             if self.causality_axis is None or self.causality_axis == "none":
