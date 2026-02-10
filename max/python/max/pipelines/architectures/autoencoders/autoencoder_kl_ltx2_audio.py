@@ -364,7 +364,7 @@ class LTX2AudioUpsample(nn.Module[[Tensor], Tensor]):
                 )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = interpolate_2d_nearest(x, scale_factor=2.0)
+        x = interpolate_2d_nearest(x, scale_factor=2)
         if self.with_conv:
             x = self.conv(x)
             if self.causality_axis is None or self.causality_axis == "none":
