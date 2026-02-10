@@ -666,8 +666,8 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         # to the exact target size. This avoids F.min (which returns a
         # TensorValue incompatible with the symbolic slice path) and
         # replaces the original crop-pad-crop with a single pad-crop.
-        time_pad = (target_time - current_time) if (target_time - current_time) > 0 else 0
-        freq_pad = (target_freq - current_freq) if (target_freq - current_freq) > 0 else 0
+        time_pad = (target_time - current_time) if (target_time > current_time) else 0
+        freq_pad = (target_freq - current_freq) if (target_freq > current_freq) else 0
         decoded_output = F.pad(
             decoded_output, (0, 0, 0, 0, 0, time_pad, 0, freq_pad)
         )
