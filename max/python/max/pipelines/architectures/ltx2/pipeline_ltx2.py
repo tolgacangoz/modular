@@ -207,7 +207,7 @@ class LTX2Pipeline(DiffusionPipeline):
         original_dtype = text_hidden_states.dtype
 
         # Create padding mask
-        token_indices = F.arange(seq_len, device=device).unsqueeze(0)
+        token_indices = Tensor.arange(seq_len, device=device).unsqueeze(0)
         if padding_side == "right":
             # For right padding, valid tokens are from 0 to sequence_length-1
             mask = (

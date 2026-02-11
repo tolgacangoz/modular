@@ -70,16 +70,12 @@ class LTX2RotaryPosEmbed1d(
         # 2. Calculate 1D RoPE frequencies
         num_rope_elems = 2  # 1 (because 1D) * 2 (for cos, sin) = 2
         freqs_dtype = DType.float64 if self.double_precision else DType.float32
-        pow_indices = F.pow(
-            self.theta,
-            Tensor.linspace(
-                start=0.0,
-                end=1.0,
-                steps=self.dim // num_rope_elems,
-                dtype=freqs_dtype,
-                device=device,
-            ),
-        )
+        steps = self.dim // num_rope_elems
+        linspace = Tensor.arange(steps, dtype=freqs_dtype, device=device)
+        if steps > 1:
+            linspace = linspace / float(steps - 1)
+
+        pow_indices = F.pow(self.theta, linspace)
         freqs = (pow_indices * math.pi / 2.0).cast(DType.float32)
 
         # 3. Matrix-vector outer product between pos ids of shape (batch_size, seq_len) and freqs vector of shape
@@ -270,7 +266,7 @@ class LTX2ConnectorTransformer1d(
 
             hidden_states_non_padded = [
                 hidden_states[i, binary_attn_mask[i].bool(), :]
-                for i in range(batch_size)
+                for i in range(int(batch_size))
             ]
             valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
             pad_lengths = [
