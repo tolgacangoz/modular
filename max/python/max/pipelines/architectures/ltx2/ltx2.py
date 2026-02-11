@@ -20,6 +20,7 @@ import max.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
+from max.graph import TensorType
 from max.nn.activations import FeedForward
 from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
@@ -896,7 +897,6 @@ class LTX2AudioVideoRotaryPosEmbed(
         batch_size: int,
         num_frames: int,
         device: Device,
-        fps: float = 25.0,
         shift: int = 0,
     ) -> Tensor:
         """
@@ -1318,6 +1318,76 @@ class LTX2VideoTransformer3DModel(
         )
         self.audio_proj_out = nn.Linear(audio_inner_dim, audio_out_channels)
 
+    def input_types(self) -> tuple[TensorType, ...]:
+        """Define input tensor types for the model.
+
+        Returns:
+            Tuple of TensorType specifications for all model inputs.
+        """
+        hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "num_video_tokens", self.config.in_channels],
+            device=self.config.device,
+        )
+        audio_hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=[
+                "batch_size",
+                "num_audio_tokens",
+                self.config.audio_in_channels,
+            ],
+            device=self.config.device,
+        )
+        encoder_hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "text_seq_len", self.config.caption_channels],
+            device=self.config.device,
+        )
+        audio_encoder_hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "audio_seq_len", self.config.caption_channels],
+            device=self.config.device,
+        )
+        timestep_type = TensorType(
+            DType.float32, shape=["batch_size"], device=self.config.device
+        )
+        audio_timestep_type = TensorType(
+            DType.float32, shape=["batch_size"], device=self.config.device
+        )
+        encoder_attention_mask_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "text_seq_len"],
+            device=self.config.device,
+        )
+        audio_encoder_attention_mask_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "audio_seq_len"],
+            device=self.config.device,
+        )
+        video_coords_type = TensorType(
+            DType.float32,
+            shape=["batch_size", 3, "video_seq_len", 2],
+            device=self.config.device,
+        )
+        audio_coords_type = TensorType(
+            DType.float32,
+            shape=["batch_size", 1, "audio_seq_len", 2],
+            device=self.config.device,
+        )
+
+        return (
+            hidden_states_type,
+            audio_hidden_states_type,
+            encoder_hidden_states_type,
+            audio_encoder_hidden_states_type,
+            timestep_type,
+            audio_timestep_type,
+            encoder_attention_mask_type,
+            audio_encoder_attention_mask_type,
+            video_coords_type,
+            audio_coords_type,
+        )
+
     def forward(
         self,
         hidden_states: Tensor,
@@ -1335,7 +1405,7 @@ class LTX2VideoTransformer3DModel(
         audio_num_frames: int | None = None,
         video_coords: Tensor | None = None,
         audio_coords: Tensor | None = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor]:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.
 
@@ -1544,4 +1614,4 @@ class LTX2VideoTransformer3DModel(
         )
         audio_output = self.audio_proj_out(audio_hidden_states)
 
-        return AudioVisualModelOutput(sample=output, audio_sample=audio_output)
+        return (output, audio_output)

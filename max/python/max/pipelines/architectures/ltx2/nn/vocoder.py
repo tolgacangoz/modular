@@ -15,6 +15,7 @@ import math
 
 import max.functional as F
 from max import nn
+from max.graph import TensorType
 from max.tensor import Tensor
 
 from ..model_config import LTX2VocoderConfig
@@ -154,6 +155,20 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             stride=1,
             padding=3,
         )
+
+    def input_types(self) -> tuple[TensorType, ...]:
+        """Define input tensor types for the model."""
+        hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=[
+                "batch_size",
+                self.config.in_channels,
+                "time",
+                "num_mel_bins",
+            ],
+            device=self.config.device,
+        )
+        return (hidden_states_type,)
 
     def forward(self, hidden_states: Tensor, time_last: bool = False) -> Tensor:
         r"""

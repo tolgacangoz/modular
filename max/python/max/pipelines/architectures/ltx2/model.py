@@ -62,23 +62,8 @@ class LTX2TransformerModel(ComponentModel):
         )
         return self.model
 
-    def __call__(
-        self,
-        hidden_states: Tensor,
-        encoder_hidden_states: Tensor,
-        timestep: Tensor,
-        img_ids: Tensor,
-        txt_ids: Tensor,
-        guidance: Tensor,
-    ) -> Any:
-        return self.model(
-            hidden_states,
-            encoder_hidden_states,
-            timestep,
-            img_ids,
-            txt_ids,
-            guidance,
-        )
+    def __call__(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
 
 
 class LTX2VocoderModel(ComponentModel):
@@ -110,8 +95,8 @@ class LTX2VocoderModel(ComponentModel):
         self.model = vocoder.compile(*vocoder.input_types(), weights=state_dict)
         return self.model
 
-    def __call__(self, mel_spectrogram: Tensor) -> Any:
-        return self.model(mel_spectrogram)
+    def __call__(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
 
 
 class LTX2TextConnectorsModel(ComponentModel):
@@ -145,14 +130,5 @@ class LTX2TextConnectorsModel(ComponentModel):
         )
         return self.model
 
-    def __call__(
-        self,
-        text_encoder_hidden_states: Tensor,
-        attention_mask: Tensor,
-        additive_mask: bool = False,
-    ) -> Any:
-        return self.model(
-            text_encoder_hidden_states,
-            attention_mask,
-            additive_mask=additive_mask,
-        )
+    def __call__(self, *args, **kwargs):
+        return self.model(*args, **kwargs)
