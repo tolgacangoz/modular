@@ -19,7 +19,6 @@ from max.driver import Device
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.pipelines.lib.interfaces.component_model import ComponentModel
-from max.tensor import Tensor
 
 from .ltx2 import LTX2VideoTransformer3DModel
 from .model_config import (
