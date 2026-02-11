@@ -242,6 +242,46 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         )
         self.to_out.append(nn.Dropout(dropout))
 
+    def prepare_attention_mask(
+        self,
+        attention_mask: Tensor,
+        target_length: int,
+        batch_size: int,
+        out_dim: int = 3,
+    ) -> Tensor:
+        """Prepares the attention mask for the attention op."""
+        if attention_mask is None:
+            return attention_mask
+
+        current_length = attention_mask.shape[-1]
+        if current_length != target_length:
+            padding_len = int(target_length - current_length)
+            rank = attention_mask.rank
+            # paddings: [before_dim0, after_dim0, before_dim1, after_dim1, ...]
+            paddings = [0] * (2 * rank)
+            paddings[-1] = padding_len
+            attention_mask = F.pad(attention_mask, paddings, value=0)
+
+        if out_dim == 3:
+            if attention_mask.shape[0] < batch_size * self.heads:
+                # repeat_interleave equivalent for GPU:
+                # [B, ...] -> [B, 1, ...] -> [B, heads, ...] -> [B*heads, ...]
+                orig_shape = attention_mask.shape
+                attention_mask = attention_mask.unsqueeze(1)
+                tile_shape = [1] * attention_mask.rank
+                tile_shape[1] = self.heads
+                attention_mask = F.tile(attention_mask, tile_shape)
+                new_shape = [batch_size * self.heads] + list(orig_shape[1:])
+                attention_mask = attention_mask.reshape(new_shape)
+        elif out_dim == 4:
+            # [B, ...] -> [B, 1, ...] -> [B, heads, ...]
+            attention_mask = attention_mask.unsqueeze(1)
+            tile_shape = [1] * attention_mask.rank
+            tile_shape[1] = self.heads
+            attention_mask = F.tile(attention_mask, tile_shape)
+
+        return attention_mask
+
     def forward(
         self,
         hidden_states: Tensor,
