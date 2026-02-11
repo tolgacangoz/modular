@@ -1014,7 +1014,9 @@ class LTX2AudioVideoRotaryPosEmbed(
         device = device or coords.device
 
         # Number of spatiotemporal dimensions (3 for video, 1 (temporal) for audio and cross attn)
-        num_pos_dims = coords.shape[1]
+        # Convert to int because coords.shape[1] returns a Dim object, and
+        # Dim.__rfloordiv__ has a bug causing infinite recursion with int // Dim.
+        num_pos_dims = int(coords.shape[1])
 
         # 1. If the coords are patch boundaries [start, end), use the midpoint of these boundaries as the patch
         # position index
@@ -1035,7 +1037,7 @@ class LTX2AudioVideoRotaryPosEmbed(
             max_positions = (self.base_num_frames,)
         # [B, num_pos_dims, num_patches] --> [B, num_patches, num_pos_dims]
         grid = F.stack(
-            [coords[:, i] / max_positions[i] for i in range(int(num_pos_dims))],
+            [coords[:, i] / max_positions[i] for i in range(num_pos_dims)],
             axis=-1,
         ).to(device)
         # Number of spatiotemporal dimensions (3 for video, 1 for audio and cross attn) times 2 for cos, sin
