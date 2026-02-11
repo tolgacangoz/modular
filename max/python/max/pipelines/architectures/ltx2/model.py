@@ -61,8 +61,23 @@ class LTX2TransformerModel(ComponentModel):
         )
         return self.model
 
-    def __call__(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
+    def __call__(self, **kwargs: Any) -> Any:
+        # Filter to only pass tensors that are part of input_types
+        # and match the forward signature of the compiled graph.
+        tensor_keys = {
+            "hidden_states",
+            "audio_hidden_states",
+            "encoder_hidden_states",
+            "audio_encoder_hidden_states",
+            "timestep",
+            "audio_timestep",
+            "encoder_attention_mask",
+            "audio_encoder_attention_mask",
+            "video_coords",
+            "audio_coords",
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in tensor_keys}
+        return self.model(**filtered_kwargs)
 
 
 class LTX2VocoderModel(ComponentModel):
@@ -94,8 +109,8 @@ class LTX2VocoderModel(ComponentModel):
         self.model = vocoder.compile(*vocoder.input_types(), weights=state_dict)
         return self.model
 
-    def __call__(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
+    def __call__(self, mel_spectrogram: Tensor, **kwargs: Any) -> Any:
+        return self.model(mel_spectrogram)
 
 
 class LTX2TextConnectorsModel(ComponentModel):
@@ -129,5 +144,10 @@ class LTX2TextConnectorsModel(ComponentModel):
         )
         return self.model
 
-    def __call__(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
+    def __call__(
+        self,
+        text_encoder_hidden_states: Tensor,
+        attention_mask: Tensor,
+        **kwargs: Any,
+    ) -> Any:
+        return self.model(text_encoder_hidden_states, attention_mask)
