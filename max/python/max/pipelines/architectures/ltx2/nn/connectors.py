@@ -286,10 +286,12 @@ class LTX2ConnectorTransformer1d(
                 [x.unsqueeze(0) for x in padded_hidden_states], axis=0
             )  # [B, L, D]
 
-            flipped_mask = binary_attn_mask[:, ::-1].unsqueeze(-1)  # [B, L, 1]
+            flipped_mask = (
+                binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
+            )
             hidden_states = (
                 flipped_mask * padded_hidden_states
-                + (1 - flipped_mask) * registers
+                + (1.0 - flipped_mask) * registers
             )
 
             # Overwrite attention_mask with an all-zeros mask if using registers.
@@ -400,7 +402,9 @@ class LTX2TextConnectors(
         # Convert to additive attention mask, if necessary
         if not additive_mask:
             text_dtype = text_encoder_hidden_states.dtype
-            attention_mask = (attention_mask - 1).reshape(
+            # Use float32 for arithmetic to avoid promotion issues with bool/uint8 masks
+            mask_float = attention_mask.cast(DType.float32)
+            attention_mask = (mask_float - 1.0).reshape(
                 (attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
             )
             attention_mask = (
