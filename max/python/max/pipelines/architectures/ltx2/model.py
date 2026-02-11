@@ -62,7 +62,12 @@ class LTX2TransformerModel(ComponentModel):
         return self.model
 
     def __call__(self, **kwargs: Any) -> Any:
-        # Filter to only pass tensors that are part of input_types
+        # 1. Provide fallbacks for optional tensors matching ltx2.py forward() logic.
+        # This ensures the compiled engine always receives all required inputs.
+        if "audio_timestep" not in kwargs or kwargs["audio_timestep"] is None:
+            kwargs["audio_timestep"] = kwargs.get("timestep")
+
+        # 2. Filter to only pass tensors that are part of input_types
         # and match the forward signature of the compiled graph.
         tensor_keys = {
             "hidden_states",
