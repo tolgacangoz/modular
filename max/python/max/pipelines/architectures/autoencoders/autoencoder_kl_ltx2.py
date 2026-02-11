@@ -996,7 +996,7 @@ class AutoencoderKLLTX2Video(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         super().__init__()
         self.config = config
         self.decoder = LTX2VideoDecoder3d(
-            in_channels=config.in_channels,
+            in_channels=config.latent_channels,
             out_channels=config.out_channels,
             patch_size=config.patch_size,
             patch_size_t=config.patch_size_t,
