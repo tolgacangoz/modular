@@ -1035,7 +1035,7 @@ class LTX2AudioVideoRotaryPosEmbed(
             max_positions = (self.base_num_frames,)
         # [B, num_pos_dims, num_patches] --> [B, num_patches, num_pos_dims]
         grid = F.stack(
-            [coords[:, i] / max_positions[i] for i in range(num_pos_dims)],
+            [coords[:, i] / max_positions[i] for i in range(int(num_pos_dims))],
             axis=-1,
         ).to(device)
         # Number of spatiotemporal dimensions (3 for video, 1 for audio and cross attn) times 2 for cos, sin
@@ -1043,16 +1043,12 @@ class LTX2AudioVideoRotaryPosEmbed(
 
         # 3. Create a 1D grid of frequencies for RoPE
         freqs_dtype = DType.float64 if self.double_precision else DType.float32
-        pow_indices = F.pow(
-            self.theta,
-            Tensor.linspace(
-                start=0.0,
-                end=1.0,
-                steps=self.dim // num_rope_elems,
-                dtype=freqs_dtype,
-                device=device,
-            ),
-        )
+        steps = self.dim // num_rope_elems
+        linspace = Tensor.arange(steps, dtype=freqs_dtype, device=device)
+        if steps > 1:
+            linspace = linspace / float(steps - 1)
+
+        pow_indices = F.pow(self.theta, linspace)
         freqs = (pow_indices * math.pi / 2.0).cast(DType.float32)
 
         # 4. Tensor-vector outer product between pos ids tensor of shape (B, 3, num_patches) and freqs vector of shape
