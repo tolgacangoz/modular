@@ -656,9 +656,10 @@ class LTX2Pipeline(DiffusionPipeline):
             )
 
         # 4. Process text embeddings through connectors
-        additive_attention_mask = (
-            1 - prompt_attention_mask.cast(prompt_embeds.dtype)
-        ) * -1000000.0
+        mask = prompt_attention_mask.cast(DType.float32)
+        additive_attention_mask = ((1.0 - mask) * -1000000.0).cast(
+            prompt_embeds.dtype
+        )
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,

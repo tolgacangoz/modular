@@ -1435,21 +1435,23 @@ class LTX2VideoTransformer3DModel(
             encoder_attention_mask is not None
             and encoder_attention_mask.rank == 2
         ):
-            encoder_attention_mask = (
-                1 - encoder_attention_mask.cast(hidden_states.dtype)
-            ) * -10000.0
-            encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
+            # Use float32 for the bias calculation to avoid uint8 promotion issues
+            mask = encoder_attention_mask.cast(DType.float32)
+            encoder_attention_mask = (1.0 - mask) * -10000.0
+            encoder_attention_mask = encoder_attention_mask.cast(
+                hidden_states.dtype
+            ).unsqueeze(1)
 
         if (
             audio_encoder_attention_mask is not None
             and audio_encoder_attention_mask.rank == 2
         ):
-            audio_encoder_attention_mask = (
-                1 - audio_encoder_attention_mask.cast(audio_hidden_states.dtype)
-            ) * -10000.0
-            audio_encoder_attention_mask = (
-                audio_encoder_attention_mask.unsqueeze(1)
-            )
+            # Use float32 for the bias calculation to avoid uint8 promotion issues
+            audio_mask = audio_encoder_attention_mask.cast(DType.float32)
+            audio_encoder_attention_mask = (1.0 - audio_mask) * -10000.0
+            audio_encoder_attention_mask = audio_encoder_attention_mask.cast(
+                audio_hidden_states.dtype
+            ).unsqueeze(1)
 
         batch_size = hidden_states.shape[0]
 
