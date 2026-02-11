@@ -63,7 +63,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
         needs_reshape = True
 
     # Split last dim (2*r) into (d=2, r)
-    last = x.shape[-1]
+    last = int(x.shape[-1])
     if last % 2 != 0:
         raise ValueError(
             f"Expected x.shape[-1] to be even for split rotary, got {last}."
@@ -1066,8 +1066,8 @@ class LTX2AudioVideoRotaryPosEmbed(
         # TODO: consider implementing this as a utility and reuse in `connectors.py`.
         # src/diffusers/pipelines/ltx2/connectors.py
         if self.rope_type == "interleaved":
-            cos_freqs = F.repeat_interleave(freqs.cos(), 2, axis=-1)
-            sin_freqs = F.repeat_interleave(freqs.sin(), 2, axis=-1)
+            cos_freqs = F.repeat_interleave(F.cos(freqs), 2, axis=-1)
+            sin_freqs = F.repeat_interleave(F.sin(freqs), 2, axis=-1)
 
             if self.dim % num_rope_elems != 0:
                 cos_padding = Tensor.ones_like(
@@ -1083,8 +1083,8 @@ class LTX2AudioVideoRotaryPosEmbed(
             expected_freqs = self.dim // 2
             current_freqs = freqs.shape[-1]
             pad_size = expected_freqs - current_freqs
-            cos_freq = freqs.cos()
-            sin_freq = freqs.sin()
+            cos_freq = F.cos(freqs)
+            sin_freq = F.sin(freqs)
 
             if pad_size != 0:
                 cos_padding = Tensor.ones_like(cos_freq[:, :, :pad_size])

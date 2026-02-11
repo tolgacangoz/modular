@@ -86,8 +86,8 @@ class LTX2RotaryPosEmbed1d(
 
         # 4. Get real, interleaved (cos, sin) frequencies, padded to self.dim
         if self.rope_type == "interleaved":
-            cos_freqs = freqs.cos().repeat_interleave(2, axis=-1)
-            sin_freqs = freqs.sin().repeat_interleave(2, axis=-1)
+            cos_freqs = F.repeat_interleave(F.cos(freqs), 2, axis=-1)
+            sin_freqs = F.repeat_interleave(F.sin(freqs), 2, axis=-1)
 
             if self.dim % num_rope_elems != 0:
                 cos_padding = Tensor.ones_like(
@@ -103,8 +103,8 @@ class LTX2RotaryPosEmbed1d(
             expected_freqs = self.dim // 2
             current_freqs = freqs.shape[-1]
             pad_size = expected_freqs - current_freqs
-            cos_freq = freqs.cos()
-            sin_freq = freqs.sin()
+            cos_freq = F.cos(freqs)
+            sin_freq = F.sin(freqs)
 
             if pad_size != 0:
                 cos_padding = Tensor.ones_like(cos_freq[:, :, :pad_size])
@@ -241,7 +241,8 @@ class LTX2ConnectorTransformer1d(
     ) -> tuple[Tensor, Tensor]:
         # hidden_states shape: [batch_size, seq_len, hidden_dim]
         # attention_mask shape: [batch_size, seq_len] or [batch_size, 1, 1, seq_len]
-        batch_size, seq_len, _ = hidden_states.shape
+        batch_size = int(hidden_states.shape[0])
+        seq_len = int(hidden_states.shape[1])
 
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
@@ -266,7 +267,7 @@ class LTX2ConnectorTransformer1d(
 
             hidden_states_non_padded = [
                 hidden_states[i, binary_attn_mask[i].bool(), :]
-                for i in range(int(batch_size))
+                for i in range(batch_size)
             ]
             valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
             pad_lengths = [
