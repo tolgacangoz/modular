@@ -373,8 +373,8 @@ class LTX2Pipeline(DiffusionPipeline):
             batch_size, _num_channels, latent_length, latent_mel_bins = (
                 latents.shape
             )
-            post_patch_latent_length = latent_length / patch_size_t
-            post_patch_mel_bins = latent_mel_bins / patch_size
+            post_patch_latent_length = latent_length // patch_size_t
+            post_patch_mel_bins = latent_mel_bins // patch_size
             latents = latents.reshape(
                 (
                     batch_size,
