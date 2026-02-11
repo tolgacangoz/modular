@@ -57,10 +57,9 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     if x.rank != 4 and cos.rank == 4:
         # cos is (#b, h, t, r) -> reshape x to (b, h, t, dim_per_head)
         # The cos/sin batch dim may only be broadcastable, so take batch size from x
-        # Use x's own seq dim to avoid symbolic dim mismatch (num_video_tokens vs video_seq_len)
         b = x.shape[0]
-        h = int(cos.shape[1])
-        x = x.reshape((b, x.shape[1], h, -1)).transpose(1, 2)
+        _, h, t, _ = cos.shape
+        x = x.reshape((b, t, h, -1)).transpose(1, 2)
         needs_reshape = True
 
     # Split last dim (2*r) into (d=2, r)
@@ -91,7 +90,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     out = out.reshape((*out.shape[:-2], last))
 
     if needs_reshape:
-        out = out.transpose(1, 2).reshape((b, out.shape[2], -1))
+        out = out.transpose(1, 2).reshape((b, t, -1))
 
     out = out.cast(x_dtype)
     return out
