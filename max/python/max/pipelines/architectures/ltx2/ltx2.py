@@ -1398,13 +1398,13 @@ class LTX2VideoTransformer3DModel(
         audio_timestep: Tensor | None = None,
         encoder_attention_mask: Tensor | None = None,
         audio_encoder_attention_mask: Tensor | None = None,
+        video_coords: Tensor | None = None,
+        audio_coords: Tensor | None = None,
         num_frames: int | None = None,
         height: int | None = None,
         width: int | None = None,
         fps: float = 25.0,
         audio_num_frames: int | None = None,
-        video_coords: Tensor | None = None,
-        audio_coords: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.
@@ -1453,7 +1453,16 @@ class LTX2VideoTransformer3DModel(
 
         batch_size = hidden_states.shape[0]
 
-        # 1. Prepare RoPE positional embeddings
+        # 1. Prepare metadata defaults for tracing.
+        # These are used during compile() when coordinate inputs are not yet provided.
+        num_frames = num_frames if num_frames is not None else 121
+        height = height if height is not None else 512
+        width = width if width is not None else 512
+        audio_num_frames = (
+            audio_num_frames if audio_num_frames is not None else num_frames
+        )
+
+        # 2. Prepare RoPE positional embeddings
         if video_coords is None:
             video_coords = self.rope.prepare_video_coords(
                 batch_size,
@@ -1472,7 +1481,6 @@ class LTX2VideoTransformer3DModel(
                 batch_size,
                 audio_num_frames,
                 audio_hidden_states.device,
-                fps=fps,
             )
 
         video_rotary_emb = self.rope(video_coords, device=hidden_states.device)
