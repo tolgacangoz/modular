@@ -17,6 +17,7 @@ import max.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
+from max.graph import TensorType
 from max.nn.activations import FeedForward
 from max.tensor import Tensor
 
@@ -375,6 +376,20 @@ class LTX2TextConnectors(
             causal_temporal_positioning=causal_temporal_positioning,
             rope_type=rope_type,
         )
+
+    def input_types(self) -> tuple[TensorType, ...]:
+        """Define input tensor types for the model."""
+        text_encoder_hidden_states_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "text_seq_len", self.config.caption_channels],
+            device=self.config.device,
+        )
+        attention_mask_type = TensorType(
+            self.config.dtype,
+            shape=["batch_size", "text_seq_len"],
+            device=self.config.device,
+        )
+        return (text_encoder_hidden_states_type, attention_mask_type)
 
     def forward(
         self,
