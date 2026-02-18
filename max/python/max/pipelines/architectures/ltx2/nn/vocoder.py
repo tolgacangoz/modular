@@ -162,7 +162,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             self.config.dtype,
             shape=[
                 "batch_size",
-                self.config.in_channels,
+                self.config.out_channels,
                 "time",
                 "num_mel_bins",
             ],

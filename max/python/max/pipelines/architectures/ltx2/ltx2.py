@@ -1364,14 +1364,14 @@ class LTX2VideoTransformer3DModel(
         """
         hidden_states_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "num_video_tokens", self.config.in_channels],
+            shape=["batch_size", "video_seq_len", self.config.in_channels],
             device=self.config.device,
         )
         audio_hidden_states_type = TensorType(
             self.config.dtype,
             shape=[
                 "batch_size",
-                "num_audio_tokens",
+                "audio_seq_len",
                 self.config.audio_in_channels,
             ],
             device=self.config.device,
