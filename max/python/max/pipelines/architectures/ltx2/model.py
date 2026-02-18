@@ -54,7 +54,7 @@ class LTX2TransformerModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data().astype(self.config.dtype)
+            key: value.data()#.astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():
@@ -113,7 +113,7 @@ class LTX2VocoderModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data().astype(self.config.dtype)
+            key: value.data()#.astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():
@@ -152,7 +152,7 @@ class LTX2TextConnectorsModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data().astype(self.config.dtype)
+            key: value.data()#.astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():
