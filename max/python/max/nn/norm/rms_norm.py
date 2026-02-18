@@ -78,6 +78,7 @@ class RMSNorm(Module[[Tensor], Tensor]):
         self, dim: int, eps: float = 1e-6, elementwise_affine: bool = True
     ) -> None:
         """Construct RMSNorm.
+
         Args:
             dim: Size of last dimension of the expected input.
             eps: Value added to denominator for numerical stability.
@@ -94,6 +95,7 @@ class RMSNorm(Module[[Tensor], Tensor]):
 
     @property
     def dim(self) -> Dim:
+        """The size of the last dimension of the expected input."""
         return self._dim
 
     def __rich_repr__(self):
@@ -111,6 +113,7 @@ class RMSNorm(Module[[Tensor], Tensor]):
         return self.weight
 
     def forward(self, x: Tensor) -> Tensor:
+        """Applies RMS normalization to the input."""
         return rms_norm(x, self._affine_params(x), self.eps)
 
 
