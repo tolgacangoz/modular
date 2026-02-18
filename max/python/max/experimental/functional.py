@@ -87,6 +87,7 @@ def _run(coro: Coroutine[Any, Any, Result]) -> Result:
     If not inside an event loop, uses ``asyncio.run()``. If already inside
     an event loop (e.g., in Jupyter), runs the coroutine in a separate
     thread to avoid blocking.
+
     Args:
         coro: The coroutine to execute.
 

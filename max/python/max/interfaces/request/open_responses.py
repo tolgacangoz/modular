@@ -596,7 +596,7 @@ OutputContent = Annotated[
     | ReasoningSummaryContent
     | OutputImageContent
     | OutputVideoContent
-    | OutputAudioContent
+    | OutputAudioContent,
     Field(discriminator="type"),
 ]
 
