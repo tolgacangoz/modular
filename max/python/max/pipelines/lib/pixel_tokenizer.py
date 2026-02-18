@@ -210,6 +210,9 @@ class PixelGenerationTokenizer(
         self._default_sample_size = 128
         self._num_channels_latents = transformer_config["in_channels"] // 4
 
+        scheduler_config = components.get("scheduler", {}).get(
+            "config_dict", {}
+        )
         # Store static scheduler config for shift calculation
         self._base_image_seq_len = scheduler_config.get(
             "base_image_seq_len", 256
