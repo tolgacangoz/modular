@@ -218,6 +218,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         self.out_dim = query_dim
         self.heads = heads
         self.rope_type = rope_type
+        self.scale = math.sqrt(dim_head)
 
         self.norm_q = nn.RMSNorm(
             dim_head * heads,
