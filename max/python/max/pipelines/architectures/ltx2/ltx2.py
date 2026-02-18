@@ -296,12 +296,16 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         )
 
         if attention_mask is not None:
-            attention_mask = self.prepare_attention_mask(
-                attention_mask, sequence_length, batch_size
-            )
-            attention_mask = attention_mask.reshape(
-                (batch_size, self.heads, -1, attention_mask.shape[-1])
-            )
+            # Ensure mask is 4D [B, H, Q, K] for broadcasting with
+            # attention scores. .rank is always a concrete int, so
+            # these branches are safe during graph tracing.
+            if attention_mask.rank == 2:
+                # [B, K] -> [B, 1, 1, K]
+                attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
+            elif attention_mask.rank == 3:
+                # [B, 1, K] -> [B, 1, 1, K]
+                attention_mask = attention_mask.unsqueeze(1)
+            # rank == 4: already [B, H, Q, K], use as-is
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states

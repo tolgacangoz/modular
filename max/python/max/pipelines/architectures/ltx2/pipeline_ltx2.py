@@ -619,8 +619,10 @@ class LTX2Pipeline(DiffusionPipeline):
         text_encoder_hidden_states = self._encode_tokens(
             token_ids, device="cuda"
         )
+        # Reduce [B, seq_len] bool mask → [B] integer counts, matching
+        sequence_lengths = prompt_attention_mask.cast(DType.int64).sum(axis=-1)
         prompt_embeds = self._pack_text_embeds(
-            text_encoder_hidden_states, prompt_attention_mask, device
+            text_encoder_hidden_states, sequence_lengths, device
         )
 
         # Encode negative prompt if doing CFG
@@ -639,9 +641,12 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_hidden_states = self._encode_tokens(
                     negative_token_ids, device="cuda"
                 )
+                negative_sequence_lengths = negative_attention_mask.cast(
+                    DType.int64
+                ).sum(axis=-1)
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
-                    negative_attention_mask,
+                    negative_sequence_lengths,
                     device,
                 )
             else:
@@ -753,6 +758,15 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_coords = self.transformer.audio_rope.prepare_audio_coords(
             audio_latents.shape[0], audio_num_frames, device
         )
+
+        # Duplicate positional coords for CFG (batch dim doubles).
+        if self.do_classifier_free_guidance:
+            video_coords = F.concat(
+                [video_coords, video_coords], axis=0
+            )
+            audio_coords = F.concat(
+                [audio_coords, audio_coords], axis=0
+            )
 
         num_warmup_steps = model_inputs.num_warmup_steps
 
