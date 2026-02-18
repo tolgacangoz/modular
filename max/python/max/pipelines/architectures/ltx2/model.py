@@ -53,7 +53,10 @@ class LTX2TransformerModel(ComponentModel):
         self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
-        state_dict = {key: value.data() for key, value in self.weights.items()}
+        state_dict = {
+            key: value.data().cast(self.config.dtype)
+            for key, value in self.weights.items()
+        }
         with F.lazy():
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
             ltx2transformer.to(self.devices[0])
@@ -108,7 +111,10 @@ class LTX2VocoderModel(ComponentModel):
         self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
-        state_dict = {key: value.data() for key, value in self.weights.items()}
+        state_dict = {
+            key: value.data().cast(self.config.dtype)
+            for key, value in self.weights.items()
+        }
         with F.lazy():
             vocoder = LTX2Vocoder(self.config)
             vocoder.to(self.devices[0])
@@ -141,7 +147,10 @@ class LTX2TextConnectorsModel(ComponentModel):
         self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
-        state_dict = {key: value.data() for key, value in self.weights.items()}
+        state_dict = {
+            key: value.data().cast(self.config.dtype)
+            for key, value in self.weights.items()
+        }
         with F.lazy():
             connectors = LTX2TextConnectors(self.config)
             connectors.to(self.devices[0])
