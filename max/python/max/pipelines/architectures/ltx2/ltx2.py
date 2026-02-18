@@ -538,12 +538,12 @@ class LTX2VideoTransformerBlock(
 
         # 5. Per-Layer Modulation Parameters
         # Self-Attention / Feedforward AdaLayerNorm-Zero mod params
-        self.scale_shift_table = Tensor.ones((6, dim))  # / dim**0.5
-        self.audio_scale_shift_table = Tensor.ones((6, audio_dim))  # / audio_dim**0.5
+        self.scale_shift_table = Tensor.ones((6, dim), dtype=DType.float32)  # / dim**0.5
+        self.audio_scale_shift_table = Tensor.ones((6, audio_dim), dtype=DType.float32)  # / audio_dim**0.5
 
         # Per-layer a2v, v2a Cross-Attention mod params
-        self.video_a2v_cross_attn_scale_shift_table = Tensor.ones((5, dim))
-        self.audio_a2v_cross_attn_scale_shift_table = Tensor.ones((5, audio_dim))
+        self.video_a2v_cross_attn_scale_shift_table = Tensor.ones((5, dim), dtype=DType.float32)
+        self.audio_a2v_cross_attn_scale_shift_table = Tensor.ones((5, audio_dim), dtype=DType.float32)
 
     def forward(
         self,
@@ -1263,10 +1263,10 @@ class LTX2VideoTransformer3DModel(
 
         # 3.3. Output Layer Scale/Shift Modulation parameters
         self.scale_shift_table = (
-            Tensor.ones((2, inner_dim))  # / inner_dim**0.5
+            Tensor.ones((2, inner_dim), dtype=DType.float32)  # / inner_dim**0.5
         )
         self.audio_scale_shift_table = (
-            Tensor.ones((2, audio_inner_dim))  # / audio_inner_dim**0.5
+            Tensor.ones((2, audio_inner_dim), dtype=DType.float32)  # / audio_inner_dim**0.5
         )
 
         # 4. Rotary Positional Embeddings (RoPE)
