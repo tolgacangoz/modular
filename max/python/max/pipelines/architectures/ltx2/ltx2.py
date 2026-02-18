@@ -289,7 +289,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         query_rotary_emb: tuple[Tensor, Tensor] | None = None,
         key_rotary_emb: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
-        batch_size, sequence_length, _ = (
+        batch_size, _, _ = (
             hidden_states.shape
             if encoder_hidden_states is None
             else encoder_hidden_states.shape
@@ -335,9 +335,13 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     else query_rotary_emb,
                 )
 
-        query = query.reshape((batch_size, sequence_length, self.heads, -1))
-        key = key.reshape((batch_size, sequence_length, self.heads, -1))
-        value = value.reshape((batch_size, sequence_length, self.heads, -1))
+        # Use -1 for the sequence dimension so each tensor infers its own
+        # length. In cross-attention, query has video_seq_len while key/value
+        # have text_seq_len — using a single sequence_length would be wrong.
+        # This mirrors diffusers' unflatten(2, (attn.heads, -1)).
+        query = query.reshape((batch_size, -1, self.heads, self.head_dim))
+        key = key.reshape((batch_size, -1, self.heads, self.head_dim))
+        value = value.reshape((batch_size, -1, self.heads, self.head_dim))
 
         # Scaled dot-product attention
         # Transpose to [B, heads, seq, head_dim] for attention computation
