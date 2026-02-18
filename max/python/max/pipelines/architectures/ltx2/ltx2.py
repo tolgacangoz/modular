@@ -85,6 +85,10 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     first_out = first_out - sin_u * second_x
     second_out = second_out + sin_u * first_x
 
+    # In diffusers, addcmul_ mutates `out` through the first_out/second_out views.
+    # MAX tensors are immutable, so we must reconstruct `out` explicitly.
+    out = F.concat([first_out, second_out], axis=-2)
+
     out = out.reshape((*out.shape[:-2], last))
 
     if needs_reshape:
@@ -680,7 +684,7 @@ class LTX2VideoTransformerBlock(
             video_ca_scale_shift_table[:, :, 2],
             video_ca_scale_shift_table[:, :, 3],
         )
-        a2v_gate = video_ca_gate[:, :, 0].squeeze(2)
+        a2v_gate = video_ca_gate[:, :, 0]
 
         # Audio
         audio_per_layer_ca_scale_shift = (
@@ -714,15 +718,15 @@ class LTX2VideoTransformerBlock(
             audio_ca_scale_shift_table[:, :, 2],
             audio_ca_scale_shift_table[:, :, 3],
         )
-        v2a_gate = audio_ca_gate[:, :, 0].squeeze(2)
+        v2a_gate = audio_ca_gate[:, :, 0]
 
         # Audio-to-Video Cross Attention: Q: Video; K,V: Audio
         mod_norm_hidden_states = norm_hidden_states * (
-            1 + video_a2v_ca_scale.squeeze(2)
-        ) + video_a2v_ca_shift.squeeze(2)
+            1 + video_a2v_ca_scale
+        ) + video_a2v_ca_shift
         mod_norm_audio_hidden_states = norm_audio_hidden_states * (
-            1 + audio_a2v_ca_scale.squeeze(2)
-        ) + audio_a2v_ca_shift.squeeze(2)
+            1 + audio_a2v_ca_scale
+        ) + audio_a2v_ca_shift
 
         a2v_attn_hidden_states = self.audio_to_video_attn(
             mod_norm_hidden_states,
@@ -736,11 +740,11 @@ class LTX2VideoTransformerBlock(
 
         # Video-to-Audio Cross Attention: Q: Audio; K,V: Video
         mod_norm_hidden_states = norm_hidden_states * (
-            1 + video_v2a_ca_scale.squeeze(2)
-        ) + video_v2a_ca_shift.squeeze(2)
+            1 + video_v2a_ca_scale
+        ) + video_v2a_ca_shift
         mod_norm_audio_hidden_states = norm_audio_hidden_states * (
-            1 + audio_v2a_ca_scale.squeeze(2)
-        ) + audio_v2a_ca_shift.squeeze(2)
+            1 + audio_v2a_ca_scale
+        ) + audio_v2a_ca_shift
 
         v2a_attn_hidden_states = self.video_to_audio_attn(
             mod_norm_audio_hidden_states,
