@@ -380,7 +380,11 @@ class LTX2TextConnectors(
         """Define input tensor types for the model."""
         text_encoder_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "text_seq_len", self.config.caption_channels * self.config.text_proj_in_factor],
+            shape=[
+                "batch_size",
+                "text_seq_len",
+                self.config.caption_channels * self.config.text_proj_in_factor,
+            ],
             device=self.config.device,
         )
         attention_mask_type = TensorType(
