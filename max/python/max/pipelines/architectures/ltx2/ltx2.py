@@ -22,7 +22,6 @@ from max.driver import Device
 from max.dtype import DType
 from max.graph import TensorType
 from max.nn.activations import FeedForward
-from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
@@ -30,7 +29,6 @@ from ..flux1.layers.embeddings import PixArtAlphaTextProjection
 from ..flux2.layers.activations import ACT2FN
 from .model_config import LTX2TransformerConfigBase
 
-flash_attention_gpu = F.functional(_flash_attention_gpu)
 logger = logging.getLogger(__name__)
 
 
@@ -337,13 +335,20 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         key = key.reshape((batch_size, sequence_length, self.heads, -1))
         value = value.reshape((batch_size, sequence_length, self.heads, -1))
 
-        hidden_states = flash_attention_gpu(
-            query,
-            key,
-            value,
-            attention_mask,
-            self.scale,
-        )
+        # Scaled dot-product attention
+        # Transpose to [B, heads, seq, head_dim] for attention computation
+        query = query.transpose(1, 2)
+        key = key.transpose(1, 2)
+        value = value.transpose(1, 2)
+
+        scores = query @ F.transpose(key, 2, 3)
+        scores = scores * (1.0 / self.scale)
+        if attention_mask is not None:
+            scores = scores + attention_mask
+        hidden_states = F.softmax(scores) @ value
+
+        # Transpose back to [B, seq, heads, head_dim] and flatten
+        hidden_states = hidden_states.transpose(1, 2)
         hidden_states = F.flatten(hidden_states, 2, 3)
         hidden_states = hidden_states.cast(query.dtype)
 
