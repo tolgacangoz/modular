@@ -252,7 +252,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         if attention_mask is None:
             return attention_mask
 
-        current_length = attention_mask.shape[-1]
+        current_length = int(attention_mask.shape[-1])
         if current_length != target_length:
             padding_len = target_length - current_length
             rank = attention_mask.rank
@@ -262,7 +262,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             attention_mask = F.pad(attention_mask, paddings, value=0)
 
         if out_dim == 3:
-            if attention_mask.shape[0] < batch_size * self.heads:
+            if int(attention_mask.shape[0]) < batch_size * self.heads:
                 # repeat_interleave equivalent for GPU:
                 # [B, ...] -> [B, 1, ...] -> [B, heads, ...] -> [B*heads, ...]
                 orig_shape = attention_mask.shape
