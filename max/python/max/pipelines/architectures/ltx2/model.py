@@ -60,8 +60,9 @@ class LTX2TransformerModel(ComponentModel):
         with F.lazy():
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
             ltx2transformer.to(self.devices[0])
+        ltx2transformer.load_state_dict(state_dict)
         self.model = ltx2transformer.compile(
-            *ltx2transformer.input_types(), weights=state_dict
+            *ltx2transformer.input_types(),# weights=state_dict
         )
         return self.model
 
@@ -118,7 +119,10 @@ class LTX2VocoderModel(ComponentModel):
         with F.lazy():
             vocoder = LTX2Vocoder(self.config)
             vocoder.to(self.devices[0])
-        self.model = vocoder.compile(*vocoder.input_types(), weights=state_dict)
+        vocoder.load_state_dict(state_dict)
+        self.model = vocoder.compile(*vocoder.input_types(),
+                                     # weights=state_dict
+                                     )
         return self.model
 
     def __call__(self, mel_spectrogram: Tensor, **kwargs: Any) -> Any:
@@ -154,8 +158,9 @@ class LTX2TextConnectorsModel(ComponentModel):
         with F.lazy():
             connectors = LTX2TextConnectors(self.config)
             connectors.to(self.devices[0])
+        connectors.load_state_dict(state_dict)
         self.model = connectors.compile(
-            *connectors.input_types(), weights=state_dict
+            *connectors.input_types(),# weights=state_dict
         )
         return self.model
 
