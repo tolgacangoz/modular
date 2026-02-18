@@ -68,6 +68,7 @@ class PipelineClassName(str, Enum):
     FLUX = "FluxPipeline"
     FLUX2 = "Flux2Pipeline"
     ZIMAGE = "ZImagePipeline"
+    LTX2 = "LTX2Pipeline"
 
     @classmethod
     def from_diffusers_config(
