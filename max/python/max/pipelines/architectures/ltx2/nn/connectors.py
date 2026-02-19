@@ -239,21 +239,15 @@ class LTX2ConnectorTransformer1d(
     ) -> tuple[Tensor, Tensor]:
         # hidden_states shape: [batch_size, seq_len, hidden_dim]
         # attention_mask shape: [batch_size, seq_len] or [batch_size, 1, 1, seq_len]
-        batch_size = int(hidden_states.shape[0])
-        seq_len = int(hidden_states.shape[1])
+        batch_size = hidden_states.shape[0]
+        seq_len = hidden_states.shape[1]
 
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
-            # Calculate repeats using ceiling division to fully cover seq_len
-            num_register_repeats = (
-                seq_len + self.num_learnable_registers - 1
-            ) // self.num_learnable_registers
+            num_register_repeats = seq_len // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
-            )  # [>=seq_len, inner_dim]
-
-            # Slice to match exact sequence length
-            registers = registers[:seq_len]
+            )  # [seq_len, inner_dim]
 
             # Graph-safe register replacement: use masked blending
             # instead of dynamic boolean indexing / per-batch loops.
