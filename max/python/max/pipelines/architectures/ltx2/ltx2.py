@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import max.functional as F
-from max import nn, random
+from max import nn
 from max.driver import Device
 from max.dtype import DType
 from max.graph import TensorType
@@ -538,12 +538,20 @@ class LTX2VideoTransformerBlock(
 
         # 5. Per-Layer Modulation Parameters
         # Self-Attention / Feedforward AdaLayerNorm-Zero mod params
-        self.scale_shift_table = Tensor.ones((6, dim), dtype=DType.float32)  # / dim**0.5
-        self.audio_scale_shift_table = Tensor.ones((6, audio_dim), dtype=DType.float32)  # / audio_dim**0.5
+        self.scale_shift_table = Tensor.ones(
+            (6, dim), dtype=DType.float32
+        )  # / dim**0.5
+        self.audio_scale_shift_table = Tensor.ones(
+            (6, audio_dim), dtype=DType.float32
+        )  # / audio_dim**0.5
 
         # Per-layer a2v, v2a Cross-Attention mod params
-        self.video_a2v_cross_attn_scale_shift_table = Tensor.ones((5, dim), dtype=DType.float32)
-        self.audio_a2v_cross_attn_scale_shift_table = Tensor.ones((5, audio_dim), dtype=DType.float32)
+        self.video_a2v_cross_attn_scale_shift_table = Tensor.ones(
+            (5, dim), dtype=DType.float32
+        )
+        self.audio_a2v_cross_attn_scale_shift_table = Tensor.ones(
+            (5, audio_dim), dtype=DType.float32
+        )
 
     def forward(
         self,
@@ -717,12 +725,13 @@ class LTX2VideoTransformerBlock(
         v2a_gate = audio_ca_gate[:, :, 0]
 
         # Audio-to-Video Cross Attention: Q: Video; K,V: Audio
-        mod_norm_hidden_states = norm_hidden_states * (
-            1 + video_a2v_ca_scale
-        ) + video_a2v_ca_shift
-        mod_norm_audio_hidden_states = norm_audio_hidden_states * (
-            1 + audio_a2v_ca_scale
-        ) + audio_a2v_ca_shift
+        mod_norm_hidden_states = (
+            norm_hidden_states * (1 + video_a2v_ca_scale) + video_a2v_ca_shift
+        )
+        mod_norm_audio_hidden_states = (
+            norm_audio_hidden_states * (1 + audio_a2v_ca_scale)
+            + audio_a2v_ca_shift
+        )
 
         a2v_attn_hidden_states = self.audio_to_video_attn(
             mod_norm_hidden_states,
@@ -735,12 +744,13 @@ class LTX2VideoTransformerBlock(
         hidden_states = hidden_states + a2v_gate * a2v_attn_hidden_states
 
         # Video-to-Audio Cross Attention: Q: Audio; K,V: Video
-        mod_norm_hidden_states = norm_hidden_states * (
-            1 + video_v2a_ca_scale
-        ) + video_v2a_ca_shift
-        mod_norm_audio_hidden_states = norm_audio_hidden_states * (
-            1 + audio_v2a_ca_scale
-        ) + audio_v2a_ca_shift
+        mod_norm_hidden_states = (
+            norm_hidden_states * (1 + video_v2a_ca_scale) + video_v2a_ca_shift
+        )
+        mod_norm_audio_hidden_states = (
+            norm_audio_hidden_states * (1 + audio_v2a_ca_scale)
+            + audio_v2a_ca_shift
+        )
 
         v2a_attn_hidden_states = self.video_to_audio_attn(
             mod_norm_audio_hidden_states,
@@ -1266,7 +1276,9 @@ class LTX2VideoTransformer3DModel(
             Tensor.ones((2, inner_dim), dtype=DType.float32)  # / inner_dim**0.5
         )
         self.audio_scale_shift_table = (
-            Tensor.ones((2, audio_inner_dim), dtype=DType.float32)  # / audio_inner_dim**0.5
+            Tensor.ones(
+                (2, audio_inner_dim), dtype=DType.float32
+            )  # / audio_inner_dim**0.5
         )
 
         # 4. Rotary Positional Embeddings (RoPE)

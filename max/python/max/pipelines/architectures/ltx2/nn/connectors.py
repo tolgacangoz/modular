@@ -202,9 +202,10 @@ class LTX2ConnectorTransformer1d(
         self.num_learnable_registers = num_learnable_registers
         self.learnable_registers = None
         if num_learnable_registers is not None:
-            self.learnable_registers = random.uniform(
-                (num_learnable_registers, self.inner_dim)
-            ) * 2.0 - 1.0
+            self.learnable_registers = (
+                random.uniform((num_learnable_registers, self.inner_dim)) * 2.0
+                - 1.0
+            )
 
         self.rope = LTX2RotaryPosEmbed1d(
             self.inner_dim,
@@ -239,32 +240,51 @@ class LTX2ConnectorTransformer1d(
     ) -> tuple[Tensor, Tensor]:
         # hidden_states shape: [batch_size, seq_len, hidden_dim]
         # attention_mask shape: [batch_size, seq_len] or [batch_size, 1, 1, seq_len]
-        batch_size = hidden_states.shape[0]
-        seq_len = hidden_states.shape[1]
+        batch_size, seq_len, _ = hidden_states.shape
 
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
+            if seq_len % self.num_learnable_registers != 0:
+                raise ValueError(
+                    f"The `hidden_states` sequence length {hidden_states.shape[1]} should be divisible by the number"
+                    f" of learnable registers {self.num_learnable_registers}"
+                )
+
             num_register_repeats = seq_len // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
             )  # [seq_len, inner_dim]
 
-            # Graph-safe register replacement: use masked blending
-            # instead of dynamic boolean indexing / per-batch loops.
             binary_attn_mask = (
                 attention_mask >= attn_mask_binarize_threshold
-            ).cast(DType.int32)
+            ).int()
             if binary_attn_mask.rank == 4:
                 binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
 
-            # Expand mask for broadcasting: [B, L] -> [B, L, 1]
-            mask_3d = binary_attn_mask.unsqueeze(-1).cast(DType.float32)
+            hidden_states_non_padded = [
+                hidden_states[i, binary_attn_mask[i].bool(), :]
+                for i in range(batch_size)
+            ]
+            valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
+            pad_lengths = [
+                seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
+            ]
+            padded_hidden_states = [
+                F.pad(x, pad=(0, p, 0, 0), value=0)
+                for x, p in zip(hidden_states_non_padded, pad_lengths, strict=False)
+            ]
+            padded_hidden_states = F.concat(
+                [x.unsqueeze(0) for x in padded_hidden_states], axis=0
+            )  # [B, L, D]
 
-            # Blend: keep valid tokens where mask=1, use registers where mask=0
+            flipped_mask = (
+                binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
+            )
             hidden_states = (
-                mask_3d * hidden_states + (1.0 - mask_3d) * registers
+                flipped_mask * padded_hidden_states
+                + (1 - flipped_mask) * registers
             )
 
             # Overwrite attention_mask with an all-zeros mask if using registers.
@@ -302,7 +322,9 @@ class LTX2TextConnectors(
         self.config = config
 
         self.text_proj_in = nn.Linear(
-            config.caption_channels * config.text_proj_in_factor, config.caption_channels, bias=False
+            config.caption_channels * config.text_proj_in_factor,
+            config.caption_channels,
+            bias=False,
         )
         self.video_connector = LTX2ConnectorTransformer1d(
             num_attention_heads=config.video_connector_num_attention_heads,
