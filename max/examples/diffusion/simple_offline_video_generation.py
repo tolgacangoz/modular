@@ -214,6 +214,7 @@ async def generate_video(args: argparse.Namespace) -> None:
     config = PipelineConfig(
         model_path=args.model,
         device_specs=device_specs,
+        quantization_encoding=SupportedEncoding(args.encoding),
         use_legacy_module=False,
     )
 
