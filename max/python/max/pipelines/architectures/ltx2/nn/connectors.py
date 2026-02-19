@@ -257,6 +257,8 @@ class LTX2ConnectorTransformer1d(
                 self.learnable_registers, (num_register_repeats, 1)
             )  # [seq_len, inner_dim]
 
+            # Graph-safe register replacement: use masked blending
+            # instead of dynamic boolean indexing / per-batch loops.
             binary_attn_mask = (
                 attention_mask >= attn_mask_binarize_threshold
             ).cast(DType.int32)
@@ -265,30 +267,12 @@ class LTX2ConnectorTransformer1d(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
 
-            hidden_states_non_padded = [
-                hidden_states[i, binary_attn_mask[i].bool(), :]
-                for i in range(batch_size)
-            ]
-            valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
-            pad_lengths = [
-                seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
-            ]
-            padded_hidden_states = [
-                F.pad(x, pad=(0, p, 0, 0), value=0)
-                for x, p in zip(
-                    hidden_states_non_padded, pad_lengths, strict=False
-                )
-            ]
-            padded_hidden_states = F.concat(
-                [x.unsqueeze(0) for x in padded_hidden_states], axis=0
-            )  # [B, L, D]
+            # Expand mask for broadcasting: [B, L] -> [B, L, 1]
+            mask_3d = binary_attn_mask.unsqueeze(-1).cast(DType.float32)
 
-            flipped_mask = (
-                binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
-            )
+            # Blend: keep valid tokens where mask=1, use registers where mask=0
             hidden_states = (
-                flipped_mask * padded_hidden_states
-                + (1.0 - flipped_mask) * registers
+                mask_3d * hidden_states + (1.0 - mask_3d) * registers
             )
 
             # Overwrite attention_mask with an all-zeros mask if using registers.
