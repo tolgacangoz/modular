@@ -83,36 +83,28 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         config: LTX2VocoderConfig,
     ):
         super().__init__()
-        in_channels = config.in_channels
-        hidden_channels = config.hidden_channels
-        out_channels = config.out_channels
-        upsample_kernel_sizes = config.upsample_kernel_sizes
-        upsample_factors = config.upsample_factors
-        resnet_kernel_sizes = config.resnet_kernel_sizes
-        resnet_dilations = config.resnet_dilations
-        leaky_relu_negative_slope = config.leaky_relu_negative_slope
-        output_sampling_rate = config.output_sampling_rate
-        self.num_upsample_layers = len(upsample_kernel_sizes)
-        self.resnets_per_upsample = len(resnet_kernel_sizes)
-        self.out_channels = out_channels
-        self.total_upsample_factor = math.prod(upsample_factors)
-        self.negative_slope = leaky_relu_negative_slope
+        self.config = config
+        self.num_upsample_layers = len(config.upsample_kernel_sizes)
+        self.resnets_per_upsample = len(config.resnet_kernel_sizes)
+        self.out_channels = config.out_channels
+        self.total_upsample_factor = math.prod(config.upsample_factors)
+        self.negative_slope = config.leaky_relu_negative_slope
 
-        if self.num_upsample_layers != len(upsample_factors):
+        if self.num_upsample_layers != len(config.upsample_factors):
             raise ValueError(
                 f"`upsample_kernel_sizes` and `upsample_factors` should be lists of the same length but are length"
-                f" {self.num_upsample_layers} and {len(upsample_factors)}, respectively."
+                f" {self.num_upsample_layers} and {len(config.upsample_factors)}, respectively."
             )
 
-        if self.resnets_per_upsample != len(resnet_dilations):
+        if self.resnets_per_upsample != len(config.resnet_dilations):
             raise ValueError(
                 f"`resnet_kernel_sizes` and `resnet_dilations` should be lists of the same length but are length"
-                f" {self.resnets_per_upsample} and {len(resnet_dilations)}, respectively."
+                f" {self.resnets_per_upsample} and {len(config.resnet_dilations)}, respectively."
             )
 
         self.conv_in = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=hidden_channels,
+            in_channels=config.in_channels,
+            out_channels=config.hidden_channels,
             kernel_size=7,
             stride=1,
             padding=3,
@@ -120,9 +112,9 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
 
         self.upsamplers = nn.ModuleList()
         self.resnets = nn.ModuleList()
-        input_channels = hidden_channels
+        input_channels = config.hidden_channels
         for stride, kernel_size in zip(
-            upsample_factors, upsample_kernel_sizes, strict=False
+            config.upsample_factors, config.upsample_kernel_sizes, strict=False
         ):
             output_channels = input_channels // 2
             self.upsamplers.append(
@@ -136,21 +128,21 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             )
 
             for kernel_size, dilations in zip(
-                resnet_kernel_sizes, resnet_dilations, strict=False
+                config.resnet_kernel_sizes, config.resnet_dilations, strict=False
             ):
                 self.resnets.append(
                     ResBlock(
                         output_channels,
                         kernel_size,
                         dilations=dilations,
-                        leaky_relu_negative_slope=leaky_relu_negative_slope,
+                        leaky_relu_negative_slope=config.leaky_relu_negative_slope,
                     )
                 )
             input_channels = output_channels
 
         self.conv_out = nn.Conv1d(
             in_channels=output_channels,
-            out_channels=out_channels,
+            out_channels=config.out_channels,
             kernel_size=7,
             stride=1,
             padding=3,
