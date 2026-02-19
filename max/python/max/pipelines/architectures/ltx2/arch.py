@@ -28,6 +28,7 @@ ltx2_arch = SupportedArchitecture(
     task=PipelineTask.PIXEL_GENERATION,
     default_encoding=SupportedEncoding.bfloat16,
     supported_encodings={
+        SupportedEncoding.float32: [],
         SupportedEncoding.bfloat16: [],
         SupportedEncoding.float8_e4m3fn: [],
         SupportedEncoding.float4_e2m1fnx2: [],
