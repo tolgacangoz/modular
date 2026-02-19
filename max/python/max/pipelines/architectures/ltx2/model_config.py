@@ -96,7 +96,7 @@ class LTX2VocoderConfig(MAXModelConfigBase):
     upsample_factors: tuple[int, ...] = (6, 5, 2, 2, 2)
     upsample_kernel_sizes: tuple[int, ...] = (16, 15, 8, 4, 4)
     dtype: DType = DType.float32  # Vocoders often run in float32
-    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
+    device: DeviceRef = Field(default_factory=DeviceRef.GPU)
 
     @staticmethod
     def generate(
@@ -135,7 +135,7 @@ class LTX2TextConnectorsConfig(MAXModelConfigBase):
     video_connector_num_layers: int = 2
     video_connector_num_learnable_registers: int = 128
     dtype: DType = DType.bfloat16
-    device: DeviceRef = Field(default_factory=DeviceRef.CPU)
+    device: DeviceRef = Field(default_factory=DeviceRef.GPU)
 
     @staticmethod
     def generate(
