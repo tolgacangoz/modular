@@ -128,7 +128,9 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             )
 
             for kernel_size, dilations in zip(
-                config.resnet_kernel_sizes, config.resnet_dilations, strict=False
+                config.resnet_kernel_sizes,
+                config.resnet_dilations,
+                strict=False,
             ):
                 self.resnets.append(
                     ResBlock(

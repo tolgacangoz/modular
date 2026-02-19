@@ -74,7 +74,7 @@ class LTX2TransformerModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data()#.astype(self.config.dtype)
+            key: value.data()  # .astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():
@@ -134,7 +134,7 @@ class LTX2VocoderModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data()#.astype(self.config.dtype)
+            key: value.data()  # .astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():
@@ -142,9 +142,7 @@ class LTX2VocoderModel(ComponentModel):
             # vocoder.load_state_dict(state_dict)
             vocoder.to(self.devices[0])
         state_dict = _reconcile_dtypes(state_dict, vocoder)
-        self.model = vocoder.compile(
-            *vocoder.input_types(), weights=state_dict
-        )
+        self.model = vocoder.compile(*vocoder.input_types(), weights=state_dict)
         return self.model
 
     def __call__(self, mel_spectrogram: Tensor, **kwargs: Any) -> Any:
@@ -174,7 +172,7 @@ class LTX2TextConnectorsModel(ComponentModel):
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
-            key: value.data()#.astype(self.config.dtype)
+            key: value.data()  # .astype(self.config.dtype)
             for key, value in self.weights.items()
         }
         with F.lazy():

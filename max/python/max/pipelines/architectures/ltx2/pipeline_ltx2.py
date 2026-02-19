@@ -761,12 +761,8 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Duplicate positional coords for CFG (batch dim doubles).
         if self.do_classifier_free_guidance:
-            video_coords = F.concat(
-                [video_coords, video_coords], axis=0
-            )
-            audio_coords = F.concat(
-                [audio_coords, audio_coords], axis=0
-            )
+            video_coords = F.concat([video_coords, video_coords], axis=0)
+            audio_coords = F.concat([audio_coords, audio_coords], axis=0)
 
         num_warmup_steps = model_inputs.num_warmup_steps
 
