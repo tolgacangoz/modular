@@ -246,12 +246,6 @@ class LTX2ConnectorTransformer1d(
 
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
-            if seq_len % self.num_learnable_registers != 0:
-                raise ValueError(
-                    f"The `hidden_states` sequence length {hidden_states.shape[1]} should be divisible by the number"
-                    f" of learnable registers {self.num_learnable_registers}"
-                )
-
             num_register_repeats = seq_len // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
