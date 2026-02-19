@@ -301,57 +301,32 @@ class LTX2TextConnectors(
         config: LTX2TextConnectorsConfig,
     ):
         super().__init__()
-        caption_channels = config.caption_channels
-        text_proj_in_factor = config.text_proj_in_factor
-        video_connector_num_attention_heads = (
-            config.video_connector_num_attention_heads
-        )
-        video_connector_attention_head_dim = (
-            config.video_connector_attention_head_dim
-        )
-        video_connector_num_layers = config.video_connector_num_layers
-        video_connector_num_learnable_registers = (
-            config.video_connector_num_learnable_registers
-        )
-        audio_connector_num_attention_heads = (
-            config.audio_connector_num_attention_heads
-        )
-        audio_connector_attention_head_dim = (
-            config.audio_connector_attention_head_dim
-        )
-        audio_connector_num_layers = config.audio_connector_num_layers
-        audio_connector_num_learnable_registers = (
-            config.audio_connector_num_learnable_registers
-        )
-        connector_rope_base_seq_len = config.connector_rope_base_seq_len
-        rope_theta = config.rope_theta
-        rope_double_precision = config.rope_double_precision
-        causal_temporal_positioning = config.causal_temporal_positioning
-        rope_type = config.rope_type
+        self.config = config
+
         self.text_proj_in = nn.Linear(
-            caption_channels * text_proj_in_factor, caption_channels, bias=False
+            config.caption_channels * config.text_proj_in_factor, config.caption_channels, bias=False
         )
         self.video_connector = LTX2ConnectorTransformer1d(
-            num_attention_heads=video_connector_num_attention_heads,
-            attention_head_dim=video_connector_attention_head_dim,
-            num_layers=video_connector_num_layers,
-            num_learnable_registers=video_connector_num_learnable_registers,
-            rope_base_seq_len=connector_rope_base_seq_len,
-            rope_theta=rope_theta,
-            rope_double_precision=rope_double_precision,
-            causal_temporal_positioning=causal_temporal_positioning,
-            rope_type=rope_type,
+            num_attention_heads=config.video_connector_num_attention_heads,
+            attention_head_dim=config.video_connector_attention_head_dim,
+            num_layers=config.video_connector_num_layers,
+            num_learnable_registers=config.video_connector_num_learnable_registers,
+            rope_base_seq_len=config.connector_rope_base_seq_len,
+            rope_theta=config.rope_theta,
+            rope_double_precision=config.rope_double_precision,
+            causal_temporal_positioning=config.causal_temporal_positioning,
+            rope_type=config.rope_type,
         )
         self.audio_connector = LTX2ConnectorTransformer1d(
-            num_attention_heads=audio_connector_num_attention_heads,
-            attention_head_dim=audio_connector_attention_head_dim,
-            num_layers=audio_connector_num_layers,
-            num_learnable_registers=audio_connector_num_learnable_registers,
-            rope_base_seq_len=connector_rope_base_seq_len,
-            rope_theta=rope_theta,
-            rope_double_precision=rope_double_precision,
-            causal_temporal_positioning=causal_temporal_positioning,
-            rope_type=rope_type,
+            num_attention_heads=config.audio_connector_num_attention_heads,
+            attention_head_dim=config.audio_connector_attention_head_dim,
+            num_layers=config.audio_connector_num_layers,
+            num_learnable_registers=config.audio_connector_num_learnable_registers,
+            rope_base_seq_len=config.connector_rope_base_seq_len,
+            rope_theta=config.rope_theta,
+            rope_double_precision=config.rope_double_precision,
+            causal_temporal_positioning=config.causal_temporal_positioning,
+            rope_type=config.rope_type,
         )
 
     def input_types(self) -> tuple[TensorType, ...]:
