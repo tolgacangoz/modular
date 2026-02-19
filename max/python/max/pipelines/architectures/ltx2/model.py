@@ -70,7 +70,7 @@ class LTX2TransformerModel(ComponentModel):
             encoding,
             devices,
         )
-        self.load_model()
+        # self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
