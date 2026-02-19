@@ -110,7 +110,7 @@ class RMSNorm(Module[[Tensor], Tensor]):
                 F.constant(1.0, dtype=x.dtype, device=x.device),
                 shape=(x.shape[-1],),
             )
-        return self.weight
+        return self.weight.cast(x.dtype)
 
     def forward(self, x: Tensor) -> Tensor:
         """Applies RMS normalization to the input."""
