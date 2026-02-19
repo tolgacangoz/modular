@@ -17,6 +17,7 @@ from typing import Any
 from max import functional as F
 from max.driver import Device
 from max.graph.weights import Weights
+from max.nn import Module
 from max.pipelines.lib import SupportedEncoding
 from max.pipelines.lib.interfaces.component_model import ComponentModel
 from max.tensor import Tensor
@@ -29,6 +30,25 @@ from .model_config import (
 )
 from .nn.connectors import LTX2TextConnectors
 from .nn.vocoder import LTX2Vocoder
+
+
+def _reconcile_dtypes(
+    state_dict: dict[str, Any], model: Module[..., Any]
+) -> dict[str, Any]:
+    """Cast state_dict values to match model parameter dtypes.
+
+    Models use mixed dtypes (e.g. BF16 for Linear weights, F32 for
+    scale_shift_table). The compile(weights=) path requires exact dtype
+    match, so we cast each weight to the model parameter's expected dtype.
+    """
+    param_dtypes = {name: param.dtype for name, param in model.parameters}
+    for key in list(state_dict.keys()):
+        if key in param_dtypes:
+            w = state_dict[key]
+            target_dtype = param_dtypes[key]
+            if hasattr(w, "dtype") and w.dtype != target_dtype:
+                state_dict[key] = w.astype(target_dtype)
+    return state_dict
 
 
 class LTX2TransformerModel(ComponentModel):
@@ -61,8 +81,9 @@ class LTX2TransformerModel(ComponentModel):
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
             # ltx2transformer.load_state_dict(state_dict)
             ltx2transformer.to(self.devices[0])
+        state_dict = _reconcile_dtypes(state_dict, ltx2transformer)
         self.model = ltx2transformer.compile(
-            *ltx2transformer.input_types(),#weights=state_dict
+            *ltx2transformer.input_types(), weights=state_dict
         )
         return self.model
 
@@ -120,9 +141,10 @@ class LTX2VocoderModel(ComponentModel):
             vocoder = LTX2Vocoder(self.config)
             # vocoder.load_state_dict(state_dict)
             vocoder.to(self.devices[0])
-        self.model = vocoder.compile(*vocoder.input_types(),
-                                     weights=state_dict
-                                     )
+        state_dict = _reconcile_dtypes(state_dict, vocoder)
+        self.model = vocoder.compile(
+            *vocoder.input_types(), weights=state_dict
+        )
         return self.model
 
     def __call__(self, mel_spectrogram: Tensor, **kwargs: Any) -> Any:
@@ -159,6 +181,7 @@ class LTX2TextConnectorsModel(ComponentModel):
             connectors = LTX2TextConnectors(self.config)
             # connectors.load_state_dict(state_dict)
             connectors.to(self.devices[0])
+        state_dict = _reconcile_dtypes(state_dict, connectors)
         self.model = connectors.compile(
             *connectors.input_types(), weights=state_dict
         )
