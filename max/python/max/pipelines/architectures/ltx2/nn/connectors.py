@@ -244,12 +244,18 @@ class LTX2ConnectorTransformer1d(
         batch_size = int(hidden_states.shape[0])
         seq_len = int(hidden_states.shape[1])
 
-        # 1. Replace padding with learned registers, if using
+            # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
-            num_register_repeats = seq_len // self.num_learnable_registers
+            # Calculate repeats using ceiling division to fully cover seq_len
+            num_register_repeats = (
+                seq_len + self.num_learnable_registers - 1
+            ) // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
-            )  # [seq_len, inner_dim]
+            )  # [>=seq_len, inner_dim]
+
+            # Slice to match exact sequence length
+            registers = registers[:seq_len]
 
             # Graph-safe register replacement: use masked blending
             # instead of dynamic boolean indexing / per-batch loops.
