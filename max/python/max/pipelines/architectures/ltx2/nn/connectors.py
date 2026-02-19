@@ -202,11 +202,9 @@ class LTX2ConnectorTransformer1d(
         self.num_learnable_registers = num_learnable_registers
         self.learnable_registers = None
         if num_learnable_registers is not None:
-            init_registers = (
-                random.uniform((num_learnable_registers, self.inner_dim)) * 2.0
-                - 1.0
-            )
-            self.learnable_registers = Tensor.constant(init_registers)
+            self.learnable_registers = random.uniform(
+                (num_learnable_registers, self.inner_dim)
+            ) * 2.0 - 1.0
 
         self.rope = LTX2RotaryPosEmbed1d(
             self.inner_dim,
@@ -244,7 +242,7 @@ class LTX2ConnectorTransformer1d(
         batch_size = int(hidden_states.shape[0])
         seq_len = int(hidden_states.shape[1])
 
-            # 1. Replace padding with learned registers, if using
+        # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
             # Calculate repeats using ceiling division to fully cover seq_len
             num_register_repeats = (
