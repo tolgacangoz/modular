@@ -251,13 +251,13 @@ class LTX2ConnectorTransformer1d(
 
             binary_attn_mask = (
                 attention_mask >= attn_mask_binarize_threshold
-            ).int()
+            ).cast(DType.int32)
             if binary_attn_mask.rank == 4:
                 binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
 
-            hidden_states_non_padded = hidden_states[:, binary_attn_mask.bool(), :]
+            hidden_states_non_padded = hidden_states[:, binary_attn_mask.cast(DType.bool), :]
             valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
             pad_lengths = [
                 seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
