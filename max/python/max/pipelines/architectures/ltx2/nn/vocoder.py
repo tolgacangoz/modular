@@ -155,7 +155,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         hidden_states_type = TensorType(
             self.config.dtype,
             shape=[
-                "batch_size",
+                1,
                 self.config.out_channels,
                 "time",
                 "num_mel_bins",

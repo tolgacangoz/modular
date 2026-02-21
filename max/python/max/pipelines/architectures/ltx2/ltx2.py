@@ -1390,13 +1390,13 @@ class LTX2VideoTransformer3DModel(
         """
         hidden_states_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "video_seq_len", self.config.in_channels],
+            shape=[1, "video_seq_len", self.config.in_channels],
             device=self.config.device,
         )
         audio_hidden_states_type = TensorType(
             self.config.dtype,
             shape=[
-                "batch_size",
+                1,
                 "audio_seq_len",
                 self.config.audio_in_channels,
             ],
@@ -1404,38 +1404,38 @@ class LTX2VideoTransformer3DModel(
         )
         encoder_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "text_seq_len", self.config.caption_channels],
+            shape=[1, 1024, self.config.caption_channels],
             device=self.config.device,
         )
         audio_encoder_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "audio_seq_len", self.config.caption_channels],
+            shape=[1, "audio_seq_len", self.config.caption_channels],
             device=self.config.device,
         )
         timestep_type = TensorType(
-            DType.float32, shape=["batch_size"], device=self.config.device
+            DType.float32, shape=[1], device=self.config.device
         )
         audio_timestep_type = TensorType(
-            DType.float32, shape=["batch_size"], device=self.config.device
+            DType.float32, shape=[1], device=self.config.device
         )
         encoder_attention_mask_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "text_seq_len"],
+            shape=[1, 1024],
             device=self.config.device,
         )
         audio_encoder_attention_mask_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "audio_seq_len"],
+            shape=[1, "audio_seq_len"],
             device=self.config.device,
         )
         video_coords_type = TensorType(
             DType.float32,
-            shape=["batch_size", 3, "video_seq_len", 2],
+            shape=[1, 3, "video_seq_len", 2],
             device=self.config.device,
         )
         audio_coords_type = TensorType(
             DType.float32,
-            shape=["batch_size", 1, "audio_seq_len", 2],
+            shape=[1, 1, "audio_seq_len", 2],
             device=self.config.device,
         )
 
