@@ -112,7 +112,7 @@ class AutoencoderKLLTX2VideoConfig(AutoencoderKLConfigBase):
                 init_dict[param] = config_dict[param]
         init_dict.update(
             {
-                "dtype": encoding.dtype,
+                "dtype": supported_encoding_dtype(encoding),
                 "device": DeviceRef.from_device(devices[0]),
             }
         )
@@ -170,7 +170,7 @@ class AutoencoderKLLTX2AudioConfig(AutoencoderKLConfigBase):
                 init_dict[param] = config_dict[param]
         init_dict.update(
             {
-                "dtype": encoding.dtype,
+                "dtype": supported_encoding_dtype(encoding),
                 "device": DeviceRef.from_device(devices[0]),
             }
         )

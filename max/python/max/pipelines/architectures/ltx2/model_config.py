@@ -16,6 +16,7 @@ from max.driver import Device
 from max.dtype import DType
 from max.graph import DeviceRef
 from max.pipelines.lib import MAXModelConfigBase, SupportedEncoding
+from max.pipelines.lib.config_enums import supported_encoding_dtype
 from pydantic import Field
 
 
@@ -74,7 +75,7 @@ class LTX2TransformerConfig(LTX2TransformerConfigBase):
         }
         init_dict.update(
             {
-                "dtype": encoding.dtype,
+                "dtype": supported_encoding_dtype(encoding),
                 "device": DeviceRef.from_device(devices[0]),
             }
         )
@@ -111,7 +112,7 @@ class LTX2VocoderConfig(MAXModelConfigBase):
         }
         init_dict.update(
             {
-                "dtype": encoding.dtype,
+                "dtype": supported_encoding_dtype(encoding),
                 "device": DeviceRef.from_device(devices[0]),
             }
         )
@@ -150,7 +151,7 @@ class LTX2TextConnectorsConfig(MAXModelConfigBase):
         }
         init_dict.update(
             {
-                "dtype": encoding.dtype,
+                "dtype": supported_encoding_dtype(encoding),
                 "device": DeviceRef.from_device(devices[0]),
             }
         )
