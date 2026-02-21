@@ -138,6 +138,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Output filename for the generated video.",
     )
     from typing import get_args
+
     parser.add_argument(
         "--encoding",
         type=str,
