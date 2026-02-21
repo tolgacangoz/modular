@@ -137,11 +137,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="output.mp4",
         help="Output filename for the generated video.",
     )
+    from typing import get_args
     parser.add_argument(
         "--encoding",
         type=str,
         default="bfloat16",
-        choices=[e.value for e in SupportedEncoding],
+        choices=list(get_args(SupportedEncoding)),
         help="Weight encoding type (default: bfloat16).",
     )
 
@@ -214,7 +215,7 @@ async def generate_video(args: argparse.Namespace) -> None:
     config = PipelineConfig(
         model_path=args.model,
         device_specs=device_specs,
-        quantization_encoding=SupportedEncoding(args.encoding),
+        quantization_encoding=args.encoding,
         use_legacy_module=False,
     )
 
