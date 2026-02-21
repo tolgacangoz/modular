@@ -273,7 +273,9 @@ class LTX2ConnectorTransformer1d(
             ]
             padded_hidden_states = [
                 F.pad(x, pad=(0, p, 0, 0), value=0)
-                for x, p in zip(hidden_states_non_padded, pad_lengths, strict=False)
+                for x, p in zip(
+                    hidden_states_non_padded, pad_lengths, strict=False
+                )
             ]
             padded_hidden_states = F.concat(
                 [x.unsqueeze(0) for x in padded_hidden_states], axis=0
