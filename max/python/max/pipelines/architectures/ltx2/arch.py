@@ -17,7 +17,6 @@ from max.pipelines.core import PixelContext
 from max.pipelines.lib import (
     PixelGenerationTokenizer,
     SupportedArchitecture,
-    SupportedEncoding,
 )
 
 from .model_config import LTX2TransformerConfig

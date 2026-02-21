@@ -257,22 +257,15 @@ class LTX2ConnectorTransformer1d(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
 
-            hidden_states_non_padded = hidden_states[:, binary_attn_mask.cast(DType.bool), :]
-            valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
-            pad_lengths = [
-                seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
-            ]
-            padded_hidden_states = [
-                F.pad(x, pad=(0, p, 0, 0), value=0)
-                for x, p in zip(
-                    hidden_states_non_padded, pad_lengths, strict=False
-                )
-            ]
-            padded_hidden_states = F.concat(
-                [x.unsqueeze(0) for x in padded_hidden_states], axis=0
-            )  # [B, L, D]
+            padded_hidden_states = F.where(
+                binary_attn_mask.cast(DType.bool).unsqueeze(-1),
+                hidden_states,
+                0.0,
+            )
 
-            flipped_mask = binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
+            flipped_mask = (
+                binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
+            )
             hidden_states = (
                 flipped_mask * padded_hidden_states
                 + (1 - flipped_mask) * registers
