@@ -26,12 +26,12 @@ from .pipeline_ltx2 import LTX2Pipeline
 ltx2_arch = SupportedArchitecture(
     name="LTX2Pipeline",
     task=PipelineTask.PIXEL_GENERATION,
-    default_encoding=SupportedEncoding.bfloat16,
+    default_encoding="bfloat16",
     supported_encodings={
-        SupportedEncoding.float32: [],
-        SupportedEncoding.bfloat16: [],
-        SupportedEncoding.float8_e4m3fn: [],
-        SupportedEncoding.float4_e2m1fnx2: [],
+        "float32": [],
+        "bfloat16": [],
+        "float8_e4m3fn": [],
+        "float4_e2m1fnx2": [],
     },
     example_repo_ids=["Lightricks/LTX-2"],
     pipeline_model=LTX2Pipeline,
