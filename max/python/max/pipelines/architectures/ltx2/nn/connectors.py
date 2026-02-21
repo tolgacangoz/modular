@@ -384,7 +384,7 @@ class LTX2TextConnectors(
             text_encoder_hidden_states, attention_mask
         )
 
-        attn_mask = (new_attn_mask < 1e-6).cast(DType.int64)
+        attn_mask = (new_attn_mask < 1e-6).cast(video_text_embedding.dtype)
         attn_mask = attn_mask.reshape(
             (video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
         )
