@@ -244,12 +244,6 @@ class LTX2ConnectorTransformer1d(
 
         # 1. Replace padding with learned registers, if using
         if self.learnable_registers is not None:
-            if seq_len % self.num_learnable_registers != 0:
-                raise ValueError(
-                    f"The `hidden_states` sequence length {hidden_states.shape[1]} should be divisible by the number"
-                    f" of learnable registers {self.num_learnable_registers}"
-                )
-
             num_register_repeats = seq_len // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
@@ -263,10 +257,7 @@ class LTX2ConnectorTransformer1d(
                     1
                 )  # [B, 1, 1, L] --> [B, L]
 
-            hidden_states_non_padded = [
-                hidden_states[i, binary_attn_mask[i].bool(), :]
-                for i in range(batch_size)
-            ]
+            hidden_states_non_padded = hidden_states[:, binary_attn_mask.bool(), :]
             valid_seq_lens = [x.shape[0] for x in hidden_states_non_padded]
             pad_lengths = [
                 seq_len - valid_seq_len for valid_seq_len in valid_seq_lens
@@ -281,9 +272,7 @@ class LTX2ConnectorTransformer1d(
                 [x.unsqueeze(0) for x in padded_hidden_states], axis=0
             )  # [B, L, D]
 
-            flipped_mask = (
-                binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
-            )
+            flipped_mask = binary_attn_mask[:, ::-1].unsqueeze(-1).cast(DType.float32)
             hidden_states = (
                 flipped_mask * padded_hidden_states
                 + (1 - flipped_mask) * registers
@@ -357,14 +346,14 @@ class LTX2TextConnectors(
             self.config.dtype,
             shape=[
                 "batch_size",
-                "text_seq_len",
+                1024,
                 self.config.caption_channels * self.config.text_proj_in_factor,
             ],
             device=self.config.device,
         )
         attention_mask_type = TensorType(
             self.config.dtype,
-            shape=["batch_size", "text_seq_len"],
+            shape=["batch_size", 1024],
             device=self.config.device,
         )
         return (text_encoder_hidden_states_type, attention_mask_type)
