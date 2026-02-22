@@ -60,7 +60,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
         x = x.reshape((b, t, h, -1)).transpose(1, 2)
         needs_reshape = True
 
-    # Split last dim (2*r) into (d=2, r)
+    # Split last dim (2*r) into two halves along the last axis.
     last = int(x.shape[-1])
     if last % 2 != 0:
         raise ValueError(
@@ -68,28 +68,18 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
         )
     r = last // 2
 
-    # (..., 2, r)
-    split_x = x.reshape((x.shape[0], x.shape[1], x.shape[2], 2, r)).cast(
-        DType.float32
-    )  # Explicitly upcast to float
-    first_x = split_x[..., :1, :]  # (..., 1, r)
-    second_x = split_x[..., 1:, :]  # (..., 1, r)
+    # Avoid 5D intermediates (rank > 4 triggers a Mojo compiler BMM shape
+    # tracking bug). Slice the last dimension directly instead of reshaping
+    # to (..., 2, r).
+    x_cast = x.cast(DType.float32)
+    first_x = x_cast[..., :r]   # (..., r)
+    second_x = x_cast[..., r:]  # (..., r)
 
-    cos_u = cos.unsqueeze(-2)  # broadcast to (..., 1, r) against (..., 2, r)
-    sin_u = sin.unsqueeze(-2)
+    # cos/sin shape is (..., r) — broadcast directly, no unsqueeze needed.
+    first_out = first_x * cos - sin * second_x
+    second_out = second_x * cos + sin * first_x
 
-    out = split_x * cos_u
-    first_out = out[..., :1, :]
-    second_out = out[..., 1:, :]
-
-    first_out = first_out - sin_u * second_x
-    second_out = second_out + sin_u * first_x
-
-    # In diffusers, addcmul_ mutates `out` through the first_out/second_out views.
-    # MAX tensors are immutable, so we must reconstruct `out` explicitly.
-    out = F.concat([first_out, second_out], axis=-2)
-
-    out = out.reshape((out.shape[0], out.shape[1], out.shape[2], last))
+    out = F.concat([first_out, second_out], axis=-1)
 
     if needs_reshape:
         out = out.transpose(1, 2).reshape((b, t, -1))
