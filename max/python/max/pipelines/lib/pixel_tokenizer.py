@@ -784,8 +784,12 @@ class PixelGenerationTokenizer(
             width=width,
             num_inference_steps=num_inference_steps,
             guidance_scale=image_options.guidance_scale,
+            guidance=guidance,
             num_images_per_prompt=image_options.num_images,
             true_cfg_scale=image_options.true_cfg_scale,
+            num_visuals_per_prompt=image_options.num_images,
+            num_frames=request.num_frames,
+            frame_rate=request.frame_rate,
             num_warmup_steps=num_warmup_steps,
             model_name=request.body.model,
             input_image=preprocessed_image_array,  # Pass numpy array instead of PIL.Image

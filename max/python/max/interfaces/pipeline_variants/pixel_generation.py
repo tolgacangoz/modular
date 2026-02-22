@@ -147,8 +147,18 @@ class PixelGenerationContext(BaseContext, Protocol):
         ...
 
     @property
-    def num_images_per_prompt(self) -> int:
+    def num_visuals_per_prompt(self) -> int:
         """Number of images to generate."""
+        ...
+
+    @property
+    def num_frames(self) -> int | None:
+        """Number of frames to generate for video output."""
+        ...
+
+    @property
+    def frame_rate(self) -> int | None:
+        """Frame rate for generated video."""
         ...
 
 
