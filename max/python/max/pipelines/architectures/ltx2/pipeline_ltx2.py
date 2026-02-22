@@ -141,6 +141,9 @@ class LTX2Pipeline(DiffusionPipeline):
         if torch.cuda.is_available():
             self.text_encoder.to("cuda")
 
+        self._joint_attention_kwargs: dict[str, Any] | None = None
+        self._num_timesteps: int = 0
+
     def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
         return LTX2ModelInputs.from_context(context)
 
@@ -506,6 +509,7 @@ class LTX2Pipeline(DiffusionPipeline):
     def _decode_latents(
         self,
         latents: Tensor,
+        num_frames: int,
         height: int,
         width: int,
         output_type: Literal["np", "latent", "pil"] = "np",
@@ -513,9 +517,7 @@ class LTX2Pipeline(DiffusionPipeline):
         if output_type == "latent":
             return latents
         latents = Tensor.from_dlpack(latents)
-        latents = self._unpack_latents(
-            latents, height, width, self.vae_spatial_compression_ratio
-        )
+        latents = self._unpack_latents(latents, num_frames, height, width)
         # Denormalize
         latents = self._denormalize_latents(latents)
 
@@ -577,6 +579,7 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
         self._guidance_scale = guidance_scale
+        self._num_timesteps = num_inference_steps
 
         # 1. Compute latent dimensions (may be overridden by precomputed latents)
         latent_num_frames = (
