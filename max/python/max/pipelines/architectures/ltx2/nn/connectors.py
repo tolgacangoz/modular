@@ -253,9 +253,10 @@ class LTX2ConnectorTransformer1d(
                 attention_mask >= attn_mask_binarize_threshold
             ).cast(DType.int32)
             if binary_attn_mask.rank == 4:
-                binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(
-                    1
-                )  # [B, 1, 1, L] --> [B, L]
+                binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(1)
+            elif binary_attn_mask.rank == 3:
+                binary_attn_mask = binary_attn_mask.squeeze(1)
+            # [B, L]
 
             padded_hidden_states = F.where(
                 binary_attn_mask.cast(DType.bool).unsqueeze(-1),
@@ -371,9 +372,13 @@ class LTX2TextConnectors(
             text_dtype = text_encoder_hidden_states.dtype
             # Use float32 for arithmetic to avoid promotion issues with bool/uint8 masks
             mask_float = attention_mask.cast(DType.float32)
-            attention_mask = (mask_float - 1.0).reshape(
-                (attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
-            )
+            # [B, L] -> [B, 1, 1, L]
+            if attention_mask.rank == 2:
+                attention_mask = (mask_float - 1.0).unsqueeze(1).unsqueeze(1)
+            elif attention_mask.rank == 3:
+                attention_mask = (mask_float - 1.0).unsqueeze(1)
+            elif attention_mask.rank == 4:
+                attention_mask = mask_float - 1.0
             attention_mask = (
                 attention_mask.cast(text_dtype) * DType.finfo(text_dtype).max
             )
