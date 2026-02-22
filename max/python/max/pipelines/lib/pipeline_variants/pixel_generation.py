@@ -169,14 +169,18 @@ class PixelGenerationPipeline(
             try:
                 return t.to_numpy()  # type: ignore[union-attr]
             except Exception:
-                logger.warning("Could not convert pipeline tensor output to numpy; skipping.")
+                logger.warning(
+                    "Could not convert pipeline tensor output to numpy; skipping."
+                )
                 return None
 
         video_output = _tensor_to_numpy(video_output)
         audio_output = _tensor_to_numpy(getattr(model_outputs, "audio", None))
 
         frame_rate = int(getattr(model_inputs, "frame_rate", 24) or 24)
-        audio_sample_rate = int(getattr(model_inputs, "audio_sampling_rate", 16000) or 16000)
+        audio_sample_rate = int(
+            getattr(model_inputs, "audio_sampling_rate", 16000) or 16000
+        )
 
         responses: dict[RequestID, GenerationOutput] = {}
         for index, (request_id, _context) in enumerate(flat_batch):

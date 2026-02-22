@@ -72,7 +72,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     # tracking bug). Slice the last dimension directly instead of reshaping
     # to (..., 2, r).
     x_cast = x.cast(DType.float32)
-    first_x = x_cast[..., :r]   # (..., r)
+    first_x = x_cast[..., :r]  # (..., r)
     second_x = x_cast[..., r:]  # (..., r)
 
     # cos/sin shape is (..., r) — broadcast directly, no unsqueeze needed.
