@@ -68,6 +68,8 @@ class LTX2ModelInputs(PixelModelInputs):
     num_frames: int = 121
     frame_rate: float = 24.0
     num_visuals_per_prompt: int = 1
+    mask: npt.NDArray[np.bool_] | None = None
+    """Attention mask for the text encoder (True = attend, False = ignore)."""
     extra_params: dict[str, npt.NDArray[Any]] | None = None
     """LTX2-specific preprocessed arrays (e.g. ltx2_video_latents_5d, ltx2_audio_latents)."""
 

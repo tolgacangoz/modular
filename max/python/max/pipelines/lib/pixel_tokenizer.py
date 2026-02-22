@@ -874,7 +874,6 @@ class PixelGenerationTokenizer(
             sigmas=sigmas,
             latents=latents,
             latent_image_ids=latent_image_ids,
-            extra_params=extra_params,
             height=height,
             width=width,
             num_inference_steps=num_inference_steps,
@@ -895,6 +894,7 @@ class PixelGenerationTokenizer(
             num_warmup_steps=num_warmup_steps,
             model_name=request.body.model,
             input_image=preprocessed_image_array,  # Pass numpy array instead of PIL.Image
+            extra_params=extra_params,
         )
 
         for validator in self._context_validators:
