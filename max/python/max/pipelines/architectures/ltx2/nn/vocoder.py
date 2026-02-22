@@ -203,7 +203,7 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
                 axis=0,
             )
 
-            hidden_states = F.mean(resnet_outputs, axis=0)
+            hidden_states = F.mean(resnet_outputs, axis=0).squeeze(0)
 
         # NOTE: unlike the first leaky ReLU, this leaky ReLU is set to use the default F.leaky_relu negative slope of
         # 0.01 (whereas the others usually use a slope of 0.1). Not sure if this is intended
