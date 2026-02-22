@@ -69,7 +69,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     r = last // 2
 
     # (..., 2, r)
-    split_x = x.reshape((*x.shape[:-1], 2, r)).cast(
+    split_x = x.reshape((x.shape[0], x.shape[1], x.shape[2], 2, r)).cast(
         DType.float32
     )  # Explicitly upcast to float
     first_x = split_x[..., :1, :]  # (..., 1, r)
@@ -89,7 +89,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     # MAX tensors are immutable, so we must reconstruct `out` explicitly.
     out = F.concat([first_out, second_out], axis=-2)
 
-    out = out.reshape((*out.shape[:-2], last))
+    out = out.reshape((out.shape[0], out.shape[1], last))
 
     if needs_reshape:
         out = out.transpose(1, 2).reshape((b, t, -1))
