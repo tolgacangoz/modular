@@ -12,6 +12,8 @@
 # ===----------------------------------------------------------------------=== #
 """Provider-specific options for MAX platform and modalities."""
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .max import MaxProviderOptions
@@ -48,8 +50,9 @@ class ProviderOptions(BaseModel):
         description="Video generation modality options.",
     )
 
-    @model_validator(mode="after")
-    def _merge_video_into_image(self) -> "ProviderOptions":
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_video_into_image(cls, data: Any) -> Any:
         """When only video options are provided, backfill image options from them.
 
         The pixel-generation tokenizer reads from ``provider_options.image`` for
@@ -59,20 +62,34 @@ class ProviderOptions(BaseModel):
         tokenizer can find them, while preserving any explicitly-set ``image``
         options.
         """
-        if self.video is not None and self.image is None:
-            merged = ImageProviderOptions(
-                negative_prompt=self.video.negative_prompt,
-                height=self.video.height,
-                width=self.video.width,
-                steps=self.video.steps if self.video.steps is not None else 50,
-                guidance_scale=(
-                    self.video.guidance_scale
-                    if self.video.guidance_scale is not None
+        if not isinstance(data, dict):
+            return data
+        video = data.get("video")
+        if video is not None and data.get("image") is None:
+            if isinstance(video, dict):
+                negative_prompt = video.get("negative_prompt")
+                height = video.get("height")
+                width = video.get("width")
+                steps = video.get("steps") or 50
+                guidance_scale = video.get("guidance_scale") or 3.5
+            else:
+                negative_prompt = video.negative_prompt
+                height = video.height
+                width = video.width
+                steps = video.steps if video.steps is not None else 50
+                guidance_scale = (
+                    video.guidance_scale
+                    if video.guidance_scale is not None
                     else 3.5
-                ),
+                )
+            data["image"] = ImageProviderOptions(
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                steps=steps,
+                guidance_scale=guidance_scale,
             )
-            return self.model_copy(update={"image": merged})
-        return self
+        return data
 
     # Add more modality fields here as needed:
     # text: TextModalityOptions | None = None
