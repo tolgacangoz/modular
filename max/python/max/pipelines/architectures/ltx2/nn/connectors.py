@@ -271,7 +271,7 @@ class LTX2ConnectorTransformer1d(
                 device=binary_attn_mask.device,
             )
             flipped_mask = (
-                binary_attn_mask[:, reverse_indices]
+                F.gather(binary_attn_mask, reverse_indices, axis=1)
                 .unsqueeze(-1)
                 .cast(padded_hidden_states.dtype)
             )
