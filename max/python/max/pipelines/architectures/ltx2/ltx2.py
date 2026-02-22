@@ -89,7 +89,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     # MAX tensors are immutable, so we must reconstruct `out` explicitly.
     out = F.concat([first_out, second_out], axis=-2)
 
-    out = out.reshape((out.shape[0], out.shape[1], last))
+    out = out.reshape((*out.shape[:-2], last))
 
     if needs_reshape:
         out = out.transpose(1, 2).reshape((b, t, -1))
