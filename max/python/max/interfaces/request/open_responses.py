@@ -325,7 +325,58 @@ class OutputVideoContent(BaseModel):
         Returns:
             An OutputVideoContent instance with base64-encoded data.
         """
-        # Simple raw bytes dump for now
+        if format == "mp4":
+            try:
+                import io
+
+                import av
+                import numpy as _np
+
+                # Expected shape: [frames, height, width, channels] float32 in [0, 1]
+                frames_uint8 = (_np.clip(array, 0.0, 1.0) * 255).astype(
+                    _np.uint8
+                )
+                num_frames_enc, h, w = (
+                    frames_uint8.shape[0],
+                    frames_uint8.shape[1],
+                    frames_uint8.shape[2],
+                )
+
+                # Ensure even dimensions (required by most h264 encoders)
+                h_enc = h - (h % 2)
+                w_enc = w - (w % 2)
+                if h_enc != h or w_enc != w:
+                    frames_uint8 = frames_uint8[:, :h_enc, :w_enc, :]
+
+                buf = io.BytesIO()
+                container = av.open(buf, mode="w", format="mp4")
+                stream = container.add_stream("h264", rate=fps)
+                stream.width = w_enc
+                stream.height = h_enc
+                stream.pix_fmt = "yuv420p"
+                stream.options = {"crf": "23"}
+                for fi in range(num_frames_enc):
+                    frame = av.VideoFrame.from_ndarray(
+                        frames_uint8[fi], format="rgb24"
+                    )
+                    for packet in stream.encode(frame):
+                        container.mux(packet)
+                for packet in stream.encode():
+                    container.mux(packet)
+                container.close()
+
+                video_bytes = buf.getvalue()
+                base64_data = base64.b64encode(video_bytes).decode("utf-8")
+                return cls(
+                    type="output_video",
+                    video_data=base64_data,
+                    format="mp4",
+                )
+            except ImportError:
+                # av not installed – fall through to raw dump
+                format = "raw"
+
+        # Fallback: raw bytes dump
         video_bytes = array.tobytes()
         base64_data = base64.b64encode(video_bytes).decode("utf-8")
 

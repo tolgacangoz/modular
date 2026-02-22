@@ -248,6 +248,8 @@ async def generate_video(args: argparse.Namespace) -> None:
                 negative_prompt=args.negative_prompt,
                 height=args.height,
                 width=args.width,
+                num_frames=args.num_frames,
+                frames_per_second=args.frame_rate,
                 steps=args.num_inference_steps,
                 guidance_scale=args.guidance_scale,
             )
@@ -278,8 +280,9 @@ async def generate_video(args: argparse.Namespace) -> None:
     print("Running diffusion model...")
     responses = pipeline.execute(inputs)
 
-    # Step 8: Get the output for our request
+    # Step 8: Get the output for our request and post-process
     response = responses[context.request_id]
+    response = await tokenizer.postprocess(response)
 
     # Check if generation completed successfully
     if not response.is_done:

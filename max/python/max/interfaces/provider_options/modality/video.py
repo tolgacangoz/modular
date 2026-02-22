@@ -66,3 +66,12 @@ class VideoProviderOptions(BaseModel):
         ),
         gt=0,
     )
+
+    guidance_scale: float | None = Field(
+        None,
+        description=(
+            "The classifier-free guidance scale. Higher values encourage the model to "
+            "follow the prompt more closely at the cost of lower image diversity."
+        ),
+        gt=0,
+    )

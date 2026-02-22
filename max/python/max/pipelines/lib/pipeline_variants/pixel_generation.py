@@ -122,32 +122,61 @@ class PixelGenerationPipeline(
         image_list = getattr(model_outputs, "images", None)
         num_visuals_per_prompt = model_inputs.num_visuals_per_prompt
 
-        # Handle both numpy array (NHWC) and list of images
-        if isinstance(images, np.ndarray):
-            # images shape: (batch_size, H, W, C) or (batch_size, C, H, W)
-            # Convert NCHW to NHWC if needed
-            if images.ndim == 4 and images.shape[1] in (1, 3, 4):
-                # Likely NCHW format, convert to NHWC
-                images = np.transpose(images, (0, 2, 3, 1))
-            # Denormalize from [-1, 1] to [0, 1] range
-            images = (images * 0.5 + 0.5).clip(min=0.0, max=1.0)
-            image_list = [images[i] for i in range(images.shape[0])]
-        else:
-            # Denormalize each image from [-1, 1] to [0, 1] range
-            image_list = [
-                (np.asarray(img, dtype=np.float32) * 0.5 + 0.5).clip(
-                    min=0.0, max=1.0
-                )
-                for img in images
-            ]
-
+        # Handle image outputs (image-generation models) – gate on None to
+        # avoid a NameError from the old `images` reference.
         if image_list is not None:
+            if isinstance(image_list, np.ndarray):
+                # images shape: (batch_size, H, W, C) or (batch_size, C, H, W)
+                # Convert NCHW to NHWC if needed
+                if image_list.ndim == 4 and image_list.shape[1] in (1, 3, 4):
+                    image_list = np.transpose(image_list, (0, 2, 3, 1))
+                # Denormalize from [-1, 1] to [0, 1] range
+                image_list = (image_list * 0.5 + 0.5).clip(min=0.0, max=1.0)
+                image_list = [image_list[i] for i in range(image_list.shape[0])]
+            else:
+                image_list = [
+                    (np.asarray(img, dtype=np.float32) * 0.5 + 0.5).clip(
+                        min=0.0, max=1.0
+                    )
+                    for img in image_list
+                ]
+
             expected_images = len(flat_batch) * num_visuals_per_prompt
             if len(image_list) != expected_images:
                 raise ValueError(
                     "Unexpected number of images returned from pipeline: "
                     f"expected {expected_images}, got {len(image_list)}."
                 )
+
+        # Resolve video output: support both 'video' (generic) and 'frames'
+        # (LTX2PipelineOutput attribute name).
+        video_output = getattr(model_outputs, "video", None)
+        if video_output is None:
+            video_output = getattr(model_outputs, "frames", None)
+
+        # Convert MAX Tensor → numpy if the pipeline returned a Tensor.
+        def _tensor_to_numpy(t: object) -> np.ndarray | None:
+            if t is None or isinstance(t, np.ndarray):
+                return t  # type: ignore[return-value]
+            try:
+                # MAX Tensor supports __dlpack__ / np.from_dlpack.
+                from max.driver import CPU
+                from max.dtype import DType
+
+                return np.from_dlpack(t.cast(DType.float32).to(CPU()))  # type: ignore[union-attr]
+            except Exception:
+                pass
+            try:
+                return t.to_numpy()  # type: ignore[union-attr]
+            except Exception:
+                logger.warning("Could not convert pipeline tensor output to numpy; skipping.")
+                return None
+
+        video_output = _tensor_to_numpy(video_output)
+        audio_output = _tensor_to_numpy(getattr(model_outputs, "audio", None))
+
+        frame_rate = int(getattr(model_inputs, "frame_rate", 24) or 24)
+        audio_sample_rate = int(getattr(model_inputs, "audio_sampling_rate", 16000) or 16000)
 
         responses: dict[RequestID, GenerationOutput] = {}
         for index, (request_id, _context) in enumerate(flat_batch):
@@ -166,39 +195,29 @@ class PixelGenerationPipeline(
                     ]
                 )
 
-            # Check for video output
-            if (
-                hasattr(model_outputs, "video")
-                and model_outputs.video is not None
-            ):
-                # Video is typically [batch, frames, height, width, channels]
-                video_data = model_outputs.video
-                if isinstance(video_data, np.ndarray):
-                    for i in range(num_visuals_per_prompt):
-                        idx = offset + i
-                        if idx < len(video_data):
-                            output_content.append(
-                                OutputVideoContent.from_numpy(
-                                    video_data[idx], format="raw"
-                                )
+            # Video output – [batch, frames, height, width, channels] in [0,1].
+            if video_output is not None:
+                for i in range(num_visuals_per_prompt):
+                    idx = offset + i
+                    if idx < len(video_output):
+                        output_content.append(
+                            OutputVideoContent.from_numpy(
+                                video_output[idx], fps=frame_rate, format="mp4"
                             )
+                        )
 
-            # Check for audio output
-            if (
-                hasattr(model_outputs, "audio")
-                and model_outputs.audio is not None
-            ):
-                # Audio is typically [batch, channels, samples]
-                audio_data = model_outputs.audio
-                if isinstance(audio_data, np.ndarray):
-                    for i in range(num_visuals_per_prompt):
-                        idx = offset + i
-                        if idx < len(audio_data):
-                            output_content.append(
-                                OutputAudioContent.from_numpy(
-                                    audio_data[idx], format="wav"
-                                )
+            # Audio output – [batch, channels, samples] or [batch, samples].
+            if audio_output is not None:
+                for i in range(num_visuals_per_prompt):
+                    idx = offset + i
+                    if idx < len(audio_output):
+                        output_content.append(
+                            OutputAudioContent.from_numpy(
+                                audio_output[idx],
+                                sample_rate=audio_sample_rate,
+                                format="wav",
                             )
+                        )
 
             responses[request_id] = GenerationOutput(
                 request_id=request_id,

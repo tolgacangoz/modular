@@ -12,7 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 """Provider-specific options for MAX platform and modalities."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .max import MaxProviderOptions
 from .modality import ImageProviderOptions, VideoProviderOptions
@@ -47,6 +47,32 @@ class ProviderOptions(BaseModel):
         None,
         description="Video generation modality options.",
     )
+
+    @model_validator(mode="after")
+    def _merge_video_into_image(self) -> "ProviderOptions":
+        """When only video options are provided, backfill image options from them.
+
+        The pixel-generation tokenizer reads from ``provider_options.image`` for
+        parameters that are shared between image and video pipelines (guidance_scale,
+        height, width, steps, negative_prompt).  When a caller supplies only
+        ``video`` options we transparently propagate those shared fields so the
+        tokenizer can find them, while preserving any explicitly-set ``image``
+        options.
+        """
+        if self.video is not None and self.image is None:
+            merged = ImageProviderOptions(
+                negative_prompt=self.video.negative_prompt,
+                height=self.video.height,
+                width=self.video.width,
+                steps=self.video.steps if self.video.steps is not None else 50,
+                guidance_scale=(
+                    self.video.guidance_scale
+                    if self.video.guidance_scale is not None
+                    else 3.5
+                ),
+            )
+            return self.model_copy(update={"image": merged})
+        return self
 
     # Add more modality fields here as needed:
     # text: TextModalityOptions | None = None
