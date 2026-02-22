@@ -809,11 +809,17 @@ class PixelGenerationTokenizer(
         # and sample audio latents. These are stored in extra_params for consumption
         # by LTX2Pipeline, without affecting other pipelines.
         extra_params: dict[str, npt.NDArray[Any]] = {}
+        video_options = request.body.provider_options.video
 
         if self._is_ltx2:
-            video_options = request.body.provider_options.video
-            num_frames = video_options.num_frames if video_options is not None else None
-            frame_rate = video_options.frames_per_second if video_options is not None else None
+            num_frames = (
+                video_options.num_frames if video_options is not None else None
+            )
+            frame_rate = (
+                video_options.frames_per_second
+                if video_options is not None
+                else None
+            )
 
             if num_frames is None or num_frames <= 0:
                 num_frames = 1
@@ -848,12 +854,12 @@ class PixelGenerationTokenizer(
                 audio_num_frames = 1
 
             audio_shape = (
-                request.num_visuals_per_prompt,
+                image_options.num_images,
                 8,
                 audio_num_frames,
                 latent_mel_bins,
             )
-            audio_latents = self._randn_tensor(audio_shape, request.seed)
+            audio_latents = self._randn_tensor(audio_shape, request.body.seed)
             extra_params["ltx2_audio_latents"] = audio_latents
 
         # 5. Build the context
@@ -877,8 +883,16 @@ class PixelGenerationTokenizer(
             num_images_per_prompt=image_options.num_images,
             true_cfg_scale=image_options.true_cfg_scale,
             num_visuals_per_prompt=image_options.num_images,
-            num_frames=request.num_frames,
-            frame_rate=request.frame_rate,
+            num_frames=(
+                video_options.num_frames
+                if self._is_ltx2 and video_options is not None
+                else None
+            ),
+            frame_rate=(
+                video_options.frames_per_second
+                if self._is_ltx2 and video_options is not None
+                else None
+            ),
             num_warmup_steps=num_warmup_steps,
             model_name=request.body.model,
             input_image=preprocessed_image_array,  # Pass numpy array instead of PIL.Image
