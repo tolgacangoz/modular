@@ -349,11 +349,13 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         # shape array, causing the "rebind !pop.array<3> vs !pop.array<4>"
         # compile error. Fix: merge B and H into one batch dim, do rank-3
         # matmuls, then restore the 4D layout.
-        sq = int(query.shape[2])
-        sk = int(key.shape[2])
-        sv = int(value.shape[2])
-        dq = int(query.shape[3])
-        dk = int(key.shape[3])
+        # Use symbolic Dim objects directly — int() is only valid for static
+        # dims and will raise at graph-tracing time for dynamic sequence lengths.
+        sq = query.shape[2]
+        sk = key.shape[2]
+        sv = value.shape[2]
+        dq = self.head_dim  # static; avoids int() on a potentially symbolic dim
+        dk = self.head_dim
         bh = batch_size * self.heads
 
         # [B, H, Sq, D] -> [B*H, Sq, D]
