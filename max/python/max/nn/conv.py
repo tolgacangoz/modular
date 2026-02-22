@@ -882,16 +882,19 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         weight = self.weight.to(x.device)
 
         if self.permute:
-            # Input: [batch, in_channels, length] -> [batch, in_channels, 1, length]
+            # Input: [batch, in_channels, length] -> [batch, in_channels, 1, length] -> [batch, 1, length, in_channels] (NHWC)
             x = x.unsqueeze(2)
+            x = F.permute(x, [0, 2, 3, 1])
             # Weight: [in_channels, out_channels, kernel_size]
-            #      -> [in_channels, out_channels, 1, kernel_size]
+            #      -> [in_channels, out_channels, 1, kernel_size] (CFRS)
+            #      -> [1, kernel_size, out_channels, in_channels] (RSCF for conv_transpose)
             weight = weight.unsqueeze(2)
+            weight = F.permute(weight, [2, 3, 1, 0])
         else:
-            # Input: [batch, length, in_channels] -> [batch, 1, length, in_channels]
+            # Input: [batch, length, in_channels] -> [batch, 1, length, in_channels] (NHWC)
             x = x.unsqueeze(1)
             # Weight: [kernel_size, out_channels, in_channels]
-            #      -> [1, kernel_size, out_channels, in_channels]
+            #      -> [1, kernel_size, out_channels, in_channels] (RSCF)
             weight = weight.unsqueeze(0)
 
         # Convert 1D parameters to 2D
@@ -906,19 +909,16 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             padding=padding_2d,
             output_paddings=(0, self.output_padding),
             bias=self.bias,
-            input_layout=ConvInputLayout.NCHW
-            if self.permute
-            else ConvInputLayout.NHWC,
-            filter_layout=FilterLayout.CFRS
-            if self.permute
-            else FilterLayout.RSCF,
+            input_layout=ConvInputLayout.NHWC,
+            filter_layout=FilterLayout.RSCF,
         )
 
         if self.permute:
-            # Remove dummy height dimension: [batch, out_channels, 1, new_length] -> [batch, out_channels, new_length]
+            # Output: [batch, 1, new_length, out_channels] -> [batch, out_channels, 1, new_length] -> [batch, out_channels, new_length]
+            output = F.permute(output, [0, 3, 1, 2])
             output = output.squeeze(2)
         else:
-            # Remove dummy height dimension: [batch, 1, new_length, out_channels] -> [batch, new_length, out_channels]
+            # Output: [batch, 1, new_length, out_channels] -> [batch, new_length, out_channels]
             output = output.squeeze(1)
 
         return output
