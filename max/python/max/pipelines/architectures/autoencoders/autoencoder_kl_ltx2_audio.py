@@ -182,7 +182,7 @@ class LTX2AudioAttnBlock(nn.Module[[Tensor], Tensor]):
         k = k.reshape((batch, channels, height * width))
 
         attn = F.bmm(q, k) * channels ** (-0.5)
-        attn = F.softmax(attn, axis=2)
+        attn = F.softmax(attn, axis=-1)
 
         v = v.reshape((batch, channels, height * width))
         attn = attn.permute((0, 2, 1))

@@ -357,7 +357,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         scores = scores * (1.0 / self.scale)
         if attention_mask is not None:
             scores = scores + attention_mask
-        hidden_states = F.softmax(scores) @ value
+        hidden_states = F.softmax(scores, axis=-1) @ value
 
         # Transpose back to [B, seq, heads, head_dim] and flatten
         hidden_states = hidden_states.transpose(1, 2)
