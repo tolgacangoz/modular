@@ -343,11 +343,41 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
 
-        scores = query @ F.transpose(key, 2, 3)
+        # The MAX BMM kernel only supports rank-3 tensors. A rank-4 matmul
+        # (B, H, Sq, D) @ (B, H, D, Sk) triggers a shape-tracking bug where
+        # the kernel's internal _rank = rank - 1 = 3 mismatches a 4-element
+        # shape array, causing the "rebind !pop.array<3> vs !pop.array<4>"
+        # compile error. Fix: merge B and H into one batch dim, do rank-3
+        # matmuls, then restore the 4D layout.
+        sq = int(query.shape[2])
+        sk = int(key.shape[2])
+        sv = int(value.shape[2])
+        dq = int(query.shape[3])
+        dk = int(key.shape[3])
+        bh = batch_size * self.heads
+
+        # [B, H, Sq, D] -> [B*H, Sq, D]
+        query_3d = query.reshape((bh, sq, dq))
+        # [B, H, Sk, D] -> [B*H, D, Sk]  (pre-transposed for the matmul)
+        key_3d = key.reshape((bh, sk, dk)).transpose(1, 2)
+        # [B, H, Sv, D] -> [B*H, Sv, D]
+        value_3d = value.reshape((bh, sv, dk))
+
+        # [B*H, Sq, Sk]
+        scores = query_3d @ key_3d
         scores = scores * (1.0 / self.scale)
         if attention_mask is not None:
+            # Promote to 4D for the mask addition — element-wise ops are not
+            # BMMs so rank-4 is safe here. This correctly broadcasts
+            # [B, 1, Sq, Sk] mask across all H heads without any concat trick.
+            scores = scores.reshape((batch_size, self.heads, sq, sk))
             scores = scores + attention_mask
-        hidden_states = F.softmax(scores, axis=-1) @ value
+            scores = scores.reshape((bh, sq, sk))
+        # [B*H, Sq, Sk] @ [B*H, Sv, D] -> [B*H, Sq, D]
+        hidden_states = F.softmax(scores, axis=-1) @ value_3d
+
+        # [B*H, Sq, D] -> [B, H, Sq, D] -> [B, Sq, H, D]
+        hidden_states = hidden_states.reshape((batch_size, self.heads, sq, dq))
 
         # Transpose back to [B, seq, heads, head_dim] and flatten
         hidden_states = hidden_states.transpose(1, 2)
