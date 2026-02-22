@@ -811,8 +811,9 @@ class PixelGenerationTokenizer(
         extra_params: dict[str, npt.NDArray[Any]] = {}
 
         if self._is_ltx2:
-            num_frames = request.num_frames
-            frame_rate = request.frame_rate
+            video_options = request.body.provider_options.video
+            num_frames = video_options.num_frames if video_options is not None else None
+            frame_rate = video_options.frames_per_second if video_options is not None else None
 
             if num_frames is None or num_frames <= 0:
                 num_frames = 1
