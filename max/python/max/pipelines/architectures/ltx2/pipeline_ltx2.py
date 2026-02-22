@@ -147,7 +147,9 @@ class LTX2Pipeline(DiffusionPipeline):
     def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
         return LTX2ModelInputs.from_context(context)
 
-    def _encode_tokens(self, token_ids: Tensor, device: str = "cuda") -> Tensor:
+    def _encode_tokens(
+        self, token_ids: np.ndarray, device: str = "cuda"
+    ) -> Tensor:
         """Encode token_ids using transformers Gemma3ForConditionalGeneration.
 
         The token_ids come from PixelGenerationTokenizer which already handles
@@ -164,7 +166,7 @@ class LTX2Pipeline(DiffusionPipeline):
         import torch
 
         # Convert MAX Tensor to PyTorch tensor
-        input_ids = torch.from_numpy(token_ids.to_numpy()).to(device)
+        input_ids = torch.from_dlpack(token_ids).to(device)
         attention_mask = torch.ones_like(input_ids)
 
         with torch.no_grad():
@@ -210,21 +212,25 @@ class LTX2Pipeline(DiffusionPipeline):
             `Tensor` of shape `(batch_size, seq_len, hidden_dim * num_layers)`:
                 Normed and flattened text encoder hidden states.
         """
-        batch_size, seq_len, hidden_dim, num_layers = text_hidden_states.shape
-        original_dtype = text_hidden_states.dtype
+        import torch
+
+        # Convert MAX Tensors to PyTorch: MAX Tensor lacks masked_fill, amin,
+        # amax, and multi-axis sum with keepdim.
+        ths = torch.from_dlpack(text_hidden_states)
+        sl = torch.from_dlpack(sequence_lengths)
+        torch_device = ths.device
+
+        batch_size, seq_len, hidden_dim, num_layers = ths.shape
+        original_dtype = ths.dtype
 
         # Create padding mask
-        token_indices = Tensor.arange(seq_len, device=device).unsqueeze(0)
+        token_indices = torch.arange(seq_len, device=torch_device).unsqueeze(0)
         if padding_side == "right":
             # For right padding, valid tokens are from 0 to sequence_length-1
-            mask = (
-                token_indices < sequence_lengths[:, None]
-            )  # [batch_size, seq_len]
+            mask = token_indices < sl[:, None]  # [batch_size, seq_len]
         elif padding_side == "left":
             # For left padding, valid tokens are from (T - sequence_length) to T-1
-            start_indices = (
-                seq_len - sequence_lengths[:, None]
-            )  # [batch_size, 1]
+            start_indices = seq_len - sl[:, None]  # [batch_size, 1]
             mask = token_indices >= start_indices  # [B, T]
         else:
             raise ValueError(
@@ -234,39 +240,31 @@ class LTX2Pipeline(DiffusionPipeline):
             :, :, None, None
         ]  # [batch_size, seq_len] --> [batch_size, seq_len, 1, 1]
 
-        # Compute masked mean over non-padding positions of shape (batch_size, 1, 1, seq_len)
-        masked_text_hidden_states = text_hidden_states.masked_fill(~mask, 0.0)
-        num_valid_positions = (sequence_lengths * hidden_dim).reshape(
-            (batch_size, 1, 1, 1)
-        )
-        masked_mean = masked_text_hidden_states.sum(axis=(1, 2)) / (
+        # Compute masked mean over non-padding positions
+        masked_ths = ths.masked_fill(~mask, 0.0)
+        num_valid_positions = (sl * hidden_dim).view(batch_size, 1, 1, 1)
+        masked_mean = masked_ths.sum(dim=(1, 2), keepdim=True) / (
             num_valid_positions + eps
         )
 
-        # Compute min/max over non-padding positions of shape (batch_size, 1, 1 seq_len)
-        x_min = text_hidden_states.masked_fill(~mask, float("inf")).amin(
-            axis=(1, 2)
+        # Compute min/max over non-padding positions
+        x_min = ths.masked_fill(~mask, float("inf")).amin(
+            dim=(1, 2), keepdim=True
         )
-        x_max = text_hidden_states.masked_fill(~mask, float("-inf")).amax(
-            axis=(1, 2)
+        x_max = ths.masked_fill(~mask, float("-inf")).amax(
+            dim=(1, 2), keepdim=True
         )
 
         # Normalization
-        normalized_hidden_states = (text_hidden_states - masked_mean) / (
-            x_max - x_min + eps
-        )
-        normalized_hidden_states = normalized_hidden_states * scale_factor
+        normalized = (ths - masked_mean) / (x_max - x_min + eps)
+        normalized = normalized * scale_factor
 
         # Pack the hidden states to a 3D tensor (batch_size, seq_len, hidden_dim * num_layers)
-        normalized_hidden_states = normalized_hidden_states.flatten(2)
-        mask_flat = mask.squeeze(-1).broadcast_to(
-            -1, -1, hidden_dim * num_layers
-        )
-        normalized_hidden_states = normalized_hidden_states.masked_fill(
-            ~mask_flat, 0.0
-        )
-        normalized_hidden_states = normalized_hidden_states.cast(original_dtype)
-        return normalized_hidden_states
+        normalized = normalized.flatten(2)
+        mask_flat = mask.squeeze(-1).expand(-1, -1, hidden_dim * num_layers)
+        normalized = normalized.masked_fill(~mask_flat, 0.0)
+        normalized = normalized.to(dtype=original_dtype)
+        return Tensor.from_dlpack(normalized.contiguous())
 
     @staticmethod
     def _pack_latents(
@@ -292,7 +290,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 patch_size,
             )
         )
-        latents = latents.permute(0, 2, 4, 6, 1, 3, 5, 7)
+        latents = latents.permute([0, 2, 4, 6, 1, 3, 5, 7])
         latents = latents.rebind(
             (
                 batch_size,
@@ -606,11 +604,11 @@ class LTX2Pipeline(DiffusionPipeline):
         token_ids_np: np.ndarray = model_inputs.tokens.array
         if token_ids_np.ndim == 1:
             token_ids_np = np.expand_dims(token_ids_np, axis=0)
-        token_ids = Tensor.constant(
-            token_ids_np.astype(np.int64, copy=False),
-            dtype=DType.int64,
-            device=device,
-        )
+        # token_ids = Tensor.constant(
+        #     token_ids_np.astype(np.int64, copy=False),
+        #     dtype=DType.int64,
+        #     device=device,
+        # )
 
         mask_np: npt.NDArray[np.bool_] | None = model_inputs.mask
         if mask_np is None:
@@ -624,7 +622,7 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
         text_encoder_hidden_states = self._encode_tokens(
-            token_ids, device="cuda"
+            token_ids_np, device="cuda"
         )
         # Reduce [B, seq_len] bool mask → [B] integer counts, matching
         sequence_lengths = prompt_attention_mask.cast(DType.int64).sum(axis=-1)
@@ -845,6 +843,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 latents = self._scheduler_step(
                     latents, noise_pred_video, sigmas, i
                 )
+
+                progress_bar.update()
 
         # 9. Decode latents to video
         # Unpack latents: [B, S, D] -> [B, C, F, H, W]
