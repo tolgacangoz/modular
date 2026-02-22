@@ -668,12 +668,12 @@ class LTX2VideoTransformerBlock(
             4:, :
         ]
 
-        video_ca_scale_shift_table = video_per_layer_ca_scale_shift[
-            :, :, ...
-        ].cast(temb_ca_scale_shift.dtype) + temb_ca_scale_shift.reshape(
+        video_ca_scale_shift_table = video_per_layer_ca_scale_shift.cast(
+            temb_ca_scale_shift.dtype
+        ) + temb_ca_scale_shift.reshape(
             (batch_size, temb_ca_scale_shift.shape[1], 4, -1)
         )
-        video_ca_gate = video_per_layer_ca_gate[:, :, ...].cast(
+        video_ca_gate = video_per_layer_ca_gate.cast(
             temb_ca_gate.dtype
         ) + temb_ca_gate.reshape((batch_size, temb_ca_gate.shape[1], 1, -1))
 
@@ -698,14 +698,12 @@ class LTX2VideoTransformerBlock(
             4:, :
         ]
 
-        audio_ca_scale_shift_table = audio_per_layer_ca_scale_shift[
-            :, :, ...
-        ].cast(
+        audio_ca_scale_shift_table = audio_per_layer_ca_scale_shift.cast(
             temb_ca_audio_scale_shift.dtype
         ) + temb_ca_audio_scale_shift.reshape(
             (batch_size, temb_ca_audio_scale_shift.shape[1], 4, -1)
         )
-        audio_ca_gate = audio_per_layer_ca_gate[:, :, ...].cast(
+        audio_ca_gate = audio_per_layer_ca_gate.cast(
             temb_ca_audio_gate.dtype
         ) + temb_ca_audio_gate.reshape(
             (batch_size, temb_ca_audio_gate.shape[1], 1, -1)

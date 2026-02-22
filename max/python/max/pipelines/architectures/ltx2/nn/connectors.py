@@ -277,7 +277,7 @@ class LTX2ConnectorTransformer1d(
             )
             hidden_states = (
                 flipped_mask * padded_hidden_states
-                + (1 - flipped_mask) * registers
+                + (1.0 - flipped_mask) * registers
             )
 
             # Overwrite attention_mask with an all-zeros mask if using registers.
