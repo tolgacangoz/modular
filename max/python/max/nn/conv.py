@@ -637,23 +637,21 @@ class Conv1d(Module[[Tensor], Tensor]):
             padding = self.padding
 
         if self.permute:
-            # Input: [batch_size, in_channels, length] -> [batch_size, in_channels, 1, length]
+            # Input: [batch, in_channels, length] -> [batch, in_channels, 1, length] -> [batch, 1, length, in_channels] (NHWC)
             x = x.unsqueeze(2)
+            x = F.permute(x, [0, 2, 3, 1])
             # Weight: [out_channels, in_channels // num_groups, kernel_size]
-            #      -> [out_channels, in_channels // num_groups, 1, kernel_size]
+            #      -> [out_channels, in_channels // num_groups, 1, kernel_size] (FCRS)
             weight = weight.unsqueeze(2)
-
             if not is_nvidia_gpu:
                 # Permute for CPU: [out_channels, in_channels // num_groups, 1, kernel_size]
-                #               -> [1, kernel_size, in_channels // num_groups, out_channels]
+                #               -> [1, kernel_size, in_channels // num_groups, out_channels] (RSCF)
                 weight = F.permute(weight, [2, 3, 1, 0])
-                # Input: [batch, channels, 1, length] -> [batch, 1, length, channels]
-                x = F.permute(x, [0, 2, 3, 1])
         else:
-            # Input: [batch_size, length, in_channels] -> [batch_size, 1, length, in_channels]
+            # Input: [batch_size, length, in_channels] -> [batch_size, 1, length, in_channels] (NHWC)
             x = x.unsqueeze(1)
             # Weight: [kernel_size, in_channels // num_groups, out_channels]
-            #      -> [1, kernel_size, in_channels // num_groups, out_channels]
+            #      -> [1, kernel_size, in_channels // num_groups, out_channels] (RSCF)
             weight = weight.unsqueeze(0)
 
         # Convert 1D padding to 2D: (pad_left, pad_right) -> (0, 0, pad_left, pad_right)
@@ -692,13 +690,11 @@ class Conv1d(Module[[Tensor], Tensor]):
             )  # [batch_size, out_channels, new_length]
 =======
         if self.permute:
-            if not is_nvidia_gpu:
-                # Output: [batch, 1, new_length, out_channels] -> [batch, out_channels, 1, new_length]
-                output = F.permute(output, [0, 3, 1, 2])
-            # Remove dummy height dimension: [batch, out_channels, 1, new_length] -> [batch, out_channels, new_length]
+            # Output: [batch, 1, new_length, out_channels] -> [batch, out_channels, 1, new_length] -> [batch, out_channels, new_length]
+            output = F.permute(output, [0, 3, 1, 2])
             output = output.squeeze(2)
         else:
-            # Remove dummy height dimension: [batch, 1, new_length, out_channels] -> [batch, new_length, out_channels]
+            # Output: [batch, 1, new_length, out_channels] -> [batch, new_length, out_channels]
             output = output.squeeze(1)
 >>>>>>> 49761efa58 (asd)
 
