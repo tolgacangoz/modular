@@ -714,6 +714,9 @@ class PixelContext:
     num_frames: int | None = field(default=None)
     frame_rate: int | None = field(default=None)
 
+    extra_params: dict[str, npt.NDArray[Any]] | None = field(default=None)
+    """Optional pipeline-specific extra arrays (e.g. LTX2 video/audio latents)."""
+
     status: GenerationStatus = field(default=GenerationStatus.ACTIVE)
 
     @property

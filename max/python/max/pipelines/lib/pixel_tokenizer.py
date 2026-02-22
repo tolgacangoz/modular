@@ -880,7 +880,6 @@ class PixelGenerationTokenizer(
             num_inference_steps=num_inference_steps,
             guidance_scale=image_options.guidance_scale,
             guidance=guidance,
-            num_images_per_prompt=image_options.num_images,
             true_cfg_scale=image_options.true_cfg_scale,
             num_visuals_per_prompt=image_options.num_images,
             num_frames=(

@@ -68,6 +68,8 @@ class LTX2ModelInputs(PixelModelInputs):
     num_frames: int = 121
     frame_rate: float = 24.0
     num_visuals_per_prompt: int = 1
+    extra_params: dict[str, npt.NDArray[Any]] | None = None
+    """LTX2-specific preprocessed arrays (e.g. ltx2_video_latents_5d, ltx2_audio_latents)."""
 
     @property
     def do_true_cfg(self) -> bool:
