@@ -56,7 +56,7 @@ class BaseAutoencoderModel(ComponentModel):
         self.config = config_class.generate(config, encoding, devices)  # type: ignore[attr-defined]
         self.autoencoder_class = autoencoder_class
         self.encoder_model: Callable[[Tensor], Tensor] | None = None
-        # self.load_model()
+        self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
         """Load and compile decoder and encoder from full model weights.

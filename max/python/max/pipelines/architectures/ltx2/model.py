@@ -70,7 +70,7 @@ class LTX2TransformerModel(ComponentModel):
             encoding,
             devices,
         )
-        # self.load_model()
+        self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
@@ -79,7 +79,6 @@ class LTX2TransformerModel(ComponentModel):
         }
         with F.lazy():
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
-            # ltx2transformer.load_state_dict(state_dict)
             ltx2transformer.to(self.devices[0])
         state_dict = _reconcile_dtypes(state_dict, ltx2transformer)
         self.model = ltx2transformer.compile(
@@ -139,7 +138,6 @@ class LTX2VocoderModel(ComponentModel):
         }
         with F.lazy():
             vocoder = LTX2Vocoder(self.config)
-            # vocoder.load_state_dict(state_dict)
             vocoder.to(self.devices[0])
         state_dict = _reconcile_dtypes(state_dict, vocoder)
         self.model = vocoder.compile(*vocoder.input_types(), weights=state_dict)
@@ -168,7 +166,7 @@ class LTX2TextConnectorsModel(ComponentModel):
             encoding,
             devices,
         )
-        # self.load_model()
+        self.load_model()
 
     def load_model(self) -> Callable[..., Any]:
         state_dict = {
@@ -177,7 +175,6 @@ class LTX2TextConnectorsModel(ComponentModel):
         }
         with F.lazy():
             connectors = LTX2TextConnectors(self.config)
-            # connectors.load_state_dict(state_dict)
             connectors.to(self.devices[0])
         state_dict = _reconcile_dtypes(state_dict, connectors)
         self.model = connectors.compile(

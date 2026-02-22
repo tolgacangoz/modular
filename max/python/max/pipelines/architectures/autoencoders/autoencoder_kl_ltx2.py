@@ -895,7 +895,7 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
             TensorType(
                 self.dtype,
                 shape=[
-                    "batch",
+                    1,
                     self.in_channels,
                     "latent_frames",
                     "latent_height",

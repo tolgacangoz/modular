@@ -605,7 +605,7 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
             TensorType(
                 self.dtype,
                 shape=[
-                    "batch",
+                    1,
                     self.latent_channels,
                     "frames",
                     "mel_bins",
