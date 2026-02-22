@@ -122,7 +122,7 @@ class PixelGenerationPipeline(
         image_list = getattr(model_outputs, "images", None)
         num_visuals_per_prompt = model_inputs.num_visuals_per_prompt
 
-        # Handle image outputs (image-generation models) – gate on None to
+        # Handle image outputs (image-generation models) - gate on None to
         # avoid a NameError from the old `images` reference.
         if image_list is not None:
             if isinstance(image_list, np.ndarray):
@@ -199,7 +199,7 @@ class PixelGenerationPipeline(
                     ]
                 )
 
-            # Video output – [batch, frames, height, width, channels] in [0,1].
+            # Video output - [batch, frames, height, width, channels] in [0,1].
             if video_output is not None:
                 for i in range(num_visuals_per_prompt):
                     idx = offset + i
@@ -210,7 +210,7 @@ class PixelGenerationPipeline(
                             )
                         )
 
-            # Audio output – [batch, channels, samples] or [batch, samples].
+            # Audio output - [batch, channels, samples] or [batch, samples].
             if audio_output is not None:
                 for i in range(num_visuals_per_prompt):
                     idx = offset + i

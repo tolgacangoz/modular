@@ -373,7 +373,7 @@ class OutputVideoContent(BaseModel):
                     format="mp4",
                 )
             except ImportError:
-                # av not installed – fall through to raw dump
+                # av not installed - fall through to raw dump
                 format = "raw"
 
         # Fallback: raw bytes dump
