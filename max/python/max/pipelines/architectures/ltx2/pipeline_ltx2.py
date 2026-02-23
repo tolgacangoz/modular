@@ -216,14 +216,20 @@ class LTX2Pipeline(DiffusionPipeline):
           latent_width      = 768//32      = 24
         """
         device = self.transformer.devices[0]
-        _channels = self.transformer.config.in_channels          # 128
-        _latent_num_frames = 31   # (121-1)//4+1
-        _latent_height = 16       # 512//32
-        _latent_width = 24        # 768//32
+        _channels = self.transformer.config.in_channels  # 128
+        _latent_num_frames = 31  # (121-1)//4+1
+        _latent_height = 16  # 512//32
+        _latent_width = 24  # 768//32
         input_types = [
             TensorType(
                 DType.float32,
-                shape=[1, _channels, _latent_num_frames, _latent_height, _latent_width],
+                shape=[
+                    1,
+                    _channels,
+                    _latent_num_frames,
+                    _latent_height,
+                    _latent_width,
+                ],
                 device=device,
             ),
         ]
@@ -242,8 +248,10 @@ class LTX2Pipeline(DiffusionPipeline):
         """
         device = self.transformer.devices[0]
         _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
-        _audio_channels = self.transformer.config.audio_in_channels // _latent_mel_bins  # 8
-        _audio_num_frames = 126   # round((121/24) * 25.0)
+        _audio_channels = (
+            self.transformer.config.audio_in_channels // _latent_mel_bins
+        )  # 8
+        _audio_num_frames = 126  # round((121/24) * 25.0)
         input_types = [
             TensorType(
                 DType.float32,
@@ -273,15 +281,19 @@ class LTX2Pipeline(DiffusionPipeline):
     def build_scheduler_step_video(self) -> None:
         """Compile _scheduler_step_video: Euler update for video latents.
 
-          batch=1, seq=11904 (31*16*24), channels=128
+        batch=1, seq=11904 (31*16*24), channels=128
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 11904  # 31 * 16 * 24
         input_types = [
-            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
-            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
+            TensorType(
+                dtype, shape=[1, _video_seq_len, _channels], device=device
+            ),
+            TensorType(
+                dtype, shape=[1, _video_seq_len, _channels], device=device
+            ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
         self.__dict__["_scheduler_step_video"] = max_compile(
@@ -292,15 +304,19 @@ class LTX2Pipeline(DiffusionPipeline):
     def build_scheduler_step_audio(self) -> None:
         """Compile _scheduler_step_audio: Euler update for audio latents.
 
-          batch=1, seq=126 (round((121/24)*25)), channels=128
+        batch=1, seq=126 (round((121/24)*25)), channels=128
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.audio_in_channels  # 128
         _audio_seq_len = 126  # round((121/24) * 25.0)
         input_types = [
-            TensorType(dtype, shape=[1, _audio_seq_len, _channels], device=device),
-            TensorType(dtype, shape=[1, _audio_seq_len, _channels], device=device),
+            TensorType(
+                dtype, shape=[1, _audio_seq_len, _channels], device=device
+            ),
+            TensorType(
+                dtype, shape=[1, _audio_seq_len, _channels], device=device
+            ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
         self.__dict__["_scheduler_step_audio"] = max_compile(
@@ -318,13 +334,19 @@ class LTX2Pipeline(DiffusionPipeline):
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         num_channels = int(self._vae_latents_mean.shape[0])  # 128
-        _latent_num_frames = 31   # (121-1)//4+1
-        _latent_height = 16       # 512//32
-        _latent_width = 24        # 768//32
+        _latent_num_frames = 31  # (121-1)//4+1
+        _latent_height = 16  # 512//32
+        _latent_width = 24  # 768//32
         input_types = [
             TensorType(
                 dtype,
-                shape=[1, num_channels, _latent_num_frames, _latent_height, _latent_width],
+                shape=[
+                    1,
+                    num_channels,
+                    _latent_num_frames,
+                    _latent_height,
+                    _latent_width,
+                ],
                 device=device,
             ),
             TensorType(dtype, shape=[num_channels], device=device),
@@ -346,7 +368,7 @@ class LTX2Pipeline(DiffusionPipeline):
         device = self.transformer.devices[0]
         num_channels = int(self._audio_latents_mean.shape[0])  # C_audio (8)
         _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
-        _audio_num_frames = 126   # round((121/24) * 25.0)
+        _audio_num_frames = 126  # round((121/24) * 25.0)
         input_types = [
             TensorType(
                 dtype,
