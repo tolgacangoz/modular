@@ -601,15 +601,14 @@ class LTX2AudioDecoder(nn.Module[[Tensor], Tensor]):
         if self.device is None:
             raise ValueError("device must be set for input_types")
 
+        # Hardcoded for num_frames=121, frame_rate=24:
+        #   latent_channels     = 8
+        #   audio_num_frames    = round((121/24) * (16000/160/4)) = 126
+        #   latent_mel_bins     = 64 // 4 = 16
         return (
             TensorType(
                 self.dtype,
-                shape=[
-                    1,
-                    self.latent_channels,
-                    "frames",
-                    "mel_bins",
-                ],
+                shape=[1, self.latent_channels, 126, 16],
                 device=self.device,
             ),
         )

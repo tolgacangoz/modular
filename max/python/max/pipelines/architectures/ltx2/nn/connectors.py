@@ -348,7 +348,7 @@ class LTX2TextConnectors(
         text_encoder_hidden_states_type = TensorType(
             self.config.dtype,
             shape=[
-                1,
+                2,
                 1024,
                 self.config.caption_channels * self.config.text_proj_in_factor,
             ],
@@ -356,7 +356,7 @@ class LTX2TextConnectors(
         )
         attention_mask_type = TensorType(
             self.config.dtype,
-            shape=[1, 1024],
+            shape=[2, 1024],
             device=self.config.device,
         )
         return (text_encoder_hidden_states_type, attention_mask_type)

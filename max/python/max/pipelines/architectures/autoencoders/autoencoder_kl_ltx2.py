@@ -891,16 +891,15 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         if self.device is None:
             raise ValueError("device must be set for input_types")
 
+        # Hardcoded for height=512, width=768, num_frames=121, frame_rate=24:
+        #   in_channels       = 128
+        #   latent_num_frames = (121-1)//4+1 = 31
+        #   latent_height     = 512//32      = 16
+        #   latent_width      = 768//32      = 24
         return (
             TensorType(
                 self.dtype,
-                shape=[
-                    1,
-                    self.in_channels,
-                    "latent_frames",
-                    "latent_height",
-                    "latent_width",
-                ],
+                shape=[1, self.in_channels, 31, 16, 24],
                 device=self.device,
             ),
         )

@@ -150,16 +150,15 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             padding=3,
         )
 
-    def input_types(self) -> tuple[TensorType, ...]:
+    def input_types(self) -> tuple[TensorType, ...]:  # type: ignore[override]
         """Define input tensor types for the model."""
+        # Hardcoded for num_frames=121, frame_rate=24:
+        #   out_channels (audio decoder output) = 2
+        #   time = audio_num_frames * LATENT_DOWNSAMPLE_FACTOR = 126 * 4 = 504
+        #   num_mel_bins = 64
         hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[
-                1,
-                self.config.out_channels,
-                "time",
-                "num_mel_bins",
-            ],
+            shape=[1, self.config.out_channels, 504, 64],
             device=self.config.device,
         )
         return (hidden_states_type,)

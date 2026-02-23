@@ -1405,57 +1405,70 @@ class LTX2VideoTransformer3DModel(
     def input_types(self) -> tuple[TensorType, ...]:
         """Define input tensor types for the model.
 
+        Shapes are hardcoded for the target resolution and duration:
+          height=512, width=768, num_frames=121, frame_rate=24.
+          latent_num_frames = (121-1)//4+1 = 31
+          latent_height     = 512//32      = 16
+          latent_width      = 768//32      = 24
+          video_seq_len     = 31*16*24     = 11904
+          duration_s        = 121/24       ≈ 5.042
+          audio_latents/s   = 16000/160/4  = 25.0
+          audio_num_frames  = round(5.042*25) = 126
+          batch_size=2 (CFG doubles the batch in the denoising loop)
+
         Returns:
             Tuple of TensorType specifications for all model inputs.
         """
+        # Hardcoded for height=512, width=768, num_frames=121, frame_rate=24, CFG on.
+        _batch = 2
+        _video_seq_len = 11904  # 31 * 16 * 24
+        _audio_seq_len = 126  # round((121/24) * 25.0)
+        _text_seq_len = 1024
+
         hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[1, "video_seq_len", self.config.in_channels],
+            shape=[_batch, _video_seq_len, self.config.in_channels],
             device=self.config.device,
         )
         audio_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[
-                1,
-                "audio_seq_len",
-                self.config.audio_in_channels,
-            ],
+            shape=[_batch, _audio_seq_len, self.config.audio_in_channels],
             device=self.config.device,
         )
         encoder_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[1, 1024, self.config.caption_channels],
+            shape=[_batch, _text_seq_len, self.config.caption_channels],
             device=self.config.device,
         )
         audio_encoder_hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[1, "audio_seq_len", self.config.caption_channels],
+            shape=[_batch, _audio_seq_len, self.config.caption_channels],
             device=self.config.device,
         )
         timestep_type = TensorType(
-            DType.float32, shape=[1], device=self.config.device
+            DType.float32, shape=[_batch], device=self.config.device
         )
         audio_timestep_type = TensorType(
-            DType.float32, shape=[1], device=self.config.device
+            DType.float32, shape=[_batch], device=self.config.device
         )
         encoder_attention_mask_type = TensorType(
             self.config.dtype,
-            shape=[1, 1024],
+            shape=[_batch, _text_seq_len],
             device=self.config.device,
         )
         audio_encoder_attention_mask_type = TensorType(
             self.config.dtype,
-            shape=[1, "audio_seq_len"],
+            shape=[_batch, _audio_seq_len],
             device=self.config.device,
         )
         video_coords_type = TensorType(
             DType.float32,
-            shape=[1, 3, "video_seq_len", 2],
+            shape=[_batch, 3, _video_seq_len, 2],
             device=self.config.device,
         )
         audio_coords_type = TensorType(
             DType.float32,
-            shape=[1, 1, "audio_seq_len", 2],
+            shape=[_batch, 1, _audio_seq_len, 2],
             device=self.config.device,
         )
 
