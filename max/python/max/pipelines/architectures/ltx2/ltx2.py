@@ -904,25 +904,13 @@ class LTX2AudioVideoRotaryPosEmbed(
         # 1. Generate grid coordinates for each spatiotemporal dimension (frames, height, width)
         # Always compute rope in fp32
         grid_f = Tensor.arange(
-            start=0,
-            end=num_frames,
-            step=self.patch_size_t,
-            dtype=DType.float32,
-            device=device,
+            0, num_frames, self.patch_size_t, dtype=DType.float32, device=device
         )
         grid_h = Tensor.arange(
-            start=0,
-            end=height,
-            step=self.patch_size,
-            dtype=DType.float32,
-            device=device,
+            0, height, self.patch_size, dtype=DType.float32, device=device
         )
         grid_w = Tensor.arange(
-            start=0,
-            end=width,
-            step=self.patch_size,
-            dtype=DType.float32,
-            device=device,
+            0, width, self.patch_size, dtype=DType.float32, device=device
         )
         # indexing='ij' ensures that the dimensions are kept in order as (frames, height, width)
         grid_f_3d = grid_f.reshape((-1, 1, 1)).broadcast_to(
@@ -1008,9 +996,9 @@ class LTX2AudioVideoRotaryPosEmbed(
         # 1. Generate coordinates in the frame (time) dimension.
         # Always compute rope in fp32
         grid_f = Tensor.arange(
-            start=shift,
-            end=num_frames + shift,
-            step=self.patch_size_t,
+            shift,
+            num_frames + shift,
+            self.patch_size_t,
             dtype=DType.float32,
             device=device,
         )
@@ -1088,9 +1076,10 @@ class LTX2AudioVideoRotaryPosEmbed(
         num_rope_elems = num_pos_dims * 2
 
         # 3. Create a 1D grid of frequencies for RoPE
+        # Emulate torch.linspace(0.0, 1.0, steps): arange(0, steps) / (steps-1)
         freqs_dtype = DType.float64 if self.double_precision else DType.float32
         steps = self.dim // num_rope_elems
-        linspace = Tensor.arange(steps, dtype=freqs_dtype, device=device)
+        linspace = Tensor.arange(0, steps, dtype=freqs_dtype, device=device)
         if steps > 1:
             linspace = linspace / float(steps - 1)
 
