@@ -279,8 +279,8 @@ class PixelGenerationTokenizer(
         patch_size: int = 1
         # scale_factors converts latent → pixel space: (temporal, height, width).
         scale_f: int = self._ltx2_vae_temporal_scale  # 8
-        scale_h: int = self._vae_scale_factor          # 32
-        scale_w: int = self._vae_scale_factor          # 32
+        scale_h: int = self._vae_scale_factor  # 32
+        scale_w: int = self._vae_scale_factor  # 32
         causal_offset: int = 1
 
         # 1. 1-D grids for each spatial/temporal dimension.
@@ -289,24 +289,36 @@ class PixelGenerationTokenizer(
         grid_w = np.arange(0, latent_width, patch_size, dtype=np.float32)
 
         # 2. Broadcast to 3-D grid [N_F, N_H, N_W] then stack → [3, N_F, N_H, N_W].
-        grid_f_3d = np.broadcast_to(grid_f[:, None, None], (len(grid_f), len(grid_h), len(grid_w)))
-        grid_h_3d = np.broadcast_to(grid_h[None, :, None], (len(grid_f), len(grid_h), len(grid_w)))
-        grid_w_3d = np.broadcast_to(grid_w[None, None, :], (len(grid_f), len(grid_h), len(grid_w)))
-        grid = np.stack([grid_f_3d, grid_h_3d, grid_w_3d], axis=0)  # [3, N_F, N_H, N_W]
+        grid_f_3d = np.broadcast_to(
+            grid_f[:, None, None], (len(grid_f), len(grid_h), len(grid_w))
+        )
+        grid_h_3d = np.broadcast_to(
+            grid_h[None, :, None], (len(grid_f), len(grid_h), len(grid_w))
+        )
+        grid_w_3d = np.broadcast_to(
+            grid_w[None, None, :], (len(grid_f), len(grid_h), len(grid_w))
+        )
+        grid = np.stack(
+            [grid_f_3d, grid_h_3d, grid_w_3d], axis=0
+        )  # [3, N_F, N_H, N_W]
 
         # 3. Patch [start, end) boundaries → [3, N_F, N_H, N_W, 2] → [3, num_patches, 2].
         patch_delta = np.array(
             [patch_size_t, patch_size, patch_size], dtype=np.float32
         ).reshape(3, 1, 1, 1)
         patch_ends = grid + patch_delta
-        latent_coords = np.stack([grid, patch_ends], axis=-1)  # [3, N_F, N_H, N_W, 2]
-        latent_coords = latent_coords.reshape(3, -1, 2)        # [3, num_patches, 2]
+        latent_coords = np.stack(
+            [grid, patch_ends], axis=-1
+        )  # [3, N_F, N_H, N_W, 2]
+        latent_coords = latent_coords.reshape(3, -1, 2)  # [3, num_patches, 2]
 
         # 4. Tile for batch → [B, 3, num_patches, 2].
         latent_coords = np.tile(latent_coords[None], (batch_size, 1, 1, 1))
 
         # 5. Convert latent → pixel-space coordinates.
-        scale = np.array([scale_f, scale_h, scale_w], dtype=np.float32).reshape(1, 3, 1, 1)
+        scale = np.array([scale_f, scale_h, scale_w], dtype=np.float32).reshape(
+            1, 3, 1, 1
+        )
         pixel_coords = latent_coords * scale
 
         # 6. Causal temporal fix-up: the first latent frame covers fewer pixel frames.
@@ -333,23 +345,39 @@ class PixelGenerationTokenizer(
         audio_patch_size_t: int = 1
         causal_offset: int = 1
 
-        grid_f = np.arange(0, audio_num_frames, audio_patch_size_t, dtype=np.float32)
+        grid_f = np.arange(
+            0, audio_num_frames, audio_patch_size_t, dtype=np.float32
+        )
 
         # Start timestamps in seconds.
         grid_start_mel = np.clip(
-            grid_f * audio_scale_factor + causal_offset - audio_scale_factor, 0, None
-        )
-        grid_start_s = grid_start_mel * self._ltx2_audio_hop_length / self._ltx2_audio_sampling_rate
-
-        # End timestamps in seconds.
-        grid_end_mel = np.clip(
-            (grid_f + audio_patch_size_t) * audio_scale_factor + causal_offset - audio_scale_factor,
+            grid_f * audio_scale_factor + causal_offset - audio_scale_factor,
             0,
             None,
         )
-        grid_end_s = grid_end_mel * self._ltx2_audio_hop_length / self._ltx2_audio_sampling_rate
+        grid_start_s = (
+            grid_start_mel
+            * self._ltx2_audio_hop_length
+            / self._ltx2_audio_sampling_rate
+        )
 
-        audio_coords = np.stack([grid_start_s, grid_end_s], axis=-1)  # [num_patches, 2]
+        # End timestamps in seconds.
+        grid_end_mel = np.clip(
+            (grid_f + audio_patch_size_t) * audio_scale_factor
+            + causal_offset
+            - audio_scale_factor,
+            0,
+            None,
+        )
+        grid_end_s = (
+            grid_end_mel
+            * self._ltx2_audio_hop_length
+            / self._ltx2_audio_sampling_rate
+        )
+
+        audio_coords = np.stack(
+            [grid_start_s, grid_end_s], axis=-1
+        )  # [num_patches, 2]
         # Tile for batch and add modality dimension → [B, 1, num_patches, 2].
         audio_coords = np.tile(audio_coords[None, None], (batch_size, 1, 1, 1))
 
@@ -1001,8 +1029,12 @@ class PixelGenerationTokenizer(
             # Pre-double for CFG on CPU (guidance_scale is already known here),
             # avoiding an eager F.concat tensor compilation in the pipeline.
             if do_cfg:
-                video_coords = np.concatenate([video_coords, video_coords], axis=0)
-                audio_coords = np.concatenate([audio_coords, audio_coords], axis=0)
+                video_coords = np.concatenate(
+                    [video_coords, video_coords], axis=0
+                )
+                audio_coords = np.concatenate(
+                    [audio_coords, audio_coords], axis=0
+                )
             extra_params["ltx2_video_coords"] = video_coords
             extra_params["ltx2_audio_coords"] = audio_coords
             extra_params["ltx2_coords_cfg_doubled"] = np.array(do_cfg)

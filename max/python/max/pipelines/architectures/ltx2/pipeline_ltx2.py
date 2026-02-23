@@ -579,8 +579,12 @@ class LTX2Pipeline(DiffusionPipeline):
         )
         # Positional embedding coordinates precomputed on CPU by
         # PixelGenerationTokenizer (avoids tensor compilation in the pipeline).
-        video_coords_np: np.ndarray | None = extra_params.get("ltx2_video_coords")
-        audio_coords_np: np.ndarray | None = extra_params.get("ltx2_audio_coords")
+        video_coords_np: np.ndarray | None = extra_params.get(
+            "ltx2_video_coords"
+        )
+        audio_coords_np: np.ndarray | None = extra_params.get(
+            "ltx2_audio_coords"
+        )
         # When the tokenizer pre-doubled the coords for CFG, skip F.concat below.
         coords_cfg_doubled: bool = bool(
             extra_params.get("ltx2_coords_cfg_doubled", False)
