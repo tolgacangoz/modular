@@ -9,29 +9,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from __future__ import annotations
+# ===----------------------------------------------------------------------=== #
 
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-import max.functional as F
 import numpy as np
 import numpy.typing as npt
+from max import functional as F
 from max import random
 from max.driver import CPU, Device
 from max.dtype import DType
+from max.graph import TensorType
 from max.pipelines import PixelContext
-from max.pipelines.lib import (
-    ModelInputs,
-)
 from max.pipelines.lib.interfaces import (
     DiffusionPipeline,
     PixelModelInputs,
 )
+from max.pipelines.lib.interfaces.diffusion_pipeline import max_compile
 from max.tensor import Tensor
-from tqdm.auto import tqdm
+from tqdm import tqdm
 from transformers import Gemma3ForConditionalGeneration
 
 from ..autoencoders import (
@@ -112,9 +110,9 @@ class LTX2Pipeline(DiffusionPipeline):
     def init_remaining_components(self) -> None:
         """Initialize non-ComponentModel parts of the LTX2 pipeline.
 
-        Follows the Flux1-style pattern by:
         - Using pre-loaded component models (vae, audio_vae, transformer, connectors, vocoder)
         - Setting basic VAE/audio compression ratios
+        - Pre-compiling hot-path functions via max_compile
         """
 
         # VAE compression ratios: fall back to known LTX2 defaults if not present.
@@ -128,6 +126,7 @@ class LTX2Pipeline(DiffusionPipeline):
         self.audio_sampling_rate = 16000
 
         # Instantiate Gemma3 text encoder (PyTorch) from the same model path.
+        # NOTE: text encoder init is intentionally left as-is (uses PyTorch, not MAX).
         import torch
 
         model_id = str(self.pipeline_config.model.model_path)
@@ -141,11 +140,226 @@ class LTX2Pipeline(DiffusionPipeline):
         if torch.cuda.is_available():
             self.text_encoder.to("cuda")
 
+        # Cache VAE latent statistics as Tensors for use in compiled postprocess functions.
+        # Must be set up BEFORE build_decode_video_latents / build_decode_audio_latents.
+        device = self.transformer.devices[0]
+        dtype = self.transformer.config.dtype
+        vae_mean = getattr(self.vae, "latents_mean", None) or getattr(
+            self.vae.config, "latents_mean", None
+        )
+        vae_std = getattr(self.vae, "latents_std", None) or getattr(
+            self.vae.config, "latents_std", None
+        )
+        if vae_mean is not None and vae_std is not None:
+            self._vae_latents_mean: Tensor | None = Tensor.constant(
+                np.array(vae_mean, dtype=np.float32), dtype=dtype, device=device
+            )
+            self._vae_latents_std: Tensor | None = Tensor.constant(
+                np.array(vae_std, dtype=np.float32), dtype=dtype, device=device
+            )
+        else:
+            self._vae_latents_mean = None
+            self._vae_latents_std = None
+
+        audio_mean = getattr(self.audio_vae, "latents_mean", None) or getattr(
+            self.audio_vae.config, "latents_mean", None
+        )
+        audio_std = getattr(self.audio_vae, "latents_std", None) or getattr(
+            self.audio_vae.config, "latents_std", None
+        )
+        if audio_mean is not None and audio_std is not None:
+            self._audio_latents_mean: Tensor | None = Tensor.constant(
+                np.array(audio_mean, dtype=np.float32),
+                dtype=dtype,
+                device=device,
+            )
+            self._audio_latents_std: Tensor | None = Tensor.constant(
+                np.array(audio_std, dtype=np.float32),
+                dtype=dtype,
+                device=device,
+            )
+        else:
+            self._audio_latents_mean = None
+            self._audio_latents_std = None
+
+        # Pre-compile hot-path tensor functions via max_compile (Flux2-style).
+        self.build_pack_latents()
+        self.build_pack_audio_latents()
+        self.build_prepare_scheduler()
+        self.build_scheduler_step_video()
+        self.build_scheduler_step_audio()
+        self.build_decode_video_latents()
+        self.build_decode_audio_latents()
+
+        # A workaround to remove overhead from `functional.wrapped`.
+        if unwrapped_transformer := self.transformer.unwrap_model():
+            self.transformer = cast(Any, unwrapped_transformer)
+
         self._joint_attention_kwargs: dict[str, Any] | None = None
         self._num_timesteps: int = 0
+        self._cached_sigmas: dict[str, Tensor] = {}
 
-    def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:
+    def prepare_inputs(self, context: PixelContext) -> LTX2ModelInputs:  # type: ignore[override]
         return LTX2ModelInputs.from_context(context)
+
+    # -----------------------------------------------------------------------
+    # build_* methods: compile hot-path functions via max_compile (Flux2 style)
+    # -----------------------------------------------------------------------
+
+    def build_pack_latents(self) -> None:
+        """Compile _pack_video_latents: [B,C,F,H,W] -> [B,S,D].
+
+        Shapes are hardcoded for height=512, width=768, num_frames=121:
+          in_channels       = 128
+          latent_num_frames = (121-1)//4+1 = 31
+          latent_height     = 512//32      = 16
+          latent_width      = 768//32      = 24
+        """
+        device = self.transformer.devices[0]
+        _channels = self.transformer.config.in_channels          # 128
+        _latent_num_frames = 31   # (121-1)//4+1
+        _latent_height = 16       # 512//32
+        _latent_width = 24        # 768//32
+        input_types = [
+            TensorType(
+                DType.float32,
+                shape=[1, _channels, _latent_num_frames, _latent_height, _latent_width],
+                device=device,
+            ),
+        ]
+        self.__dict__["_pack_video_latents"] = max_compile(
+            self._pack_video_latents,
+            input_types=input_types,
+        )
+
+    def build_pack_audio_latents(self) -> None:
+        """Compile _pack_audio_latents_packed: [B,C,L,M] -> [B,S,D].
+
+        Shapes are hardcoded for num_frames=121, frame_rate=24:
+          latent_mel_bins  = 64 // audio_vae_mel_compression_ratio = 16
+          audio_channels   = audio_in_channels // latent_mel_bins   = 8
+          audio_num_frames = round((121/24) * 25.0)                 = 126
+        """
+        device = self.transformer.devices[0]
+        _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
+        _audio_channels = self.transformer.config.audio_in_channels // _latent_mel_bins  # 8
+        _audio_num_frames = 126   # round((121/24) * 25.0)
+        input_types = [
+            TensorType(
+                DType.float32,
+                shape=[1, _audio_channels, _audio_num_frames, _latent_mel_bins],
+                device=device,
+            ),
+        ]
+        self.__dict__["_pack_audio_latents_packed"] = max_compile(
+            self._pack_audio_latents_packed,
+            input_types=input_types,
+        )
+
+    def build_prepare_scheduler(self) -> None:
+        """Compile prepare_scheduler: pre-compute timesteps and per-step dts."""
+        input_types = [
+            TensorType(
+                DType.float32,
+                shape=["num_sigmas"],
+                device=self.transformer.devices[0],
+            ),
+        ]
+        self.__dict__["prepare_scheduler"] = max_compile(
+            self.prepare_scheduler,
+            input_types=input_types,
+        )
+
+    def build_scheduler_step_video(self) -> None:
+        """Compile _scheduler_step_video: Euler update for video latents.
+
+          batch=1, seq=11904 (31*16*24), channels=128
+        """
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        _channels = self.transformer.config.in_channels  # 128
+        _video_seq_len = 11904  # 31 * 16 * 24
+        input_types = [
+            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
+            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
+            TensorType(DType.float32, shape=[1], device=device),
+        ]
+        self.__dict__["_scheduler_step_video"] = max_compile(
+            self.scheduler_step,
+            input_types=input_types,
+        )
+
+    def build_scheduler_step_audio(self) -> None:
+        """Compile _scheduler_step_audio: Euler update for audio latents.
+
+          batch=1, seq=126 (round((121/24)*25)), channels=128
+        """
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        _channels = self.transformer.config.audio_in_channels  # 128
+        _audio_seq_len = 126  # round((121/24) * 25.0)
+        input_types = [
+            TensorType(dtype, shape=[1, _audio_seq_len, _channels], device=device),
+            TensorType(dtype, shape=[1, _audio_seq_len, _channels], device=device),
+            TensorType(DType.float32, shape=[1], device=device),
+        ]
+        self.__dict__["_scheduler_step_audio"] = max_compile(
+            self.scheduler_step,
+            input_types=input_types,
+        )
+
+    def build_decode_video_latents(self) -> None:
+        """Compile _postprocess_video_latents if VAE latent statistics are available.
+
+        Mirrors Flux2's build_decode_latents -> _postprocess_latents pattern.
+        """
+        if self._vae_latents_mean is None or self._vae_latents_std is None:
+            return
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        num_channels = int(self._vae_latents_mean.shape[0])  # 128
+        _latent_num_frames = 31   # (121-1)//4+1
+        _latent_height = 16       # 512//32
+        _latent_width = 24        # 768//32
+        input_types = [
+            TensorType(
+                dtype,
+                shape=[1, num_channels, _latent_num_frames, _latent_height, _latent_width],
+                device=device,
+            ),
+            TensorType(dtype, shape=[num_channels], device=device),
+            TensorType(dtype, shape=[num_channels], device=device),
+        ]
+        self.__dict__["_postprocess_video_latents"] = max_compile(
+            self._postprocess_video_latents,
+            input_types=input_types,
+        )
+
+    def build_decode_audio_latents(self) -> None:
+        """Compile _postprocess_audio_latents if audio VAE statistics are available.
+
+        Mirrors Flux2's build_decode_latents -> _postprocess_latents pattern.
+        """
+        if self._audio_latents_mean is None or self._audio_latents_std is None:
+            return
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        num_channels = int(self._audio_latents_mean.shape[0])  # C_audio (8)
+        _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
+        _audio_num_frames = 126   # round((121/24) * 25.0)
+        input_types = [
+            TensorType(
+                dtype,
+                shape=[1, num_channels, _audio_num_frames, _latent_mel_bins],
+                device=device,
+            ),
+            TensorType(dtype, shape=[num_channels], device=device),
+            TensorType(dtype, shape=[num_channels], device=device),
+        ]
+        self.__dict__["_postprocess_audio_latents"] = max_compile(
+            self._postprocess_audio_latents,
+            input_types=input_types,
+        )
 
     def _encode_tokens(
         self, token_ids: np.ndarray, device: str = "cuda"
@@ -466,29 +680,95 @@ class LTX2Pipeline(DiffusionPipeline):
             ).transpose(1, 2)
         return latents
 
-    def _denormalize_latents(self, latents: Tensor) -> Tensor:
-        """Denormalize video latents."""
-        # Prefer full stats if available on the video VAE model; otherwise
-        # fall back to a simple scaling_factor-only scheme.
+    # -----------------------------------------------------------------------
+    # Compiled instance methods (overridden in __dict__ by build_* at startup)
+    # -----------------------------------------------------------------------
+
+    def _pack_video_latents(self, latents: Tensor) -> Tensor:
+        """Cast and pack video latents [B,C,F,H,W] -> [B,S,C] (patch_size=1).
+
+        With patch_size=patch_size_t=1 the pack is a simple permute + flatten:
+        [B,C,F,H,W] -> [B,F,H,W,C] -> [B,F*H*W,C].
+        """
+        latents = latents.cast(self.transformer.config.dtype)
+        # [B,C,F,H,W] -> [B,F,H,W,C]
+        latents = latents.permute([0, 2, 3, 4, 1])
+        # [B,F,H,W,C] -> [B,S,C]  where S = F*H*W
+        latents = latents.flatten(1, 3)
+        return latents
+
+    def _pack_audio_latents_packed(self, latents: Tensor) -> Tensor:
+        """Cast and pack audio latents [B,C,L,M] -> [B,L,C*M] (no spatial patch).
+
+        Equivalent to the no-patch branch of _pack_audio_latents:
+        [B,C,L,M] -> [B,L,C,M] -> [B,L,C*M].
+        """
+        latents = latents.cast(self.transformer.config.dtype)
+        # [B,C,L,M] -> [B,L,C,M]
+        latents = latents.permute((0, 2, 1, 3))
+        # [B,L,C,M] -> [B,L,C*M]
+        latents = latents.flatten(2, 3)
+        return latents
+
+    def prepare_scheduler(self, sigmas: Tensor) -> tuple[Tensor, Tensor]:
+        """Pre-compute timesteps and per-step dt values from sigmas.
+
+        Returns:
+            (all_timesteps, all_dts) where timesteps = sigmas[:-1] cast to
+            model dtype, and dts = sigmas[1:] - sigmas[:-1] (float32).
+        """
+        sigmas_curr = F.slice_tensor(sigmas, [slice(0, -1)])
+        sigmas_next = F.slice_tensor(sigmas, [slice(1, None)])
+        all_dt = F.sub(sigmas_next, sigmas_curr)
+        all_timesteps = sigmas_curr.cast(self.transformer.config.dtype)
+        return all_timesteps, all_dt
+
+    def scheduler_step(
+        self,
+        latents: Tensor,
+        noise_pred: Tensor,
+        dt: Tensor,
+    ) -> Tensor:
+        """Apply a single Euler update step in sigma space.
+
+        Shared for both video and audio latents.
+        """
+        latents_dtype = latents.dtype
+        latents = latents.cast(DType.float32)
+        latents = latents + dt * noise_pred
+        return latents.cast(latents_dtype)
+
+    def _postprocess_video_latents(
+        self,
+        latents: Tensor,
+        latents_mean: Tensor,
+        latents_std: Tensor,
+    ) -> Tensor:
+        """Denormalize video latents [B,C,F,H,W] using per-channel stats.
+
+        Mirrors Flux2's _postprocess_latents: the compiled inner step of
+        decode_video_latents.
+        """
         scaling_factor = getattr(self.vae.config, "scaling_factor", 1.0)
+        c = latents_mean.shape[0]
+        mean_r = F.reshape(latents_mean, (1, c, 1, 1, 1))
+        std_r = F.reshape(latents_std, (1, c, 1, 1, 1))
+        return latents * std_r / scaling_factor + mean_r
 
-        latents_mean = getattr(self.vae, "latents_mean", None)
-        latents_std = getattr(self.vae, "latents_std", None)
+    def _postprocess_audio_latents(
+        self,
+        latents: Tensor,
+        latents_mean: Tensor,
+        latents_std: Tensor,
+    ) -> Tensor:
+        """Denormalize audio latents [B,C,L,M] using per-channel stats.
 
-        if latents_mean is not None and latents_std is not None:
-            latents = latents * latents_std / scaling_factor + latents_mean
-        else:
-            latents = latents / scaling_factor
-        return latents
-
-    def _denormalize_audio_latents(self, latents: Tensor) -> Tensor:
-        """Denormalize audio latents."""
-        latents_mean = getattr(self.audio_vae, "latents_mean", None)
-        latents_std = getattr(self.audio_vae, "latents_std", None)
-
-        if latents_mean is not None and latents_std is not None:
-            return (latents * latents_std) + latents_mean
-        return latents
+        Mirrors Flux2's _postprocess_latents for the audio stream.
+        """
+        c = latents_mean.shape[0]
+        mean_r = F.reshape(latents_mean, (1, c, 1, 1))
+        std_r = F.reshape(latents_std, (1, c, 1, 1))
+        return latents * std_r + mean_r
 
     @property
     def guidance_scale(self) -> float:
@@ -506,7 +786,7 @@ class LTX2Pipeline(DiffusionPipeline):
     def num_timesteps(self) -> int:
         return self._num_timesteps
 
-    def _decode_latents(
+    def decode_video_latents(
         self,
         latents: Tensor,
         num_frames: int,
@@ -514,38 +794,89 @@ class LTX2Pipeline(DiffusionPipeline):
         width: int,
         output_type: Literal["np", "latent", "pil"] = "np",
     ) -> Tensor | np.ndarray:
+        """Decode packed video latents into a float32 [B,F,H,W,C] NumPy array.
+
+        Mirrors Flux2's decode_latents: shape-dependent unpack (not compiled) is
+        performed here, then the compiled _postprocess_video_latents handles
+        denormalization, the VAE decoder runs, and finally the pixels are scaled
+        to [0, 1] and permuted to channel-last.
+
+        Args:
+            latents: Packed latents [B, S, C].
+            num_frames: Latent frame count.
+            height: Latent height.
+            width: Latent width.
+            output_type: "latent" returns latents as-is; otherwise decodes to NumPy.
+
+        Returns:
+            float32 NumPy array [B, F, H, W, C] or raw latent Tensor.
+        """
         if output_type == "latent":
             return latents
-        latents = Tensor.from_dlpack(latents)
+        # Shape-dependent unpack: [B,S,C] -> [B,C,F,H,W]  (not compiled).
         latents = self._unpack_latents(latents, num_frames, height, width)
-        # Denormalize
-        latents = self._denormalize_latents(latents)
+        # Compiled postprocess: denormalize using per-channel stats.
+        if (
+            self._vae_latents_mean is not None
+            and self._vae_latents_std is not None
+        ):
+            latents = self._postprocess_video_latents(
+                latents, self._vae_latents_mean, self._vae_latents_std
+            )
+        else:
+            scaling_factor = getattr(self.vae.config, "scaling_factor", 1.0)
+            latents = latents / scaling_factor
+        # VAE decode: [B,C,F,H,W].
+        video = self.vae.decode(latents.cast(DType.bfloat16))
+        # Scale pixels to [0, 1] and permute to channel-last [B,F,H,W,C].
+        video = (video / 2.0 + 0.5).clip(min=0.0, max=1.0)
+        video = video.permute((0, 2, 3, 4, 1))
+        return self._to_numpy(video)
 
-        return self._to_numpy(self.vae.decode(latents.cast(DType.bfloat16)))
+    def decode_audio_latents(
+        self,
+        latents: Tensor,
+        audio_num_frames: int,
+        latent_mel_bins: int,
+        output_type: Literal["np", "latent", "pil"] = "np",
+    ) -> Tensor | np.ndarray:
+        """Decode packed audio latents into a waveform Tensor (or return latents).
+
+        Mirrors Flux2's decode_latents for the audio stream.
+
+        Args:
+            latents: Packed audio latents [B, L, C*M].
+            audio_num_frames: Latent audio length.
+            latent_mel_bins: Number of mel frequency bins in the latent space.
+            output_type: "latent" returns latents as-is; otherwise decodes via vocoder.
+
+        Returns:
+            Waveform Tensor or raw latent Tensor.
+        """
+        if output_type == "latent":
+            return latents
+        # Shape-dependent unpack: [B,L,C*M] -> [B,C,L,M]  (not compiled).
+        latents = self._unpack_audio_latents(
+            latents, audio_num_frames, latent_mel_bins
+        )
+        # Compiled postprocess: denormalize.
+        if (
+            self._audio_latents_mean is not None
+            and self._audio_latents_std is not None
+        ):
+            latents = self._postprocess_audio_latents(
+                latents, self._audio_latents_mean, self._audio_latents_std
+            )
+        mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
+        return self.vocoder(mel_spectrograms)
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
         cpu_image: Tensor = image.cast(DType.float32).to(CPU())
         return np.from_dlpack(cpu_image)
 
-    def _scheduler_step(
+    def execute(  # type: ignore[override]
         self,
-        latents: Tensor,
-        noise_pred: Tensor,
-        sigmas: Tensor,
-        step_index: int,
-    ) -> Tensor:
-        latents_dtype = latents.dtype
-        latents = latents.cast(DType.float32)
-        sigma = sigmas[step_index]
-        sigma_next = sigmas[step_index + 1]
-        dt = sigma_next - sigma
-        latents = latents + dt * noise_pred
-        latents = latents.cast(latents_dtype)
-        return latents
-
-    def execute(
-        self,
-        model_inputs: ModelInputs,
+        model_inputs: LTX2ModelInputs,
     ) -> LTX2PipelineOutput:
         r"""
         Executes the LTX2 model with the prepared inputs.
@@ -557,9 +888,6 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             ModelOutputs containing the generated images.
         """
-        # Use cast for type safety
-        model_inputs = cast(LTX2ModelInputs, model_inputs)
-
         # Extract parameters from model_inputs
         height = model_inputs.height or 512
         width = model_inputs.width or 768
@@ -607,19 +935,27 @@ class LTX2Pipeline(DiffusionPipeline):
             latent_height = height // self.vae_spatial_compression_ratio
             latent_width = width // self.vae_spatial_compression_ratio
 
-        # 2. Get timesteps and sigmas from PixelModelInputs (numpy arrays)
-        timesteps_np: np.ndarray = model_inputs.timesteps
+        # 2. Get sigmas from PixelModelInputs, cache, and pre-compute scheduler tensors.
         sigmas_np: np.ndarray = model_inputs.sigmas
-        timesteps = Tensor.constant(
-            timesteps_np.astype(np.float32, copy=False),
-            dtype=DType.float32,
-            device=device,
-        )
-        sigmas = Tensor.constant(
-            sigmas_np.astype(np.float32, copy=False),
-            dtype=DType.float32,
-            device=device,
-        )
+        sigmas_key = str(num_inference_steps)
+        if sigmas_key in self._cached_sigmas:
+            sigmas = self._cached_sigmas[sigmas_key]
+        else:
+            sigmas = Tensor.constant(
+                sigmas_np.astype(np.float32, copy=False),
+                dtype=DType.float32,
+                device=device,
+            )
+            self._cached_sigmas[sigmas_key] = sigmas
+        all_timesteps, all_dts = self.prepare_scheduler(sigmas)
+
+        # For faster tensor slicing inside the denoising loop.
+        timesteps_seq = all_timesteps
+        dts_seq = all_dts
+        if hasattr(timesteps_seq, "driver_tensor"):
+            timesteps_seq = timesteps_seq.driver_tensor
+        if hasattr(dts_seq, "driver_tensor"):
+            dts_seq = dts_seq.driver_tensor
 
         # 3. Encode text with Gemma3 (via transformers) using TokenBuffer data
         token_ids_np: np.ndarray = model_inputs.tokens.array
@@ -722,9 +1058,9 @@ class LTX2Pipeline(DiffusionPipeline):
             latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
             latents_5d = latents_5d.astype(np.float32, copy=False)
 
-        latents = Tensor.from_dlpack(latents_5d)
+        latents = Tensor.from_dlpack(latents_5d).to(device)
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
-        latents = self._pack_latents(latents)
+        latents = self._pack_video_latents(latents)
 
         # 6. Prepare audio latents
         if audio_latents_np is not None:
@@ -766,7 +1102,8 @@ class LTX2Pipeline(DiffusionPipeline):
             if isinstance(audio_latents_arr, Tensor)
             else Tensor.from_dlpack(audio_latents_arr)
         )
-        audio_latents = self._pack_audio_latents(audio_latents)
+        audio_latents = audio_latents.to(device)
+        audio_latents = self._pack_audio_latents_packed(audio_latents)
 
         # 7. Pre-compute positional embeddings.
         # Prefer numpy arrays precomputed by PixelGenerationTokenizer (zero
@@ -784,107 +1121,86 @@ class LTX2Pipeline(DiffusionPipeline):
             video_coords = F.concat([video_coords, video_coords], axis=0)
             audio_coords = F.concat([audio_coords, audio_coords], axis=0)
 
-        num_warmup_steps = model_inputs.num_warmup_steps
-
         # 8. Denoising loop
-        with tqdm(total=num_inference_steps, desc="Denoising") as progress_bar:
-            for i, t in enumerate(timesteps):
-                # Prepare CFG inputs
-                if self.do_classifier_free_guidance:
-                    latent_model_input = F.concat([latents, latents], axis=0)
-                    audio_latent_model_input = F.concat(
-                        [audio_latents, audio_latents], axis=0
-                    )
-                else:
-                    latent_model_input = latents
-                    audio_latent_model_input = audio_latents
+        for i in tqdm(range(num_inference_steps), desc="Denoising"):
+            timestep = timesteps_seq[i : i + 1]
+            dt = dts_seq[i : i + 1]
 
-                latent_model_input = latent_model_input.cast(
-                    prompt_embeds.dtype
+            # Prepare CFG inputs
+            if self.do_classifier_free_guidance:
+                latent_model_input = F.concat([latents, latents], axis=0)
+                audio_latent_model_input = F.concat(
+                    [audio_latents, audio_latents], axis=0
                 )
-                audio_latent_model_input = audio_latent_model_input.cast(
-                    prompt_embeds.dtype
-                )
+            else:
+                latent_model_input = latents
+                audio_latent_model_input = audio_latents
 
-                # Broadcast timestep
-                if self.do_classifier_free_guidance:
-                    timestep = F.concat(
-                        [t.unsqueeze(0), t.unsqueeze(0)], axis=0
-                    )
-                else:
-                    timestep = t.unsqueeze(0)
+            latent_model_input = latent_model_input.cast(prompt_embeds.dtype)
+            audio_latent_model_input = audio_latent_model_input.cast(
+                prompt_embeds.dtype
+            )
 
-                noise_pred_video, noise_pred_audio = self.transformer(
-                    hidden_states=latent_model_input,
-                    audio_hidden_states=audio_latent_model_input,
-                    encoder_hidden_states=connector_prompt_embeds,
-                    audio_encoder_hidden_states=connector_audio_prompt_embeds,
-                    timestep=timestep,
-                    encoder_attention_mask=connector_attention_mask,
-                    audio_encoder_attention_mask=connector_attention_mask,
-                    num_frames=latent_num_frames,
-                    height=latent_height,
-                    width=latent_width,
-                    fps=frame_rate,
-                    audio_num_frames=audio_num_frames,
-                    video_coords=video_coords,
-                    audio_coords=audio_coords,
-                )
-                noise_pred_video = noise_pred_video.cast(DType.float32)
-                noise_pred_audio = noise_pred_audio.cast(DType.float32)
+            # Broadcast timestep for CFG
+            if self.do_classifier_free_guidance:
+                timestep = F.concat([timestep, timestep], axis=0)
 
-                if self.do_classifier_free_guidance:
-                    # Split into uncond and cond predictions
-                    noise_pred_video_uncond = noise_pred_video[0:1]
-                    noise_pred_video_text = noise_pred_video[1:2]
-                    noise_pred_video = (
-                        noise_pred_video_uncond
-                        + guidance_scale
-                        * (noise_pred_video_text - noise_pred_video_uncond)
-                    )
+            noise_pred_video, noise_pred_audio = self.transformer(
+                hidden_states=latent_model_input,
+                audio_hidden_states=audio_latent_model_input,
+                encoder_hidden_states=connector_prompt_embeds,
+                audio_encoder_hidden_states=connector_audio_prompt_embeds,
+                timestep=timestep,
+                encoder_attention_mask=connector_attention_mask,
+                audio_encoder_attention_mask=connector_attention_mask,
+                num_frames=latent_num_frames,
+                height=latent_height,
+                width=latent_width,
+                fps=frame_rate,
+                audio_num_frames=audio_num_frames,
+                video_coords=video_coords,
+                audio_coords=audio_coords,
+            )
+            noise_pred_video = noise_pred_video.cast(
+                self.transformer.config.dtype
+            )
+            noise_pred_audio = noise_pred_audio.cast(
+                self.transformer.config.dtype
+            )
 
-                    noise_pred_audio_uncond = noise_pred_audio[0:1]
-                    noise_pred_audio_text = noise_pred_audio[1:2]
-                    noise_pred_audio = (
-                        noise_pred_audio_uncond
-                        + guidance_scale
-                        * (noise_pred_audio_text - noise_pred_audio_uncond)
-                    )
-
-                # Scheduler step
-                audio_latents = self._scheduler_step(
-                    audio_latents, noise_pred_audio, sigmas, i
-                )
-                latents = self._scheduler_step(
-                    latents, noise_pred_video, sigmas, i
+            if self.do_classifier_free_guidance:
+                # Split into uncond and cond predictions
+                noise_pred_video_uncond = noise_pred_video[0:1]
+                noise_pred_video_text = noise_pred_video[1:2]
+                noise_pred_video = noise_pred_video_uncond + guidance_scale * (
+                    noise_pred_video_text - noise_pred_video_uncond
                 )
 
-                # progress_bar.update()
+                noise_pred_audio_uncond = noise_pred_audio[0:1]
+                noise_pred_audio_text = noise_pred_audio[1:2]
+                noise_pred_audio = noise_pred_audio_uncond + guidance_scale * (
+                    noise_pred_audio_text - noise_pred_audio_uncond
+                )
 
-        # 9. Decode latents to video
-        # Unpack latents: [B, S, D] -> [B, C, F, H, W]
-        latents = self._unpack_latents(
+            # Euler scheduler step (separate compiled functions for video and audio).
+            latents = self._scheduler_step_video(latents, noise_pred_video, dt)
+            audio_latents = self._scheduler_step_audio(
+                audio_latents, noise_pred_audio, dt
+            )
+
+        # 9. Decode video latents -> float32 [B,F,H,W,C] NumPy array.
+        # decode_video_latents: unpack (shape-dependent) + compiled _postprocess_video_latents
+        # + VAE decode + scale to [0,1] + permute to channel-last.
+        frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
         )
-        latents = self._denormalize_latents(latents)
 
-        video = self.vae.decode(latents.cast(DType.bfloat16))
-
-        # Scale to [0, 1] and permute to [B, F, H, W, C]
-        video = (video / 2.0 + 0.5).clip(min=0.0, max=1.0)
-        video = video.permute((0, 2, 3, 4, 1))
-
-        # 10. Decode audio
-        audio_latents = self._unpack_audio_latents(
+        # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
+        audio = self.decode_audio_latents(
             audio_latents, audio_num_frames, latent_mel_bins
         )
-        audio_latents = self._denormalize_audio_latents(audio_latents)
-        mel_spectrograms = self.audio_vae.decode(
-            audio_latents.cast(DType.bfloat16)
-        )
-        audio = self.vocoder(mel_spectrograms)
 
         return LTX2PipelineOutput(
-            frames=video,
+            frames=frames,
             audio=audio,
         )
