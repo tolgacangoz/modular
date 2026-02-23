@@ -234,6 +234,9 @@ class PixelGenerationTokenizer(
         if self._is_ltx2:
             # VAE temporal downsample factor (frames per latent frame).
             self._ltx2_vae_temporal_compression_ratio = 4
+            # Pixel-space temporal scale factor used by the RoPE coordinate
+            # computation (scale_factors[0] in LTX2AudioVideoRotaryPosEmbed).
+            self._ltx2_vae_temporal_scale = 8
             # Audio configuration: 16 kHz, hop length 160, mel compression 4.
             self._ltx2_audio_sampling_rate = 16_000
             self._ltx2_audio_hop_length = 160
@@ -256,6 +259,101 @@ class PixelGenerationTokenizer(
         self._max_pixel_size = None
         if self._pipeline_class_name == PipelineClassName.FLUX2:
             self._max_pixel_size = 1024 * 1024
+
+    def _prepare_ltx2_video_coords(
+        self,
+        batch_size: int,
+        latent_num_frames: int,
+        latent_height: int,
+        latent_width: int,
+        frame_rate: float,
+    ) -> npt.NDArray[np.float32]:
+        """Pure-numpy equivalent of LTX2AudioVideoRotaryPosEmbed.prepare_video_coords.
+
+        Returns float32 array of shape [batch_size, 3, num_patches, 2] containing
+        per-patch pixel-space [start, end) boundaries for the (frame, height, width)
+        dimensions, scaled to seconds on the temporal axis.
+        """
+        # LTX2 constants (patch sizes are always 1 for this model).
+        patch_size_t: int = 1
+        patch_size: int = 1
+        # scale_factors converts latent → pixel space: (temporal, height, width).
+        scale_f: int = self._ltx2_vae_temporal_scale  # 8
+        scale_h: int = self._vae_scale_factor          # 32
+        scale_w: int = self._vae_scale_factor          # 32
+        causal_offset: int = 1
+
+        # 1. 1-D grids for each spatial/temporal dimension.
+        grid_f = np.arange(0, latent_num_frames, patch_size_t, dtype=np.float32)
+        grid_h = np.arange(0, latent_height, patch_size, dtype=np.float32)
+        grid_w = np.arange(0, latent_width, patch_size, dtype=np.float32)
+
+        # 2. Broadcast to 3-D grid [N_F, N_H, N_W] then stack → [3, N_F, N_H, N_W].
+        grid_f_3d = np.broadcast_to(grid_f[:, None, None], (len(grid_f), len(grid_h), len(grid_w)))
+        grid_h_3d = np.broadcast_to(grid_h[None, :, None], (len(grid_f), len(grid_h), len(grid_w)))
+        grid_w_3d = np.broadcast_to(grid_w[None, None, :], (len(grid_f), len(grid_h), len(grid_w)))
+        grid = np.stack([grid_f_3d, grid_h_3d, grid_w_3d], axis=0)  # [3, N_F, N_H, N_W]
+
+        # 3. Patch [start, end) boundaries → [3, N_F, N_H, N_W, 2] → [3, num_patches, 2].
+        patch_delta = np.array(
+            [patch_size_t, patch_size, patch_size], dtype=np.float32
+        ).reshape(3, 1, 1, 1)
+        patch_ends = grid + patch_delta
+        latent_coords = np.stack([grid, patch_ends], axis=-1)  # [3, N_F, N_H, N_W, 2]
+        latent_coords = latent_coords.reshape(3, -1, 2)        # [3, num_patches, 2]
+
+        # 4. Tile for batch → [B, 3, num_patches, 2].
+        latent_coords = np.tile(latent_coords[None], (batch_size, 1, 1, 1))
+
+        # 5. Convert latent → pixel-space coordinates.
+        scale = np.array([scale_f, scale_h, scale_w], dtype=np.float32).reshape(1, 3, 1, 1)
+        pixel_coords = latent_coords * scale
+
+        # 6. Causal temporal fix-up: the first latent frame covers fewer pixel frames.
+        pixel_coords[:, 0] = np.clip(
+            pixel_coords[:, 0] + causal_offset - scale_f, 0, None
+        )
+
+        # 7. Convert pixel frames → seconds.
+        pixel_coords[:, 0] /= frame_rate
+
+        return pixel_coords  # float32, [B, 3, num_patches, 2]
+
+    def _prepare_ltx2_audio_coords(
+        self,
+        batch_size: int,
+        audio_num_frames: int,
+    ) -> npt.NDArray[np.float32]:
+        """Pure-numpy equivalent of LTX2AudioVideoRotaryPosEmbed.prepare_audio_coords.
+
+        Returns float32 array of shape [batch_size, 1, num_patches, 2] containing
+        per-patch [start, end) timestamps in seconds for the temporal dimension.
+        """
+        audio_scale_factor: int = self._ltx2_audio_mel_compression_ratio  # 4
+        audio_patch_size_t: int = 1
+        causal_offset: int = 1
+
+        grid_f = np.arange(0, audio_num_frames, audio_patch_size_t, dtype=np.float32)
+
+        # Start timestamps in seconds.
+        grid_start_mel = np.clip(
+            grid_f * audio_scale_factor + causal_offset - audio_scale_factor, 0, None
+        )
+        grid_start_s = grid_start_mel * self._ltx2_audio_hop_length / self._ltx2_audio_sampling_rate
+
+        # End timestamps in seconds.
+        grid_end_mel = np.clip(
+            (grid_f + audio_patch_size_t) * audio_scale_factor + causal_offset - audio_scale_factor,
+            0,
+            None,
+        )
+        grid_end_s = grid_end_mel * self._ltx2_audio_hop_length / self._ltx2_audio_sampling_rate
+
+        audio_coords = np.stack([grid_start_s, grid_end_s], axis=-1)  # [num_patches, 2]
+        # Tile for batch and add modality dimension → [B, 1, num_patches, 2].
+        audio_coords = np.tile(audio_coords[None, None], (batch_size, 1, 1, 1))
+
+        return audio_coords  # float32, [B, 1, num_patches, 2]
 
     def _prepare_latent_image_ids(
         self, height: int, width: int, batch_size: int = 1
@@ -861,6 +959,53 @@ class PixelGenerationTokenizer(
             )
             audio_latents = self._randn_tensor(audio_shape, request.body.seed)
             extra_params["ltx2_audio_latents"] = audio_latents
+
+            # Pre-compute positional embedding coordinates on CPU so the
+            # pipeline doesn't need to run tensor ops at inference time.
+            # These are deterministic functions of the resolution/duration
+            # and can be computed once here, avoiding repeated compilation.
+            # Store scalar latent dimensions so the pipeline can skip
+            # recomputing them from scratch.
+            extra_params["ltx2_latent_num_frames"] = np.array(
+                latent_num_frames, dtype=np.int64
+            )
+            extra_params["ltx2_latent_height"] = np.array(
+                latent_height, dtype=np.int64
+            )
+            extra_params["ltx2_latent_width"] = np.array(
+                latent_width, dtype=np.int64
+            )
+            extra_params["ltx2_audio_num_frames"] = np.array(
+                audio_num_frames, dtype=np.int64
+            )
+            extra_params["ltx2_latent_mel_bins"] = np.array(
+                latent_mel_bins, dtype=np.int64
+            )
+
+            # Pre-compute positional embedding coordinates on CPU so the
+            # pipeline doesn't need to run tensor ops at inference time.
+            # These are deterministic functions of the resolution/duration
+            # and can be computed once here, avoiding repeated compilation.
+            do_cfg = image_options.guidance_scale > 1
+            video_coords = self._prepare_ltx2_video_coords(
+                batch_size=image_options.num_images,
+                latent_num_frames=latent_num_frames,
+                latent_height=latent_height,
+                latent_width=latent_width,
+                frame_rate=float(frame_rate),
+            )
+            audio_coords = self._prepare_ltx2_audio_coords(
+                batch_size=image_options.num_images,
+                audio_num_frames=audio_num_frames,
+            )
+            # Pre-double for CFG on CPU (guidance_scale is already known here),
+            # avoiding an eager F.concat tensor compilation in the pipeline.
+            if do_cfg:
+                video_coords = np.concatenate([video_coords, video_coords], axis=0)
+                audio_coords = np.concatenate([audio_coords, audio_coords], axis=0)
+            extra_params["ltx2_video_coords"] = video_coords
+            extra_params["ltx2_audio_coords"] = audio_coords
+            extra_params["ltx2_coords_cfg_doubled"] = np.array(do_cfg)
 
         # 5. Build the context
         context = PixelContext(

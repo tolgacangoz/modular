@@ -577,16 +577,31 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_latents_np: np.ndarray | None = extra_params.get(
             "ltx2_audio_latents"
         )
+        # Positional embedding coordinates precomputed on CPU by
+        # PixelGenerationTokenizer (avoids tensor compilation in the pipeline).
+        video_coords_np: np.ndarray | None = extra_params.get("ltx2_video_coords")
+        audio_coords_np: np.ndarray | None = extra_params.get("ltx2_audio_coords")
+        # When the tokenizer pre-doubled the coords for CFG, skip F.concat below.
+        coords_cfg_doubled: bool = bool(
+            extra_params.get("ltx2_coords_cfg_doubled", False)
+        )
 
         self._guidance_scale = guidance_scale
         self._num_timesteps = num_inference_steps
 
-        # 1. Compute latent dimensions (may be overridden by precomputed latents)
-        latent_num_frames = (
-            num_frames - 1
-        ) // self.vae_temporal_compression_ratio + 1
-        latent_height = height // self.vae_spatial_compression_ratio
-        latent_width = width // self.vae_spatial_compression_ratio
+        # 1. Resolve latent dimensions.
+        # Prefer values precomputed by the tokenizer; fall back to deriving
+        # them from the request parameters when running without a tokenizer.
+        if "ltx2_latent_num_frames" in extra_params:
+            latent_num_frames = int(extra_params["ltx2_latent_num_frames"])
+            latent_height = int(extra_params["ltx2_latent_height"])
+            latent_width = int(extra_params["ltx2_latent_width"])
+        else:
+            latent_num_frames = (
+                num_frames - 1
+            ) // self.vae_temporal_compression_ratio + 1
+            latent_height = height // self.vae_spatial_compression_ratio
+            latent_width = width // self.vae_spatial_compression_ratio
 
         # 2. Get timesteps and sigmas from PixelModelInputs (numpy arrays)
         timesteps_np: np.ndarray = model_inputs.timesteps
@@ -723,6 +738,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 raise ValueError(
                     "Mismatch between video and audio batch sizes in LTX2 latents"
                 )
+            # Prefer tokenizer-precomputed scalars to avoid shape extraction.
+            if "ltx2_audio_num_frames" in extra_params:
+                audio_num_frames = int(extra_params["ltx2_audio_num_frames"])
+                latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
             audio_latents_arr = audio_latents_np.astype(np.float32, copy=False)
         else:
             # Fallback: sample audio latents matching the original pipeline logic.
@@ -745,21 +764,19 @@ class LTX2Pipeline(DiffusionPipeline):
         )
         audio_latents = self._pack_audio_latents(audio_latents)
 
-        # 7. Pre-compute positional embeddings
-        video_coords = self.transformer.rope.prepare_video_coords(
-            latents.shape[0],
-            latent_num_frames,
-            latent_height,
-            latent_width,
-            device,
-            fps=frame_rate,
-        )
-        audio_coords = self.transformer.audio_rope.prepare_audio_coords(
-            audio_latents.shape[0], audio_num_frames, device
-        )
+        # 7. Pre-compute positional embeddings.
+        # Prefer numpy arrays precomputed by PixelGenerationTokenizer (zero
+        # compilation cost).
+        video_coords = Tensor.from_dlpack(
+            video_coords_np.astype(np.float32, copy=False)
+        ).to(device)
+        audio_coords = Tensor.from_dlpack(
+            audio_coords_np.astype(np.float32, copy=False)
+        ).to(device)
 
         # Duplicate positional coords for CFG (batch dim doubles).
-        if self.do_classifier_free_guidance:
+        # Skip when the tokenizer already pre-doubled them on the CPU fast path.
+        if self.do_classifier_free_guidance and not coords_cfg_doubled:
             video_coords = F.concat([video_coords, video_coords], axis=0)
             audio_coords = F.concat([audio_coords, audio_coords], axis=0)
 
