@@ -80,10 +80,6 @@ class LTX2TransformerModel(ComponentModel):
         with F.lazy():
             ltx2transformer = LTX2VideoTransformer3DModel(self.config)
             ltx2transformer.to(self.devices[0])
-        # Expose rope objects so the pipeline can call prepare_video_coords /
-        # prepare_audio_coords without going through the compiled graph.
-        self.rope = ltx2transformer.rope
-        self.audio_rope = ltx2transformer.audio_rope
         state_dict = _reconcile_dtypes(state_dict, ltx2transformer)
         self.model = ltx2transformer.compile(
             *ltx2transformer.input_types(), weights=state_dict
