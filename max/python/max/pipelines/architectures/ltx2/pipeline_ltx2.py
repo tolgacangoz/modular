@@ -838,7 +838,7 @@ class LTX2Pipeline(DiffusionPipeline):
                     latents, noise_pred_video, sigmas, i
                 )
 
-                progress_bar.update()
+                # progress_bar.update()
 
         # 9. Decode latents to video
         # Unpack latents: [B, S, D] -> [B, C, F, H, W]
