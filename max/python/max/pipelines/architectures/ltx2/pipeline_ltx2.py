@@ -638,15 +638,15 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                negative_token_ids = Tensor.constant(
-                    negative_ids_np.astype(np.int64, copy=False),
-                    dtype=DType.int64,
-                    device=device,
-                )
+                # negative_ids_np = Tensor.from_dlpack(
+                #     negative_ids_np.astype(np.int64, copy=False),
+                #     dtype=DType.int64,
+                #     device=device,
+                # )
                 negative_attention_mask = prompt_attention_mask
 
                 negative_hidden_states = self._encode_tokens(
-                    negative_token_ids, device="cuda"
+                    negative_ids_np, device="cuda"
                 )
                 negative_sequence_lengths = negative_attention_mask.cast(
                     DType.int64
