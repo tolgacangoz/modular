@@ -703,11 +703,7 @@ class LTX2Pipeline(DiffusionPipeline):
             latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
             latents_5d = latents_5d.astype(np.float32, copy=False)
 
-        latents = Tensor.constant(
-            latents_5d,
-            dtype=DType.bfloat16,
-            device=device,
-        )
+        latents = Tensor.from_dlpack(latents_5d)
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
         latents = self._pack_latents(latents)
 
@@ -745,11 +741,7 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_latents = (
             audio_latents_arr
             if isinstance(audio_latents_arr, Tensor)
-            else Tensor.constant(
-                audio_latents_arr,
-                dtype=DType.float32,
-                device=device,
-            )
+            else Tensor.from_dlpack(audio_latents_arr)
         )
         audio_latents = self._pack_audio_latents(audio_latents)
 
