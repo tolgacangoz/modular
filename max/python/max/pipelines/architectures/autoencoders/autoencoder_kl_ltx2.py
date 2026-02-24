@@ -24,7 +24,7 @@ from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
-from ..flux2.layers.activations import ACT2FN
+from ..common_layers.activation import activation_function_from_name
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
 
@@ -155,7 +155,7 @@ class LTX2VideoResnetBlock3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
         super().__init__()
         out_channels = out_channels or in_channels
 
-        self.nonlinearity = ACT2FN[non_linearity]
+        self.nonlinearity = activation_function_from_name(non_linearity)
 
         self.norm1 = PerChannelRMSNorm()
         self.conv1 = LTX2VideoCausalConv3d(
@@ -861,7 +861,7 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
 
         # out
         self.norm_out = PerChannelRMSNorm()
-        self.conv_act = ACT2FN["silu"]
+        self.conv_act = activation_function_from_name("silu")
         self.conv_out = LTX2VideoCausalConv3d(
             output_channel,
             self.out_channels,

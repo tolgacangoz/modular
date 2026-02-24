@@ -26,7 +26,7 @@ from max.tensor import Tensor
 
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux1.layers.embeddings import PixArtAlphaTextProjection
-from ..flux2.layers.activations import ACT2FN
+from ..common_layers.activation import activation_function_from_name
 from .model_config import LTX2TransformerConfigBase
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class LTX2AdaLayerNormSingle(
             use_additional_conditions=use_additional_conditions,
         )
 
-        self.silu = ACT2FN["silu"]
+        self.silu = activation_function_from_name("silu")
         self.linear = nn.Linear(
             embedding_dim, self.num_mod_params * embedding_dim, bias=True
         )
