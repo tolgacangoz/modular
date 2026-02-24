@@ -259,9 +259,6 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             encoder_hidden_states = hidden_states
 
         # Preserve static sequence lengths through reshapes.
-        # Using -1 for the sequence dimension can cause the compiler to treat
-        # the inferred dim as dynamic/unknown, which then breaks GPU matmul/BMM
-        # lowering that requires static layouts.
         query_seq_len = hidden_states.shape[1]
         key_value_seq_len = encoder_hidden_states.shape[1]
 
