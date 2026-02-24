@@ -932,7 +932,7 @@ class LTX2AudioVideoRotaryPosEmbed(
         height: int | None,
         width: int | None,
         device: Device,
-        fps: float = 25.0,
+        fps: float = 24.0,
     ) -> Tensor:
         """
         Create per-dimension bounds [inclusive start, exclusive end) for each patch with respect to the original pixel
@@ -1550,7 +1550,7 @@ class LTX2VideoTransformer3DModel(
         num_frames: int | None = None,
         height: int | None = None,
         width: int | None = None,
-        fps: float = 25.0,
+        fps: float = 24.0,
         audio_num_frames: int | None = None,
     ) -> tuple[Tensor, Tensor]:
         """
