@@ -414,6 +414,13 @@ class LTX2Pipeline(DiffusionPipeline):
             # Stack all hidden states: [batch_size, seq_len, hidden_dim, num_layers]
             hidden_states = torch.stack(outputs.hidden_states, axis=-1)
 
+        # Free GPU and CPU memory used by the text encoder after encoding.
+        self.text_encoder.to("cpu")
+        del self.text_encoder
+        self.text_encoder = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # Convert to MAX Tensor
         return Tensor.from_dlpack(hidden_states.to(torch.bfloat16))
 
