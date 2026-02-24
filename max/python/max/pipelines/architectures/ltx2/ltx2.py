@@ -304,6 +304,13 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
 
+        # Preserve static sequence lengths through reshapes.
+        # Using -1 for the sequence dimension can cause the compiler to treat
+        # the inferred dim as dynamic/unknown, which then breaks GPU matmul/BMM
+        # lowering that requires static layouts.
+        query_seq_len = hidden_states.shape[1]
+        key_value_seq_len = encoder_hidden_states.shape[1]
+
         query = self.to_q(hidden_states)
         key = self.to_k(encoder_hidden_states)
         value = self.to_v(encoder_hidden_states)
@@ -329,13 +336,17 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     else query_rotary_emb,
                 )
 
-        # Use -1 for the sequence dimension so each tensor infers its own
-        # length. In cross-attention, query has video_seq_len while key/value
-        # have text_seq_len — using a single sequence_length would be wrong.
-        # This mirrors diffusers' unflatten(2, (attn.heads, -1)).
-        query = query.reshape((batch_size, -1, self.heads, self.head_dim))
-        key = key.reshape((batch_size, -1, self.heads, self.head_dim))
-        value = value.reshape((batch_size, -1, self.heads, self.head_dim))
+        # In cross-attention, query and key/value can have different sequence
+        # lengths, so use the source tensors' explicit lengths.
+        query = query.reshape(
+            (batch_size, query_seq_len, self.heads, self.head_dim)
+        )
+        key = key.reshape(
+            (batch_size, key_value_seq_len, self.heads, self.head_dim)
+        )
+        value = value.reshape(
+            (batch_size, key_value_seq_len, self.heads, self.head_dim)
+        )
 
         # Scaled dot-product attention
         # Transpose to [B, heads, seq, head_dim] for attention computation
@@ -597,6 +608,8 @@ class LTX2VideoTransformerBlock(
         v2a_cross_attention_mask: Tensor | None = None,
     ) -> Tensor:
         batch_size = hidden_states.shape[0]
+        hidden_size = hidden_states.shape[-1]
+        audio_hidden_size = audio_hidden_states.shape[-1]
 
         # 1. Video and Audio Self-Attention
         norm_hidden_states = self.norm1(hidden_states)
@@ -604,7 +617,9 @@ class LTX2VideoTransformerBlock(
         num_ada_params = self.scale_shift_table.shape[0]
         ada_values = self.scale_shift_table[None, None].to(
             temb.device
-        ) + temb.reshape((batch_size, temb.shape[1], num_ada_params, -1))
+        ) + temb.reshape(
+            (batch_size, temb.shape[1], num_ada_params, hidden_size)
+        )
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             ada_values[:, :, 0],
             ada_values[:, :, 1],
@@ -628,7 +643,12 @@ class LTX2VideoTransformerBlock(
         audio_ada_values = self.audio_scale_shift_table[None, None].to(
             temb_audio.device
         ) + temb_audio.reshape(
-            (batch_size, temb_audio.shape[1], num_audio_ada_params, -1)
+            (
+                batch_size,
+                temb_audio.shape[1],
+                num_audio_ada_params,
+                audio_hidden_size,
+            )
         )
         (
             audio_shift_msa,
@@ -693,11 +713,13 @@ class LTX2VideoTransformerBlock(
         video_ca_scale_shift_table = video_per_layer_ca_scale_shift.cast(
             temb_ca_scale_shift.dtype
         ) + temb_ca_scale_shift.reshape(
-            (batch_size, temb_ca_scale_shift.shape[1], 4, -1)
+            (batch_size, temb_ca_scale_shift.shape[1], 4, hidden_size)
         )
         video_ca_gate = video_per_layer_ca_gate.cast(
             temb_ca_gate.dtype
-        ) + temb_ca_gate.reshape((batch_size, temb_ca_gate.shape[1], 1, -1))
+        ) + temb_ca_gate.reshape(
+            (batch_size, temb_ca_gate.shape[1], 1, hidden_size)
+        )
 
         (
             video_a2v_ca_scale,
@@ -723,12 +745,17 @@ class LTX2VideoTransformerBlock(
         audio_ca_scale_shift_table = audio_per_layer_ca_scale_shift.cast(
             temb_ca_audio_scale_shift.dtype
         ) + temb_ca_audio_scale_shift.reshape(
-            (batch_size, temb_ca_audio_scale_shift.shape[1], 4, -1)
+            (
+                batch_size,
+                temb_ca_audio_scale_shift.shape[1],
+                4,
+                audio_hidden_size,
+            )
         )
         audio_ca_gate = audio_per_layer_ca_gate.cast(
             temb_ca_audio_gate.dtype
         ) + temb_ca_audio_gate.reshape(
-            (batch_size, temb_ca_audio_gate.shape[1], 1, -1)
+            (batch_size, temb_ca_audio_gate.shape[1], 1, audio_hidden_size)
         )
 
         (
@@ -1601,9 +1628,9 @@ class LTX2VideoTransformer3DModel(
             batch_size=batch_size,
             hidden_dtype=hidden_states.dtype,
         )
-        temb = temb.reshape((batch_size, -1, temb.shape[-1]))
+        temb = temb.reshape((batch_size, 1, temb.shape[-1]))
         embedded_timestep = embedded_timestep.reshape(
-            (batch_size, -1, embedded_timestep.shape[-1])
+            (batch_size, 1, embedded_timestep.shape[-1])
         )
 
         temb_audio, audio_embedded_timestep = self.audio_time_embed(
@@ -1611,9 +1638,9 @@ class LTX2VideoTransformer3DModel(
             batch_size=batch_size,
             hidden_dtype=audio_hidden_states.dtype,
         )
-        temb_audio = temb_audio.reshape((batch_size, -1, temb_audio.shape[-1]))
+        temb_audio = temb_audio.reshape((batch_size, 1, temb_audio.shape[-1]))
         audio_embedded_timestep = audio_embedded_timestep.reshape(
-            (batch_size, -1, audio_embedded_timestep.shape[-1])
+            (batch_size, 1, audio_embedded_timestep.shape[-1])
         )
 
         # 3.2. Prepare global modality cross attention modulation parameters
@@ -1628,10 +1655,10 @@ class LTX2VideoTransformer3DModel(
             hidden_dtype=hidden_states.dtype,
         )
         video_cross_attn_scale_shift = video_cross_attn_scale_shift.reshape(
-            (batch_size, -1, video_cross_attn_scale_shift.shape[-1])
+            (batch_size, 1, video_cross_attn_scale_shift.shape[-1])
         )
         video_cross_attn_a2v_gate = video_cross_attn_a2v_gate.reshape(
-            (batch_size, -1, video_cross_attn_a2v_gate.shape[-1])
+            (batch_size, 1, video_cross_attn_a2v_gate.shape[-1])
         )
 
         audio_cross_attn_scale_shift, _ = self.av_cross_attn_audio_scale_shift(
@@ -1645,23 +1672,25 @@ class LTX2VideoTransformer3DModel(
             hidden_dtype=audio_hidden_states.dtype,
         )
         audio_cross_attn_scale_shift = audio_cross_attn_scale_shift.reshape(
-            (batch_size, -1, audio_cross_attn_scale_shift.shape[-1])
+            (batch_size, 1, audio_cross_attn_scale_shift.shape[-1])
         )
         audio_cross_attn_v2a_gate = audio_cross_attn_v2a_gate.reshape(
-            (batch_size, -1, audio_cross_attn_v2a_gate.shape[-1])
+            (batch_size, 1, audio_cross_attn_v2a_gate.shape[-1])
         )
 
         # 4. Prepare prompt embeddings
+        encoder_seq_len = encoder_hidden_states.shape[1]
+        audio_encoder_seq_len = audio_encoder_hidden_states.shape[1]
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.reshape(
-            (batch_size, -1, hidden_states.shape[-1])
+            (batch_size, encoder_seq_len, hidden_states.shape[-1])
         )
 
         audio_encoder_hidden_states = self.audio_caption_projection(
             audio_encoder_hidden_states
         )
         audio_encoder_hidden_states = audio_encoder_hidden_states.reshape(
-            (batch_size, -1, audio_hidden_states.shape[-1])
+            (batch_size, audio_encoder_seq_len, audio_hidden_states.shape[-1])
         )
 
         # 5. Run transformer blocks
