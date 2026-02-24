@@ -237,46 +237,6 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         )
         self.to_out.append(nn.Dropout(dropout))
 
-    def prepare_attention_mask(
-        self,
-        attention_mask: Tensor,
-        target_length: int,
-        batch_size: int,
-        out_dim: int = 3,
-    ) -> Tensor:
-        """Prepares the attention mask for the attention op."""
-        if attention_mask is None:
-            return attention_mask
-
-        current_length = int(attention_mask.shape[-1])
-        if current_length != target_length:
-            padding_len = target_length - current_length
-            rank = attention_mask.rank
-            # paddings: [before_dim0, after_dim0, before_dim1, after_dim1, ...]
-            paddings = [0] * (2 * rank)
-            paddings[-1] = padding_len
-            attention_mask = F.pad(attention_mask, paddings, value=0)
-
-        if out_dim == 3:
-            if int(attention_mask.shape[0]) < batch_size * self.heads:
-                # repeat_interleave equivalent for GPU:
-                # [B, ...] -> [B, 1, ...] -> [B, heads, ...] -> [B*heads, ...]
-                orig_shape = attention_mask.shape
-                attention_mask = attention_mask.unsqueeze(1)
-                tile_shape = [1] * attention_mask.rank
-                tile_shape[1] = self.heads
-                attention_mask = F.tile(attention_mask, tile_shape)
-                new_shape = [batch_size * self.heads] + list(orig_shape[1:])
-                attention_mask = attention_mask.reshape(new_shape)
-        elif out_dim == 4:
-            # [B, ...] -> [B, 1, ...] -> [B, heads, ...]
-            attention_mask = attention_mask.unsqueeze(1)
-            tile_shape = [1] * attention_mask.rank
-            tile_shape[1] = self.heads
-            attention_mask = F.tile(attention_mask, tile_shape)
-
-        return attention_mask
-
     def forward(
         self,
         hidden_states: Tensor,
@@ -365,44 +325,22 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
 
         attn_bias_3d: Tensor | None = None
         if attention_mask is not None:
-            # Normalize mask to rank-3 [B, Qmask, K] where Qmask can be 1
-            # (typical for encoder masks) or Sq (full attention bias).
+            # attention_mask arrives as [B, 1, K] (rank 3) from the transformer
+            # forward(), which calls unsqueeze(1) on the [B, K] additive bias.
+            # Also accept a bare [B, K] (rank 2) for callers that skip that step.
             if attention_mask.rank == 2:
                 # [B, K] -> [B, 1, K]
                 attn = attention_mask.unsqueeze(1)
-            elif attention_mask.rank == 3:
-                # [B, Qmask, K]
-                attn = attention_mask
-            elif attention_mask.rank == 4:
-                # [B, H, Qmask, K] -> [B*H, Qmask, K]
-                b = attention_mask.shape[0]
-                h = attention_mask.shape[1]
-                qmask = attention_mask.shape[2]
-                k = attention_mask.shape[3]
-                attn = attention_mask.reshape((b * h, qmask, k))
-                # Pad to match K if needed.
-                current_k = int(attn.shape[-1])
-                if current_k != int(sk):
-                    pad = int(sk) - current_k
-                    attn = F.pad(attn, [0, pad], value=0)
-                attn_bias_3d = attn
-                attn = None
             else:
+                # [B, 1, K] or any [B, Qmask, K]
                 attn = attention_mask
 
-            if attn is not None:
-                # Pad to match K if needed.
-                current_k = int(attn.shape[-1])
-                if current_k != int(sk):
-                    pad = int(sk) - current_k
-                    attn = F.pad(attn, [0, pad], value=0)
-
-                # Tile across heads and merge B and H: [B, Qmask, K] -> [B*H, Qmask, K]
-                attn = attn.unsqueeze(1)  # [B, 1, Qmask, K]
-                tile_shape = [1] * attn.rank
-                tile_shape[1] = self.heads
-                attn = F.tile(attn, tile_shape)  # [B, H, Qmask, K]
-                attn_bias_3d = attn.reshape((bh, attn.shape[2], attn.shape[3]))
+            # Expand heads and merge B and H: [B, Qmask, K] -> [B*H, Qmask, K]
+            attn = attn.unsqueeze(1)  # [B, 1, Qmask, K]
+            tile_shape = [1] * attn.rank
+            tile_shape[1] = self.heads
+            attn = F.tile(attn, tile_shape)  # [B, H, Qmask, K]
+            attn_bias_3d = attn.reshape((bh, attn.shape[2], attn.shape[3]))
 
         # [B, H, Sq, D] -> [B*H, Sq, D]
         query_3d = query.reshape((bh, sq, dq))
