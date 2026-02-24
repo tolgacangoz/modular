@@ -36,9 +36,10 @@ def apply_interleaved_rotary_emb(
     x: Tensor, freqs: tuple[Tensor, Tensor]
 ) -> Tensor:
     cos, sin = freqs
+    half = x.shape[-1] // 2
     x_real, x_imag = (
-        x.reshape((x.shape[0], x.shape[1], -1, 2))[..., 0],
-        x.reshape((x.shape[0], x.shape[1], -1, 2))[..., 1],
+        x.reshape((x.shape[0], x.shape[1], half, 2))[..., 0],
+        x.reshape((x.shape[0], x.shape[1], half, 2))[..., 1],
     )
     x_rotated = F.flatten(F.stack([-x_imag, x_real], axis=-1), 2)
     out = (
@@ -57,7 +58,8 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
         # The cos/sin batch dim may only be broadcastable, so take batch size from x
         b = x.shape[0]
         _, h, t, _ = cos.shape
-        x = x.reshape((b, t, h, -1)).transpose(1, 2)
+        dim_per_head = x.shape[-1] // h
+        x = x.reshape((b, t, h, dim_per_head)).transpose(1, 2)
         needs_reshape = True
 
     # Split last dim (2*r) into two halves along the last axis.
@@ -82,7 +84,7 @@ def apply_split_rotary_emb(x: Tensor, freqs: tuple[Tensor, Tensor]) -> Tensor:
     out = F.concat([first_out, second_out], axis=-1)
 
     if needs_reshape:
-        out = out.transpose(1, 2).reshape((b, t, -1))
+        out = out.transpose(1, 2).reshape((b, t, h * dim_per_head))
 
     out = out.cast(x_dtype)
     return out
@@ -289,17 +291,9 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             else encoder_hidden_states.shape
         )
 
-        if attention_mask is not None:
-            # Ensure mask is 4D [B, H, Q, K] for broadcasting with
-            # attention scores. .rank is always a concrete int, so
-            # these branches are safe during graph tracing.
-            if attention_mask.rank == 2:
-                # [B, K] -> [B, 1, 1, K]
-                attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
-            elif attention_mask.rank == 3:
-                # [B, 1, K] -> [B, 1, 1, K]
-                attention_mask = attention_mask.unsqueeze(1)
-            # rank == 4: already [B, H, Q, K], use as-is
+        # Defer attention_mask shaping until we know the final K length.
+        # We'll convert it to a rank-3 additive bias matching the rank-3
+        # attention scores to avoid any rank-4 matmul/reshape lowering.
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
@@ -369,6 +363,47 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         dk = self.head_dim
         bh = batch_size * self.heads
 
+        attn_bias_3d: Tensor | None = None
+        if attention_mask is not None:
+            # Normalize mask to rank-3 [B, Qmask, K] where Qmask can be 1
+            # (typical for encoder masks) or Sq (full attention bias).
+            if attention_mask.rank == 2:
+                # [B, K] -> [B, 1, K]
+                attn = attention_mask.unsqueeze(1)
+            elif attention_mask.rank == 3:
+                # [B, Qmask, K]
+                attn = attention_mask
+            elif attention_mask.rank == 4:
+                # [B, H, Qmask, K] -> [B*H, Qmask, K]
+                b = attention_mask.shape[0]
+                h = attention_mask.shape[1]
+                qmask = attention_mask.shape[2]
+                k = attention_mask.shape[3]
+                attn = attention_mask.reshape((b * h, qmask, k))
+                # Pad to match K if needed.
+                current_k = int(attn.shape[-1])
+                if current_k != int(sk):
+                    pad = int(sk) - current_k
+                    attn = F.pad(attn, [0, pad], value=0)
+                attn_bias_3d = attn
+                attn = None
+            else:
+                attn = attention_mask
+
+            if attn is not None:
+                # Pad to match K if needed.
+                current_k = int(attn.shape[-1])
+                if current_k != int(sk):
+                    pad = int(sk) - current_k
+                    attn = F.pad(attn, [0, pad], value=0)
+
+                # Tile across heads and merge B and H: [B, Qmask, K] -> [B*H, Qmask, K]
+                attn = attn.unsqueeze(1)  # [B, 1, Qmask, K]
+                tile_shape = [1] * attn.rank
+                tile_shape[1] = self.heads
+                attn = F.tile(attn, tile_shape)  # [B, H, Qmask, K]
+                attn_bias_3d = attn.reshape((bh, attn.shape[2], attn.shape[3]))
+
         # [B, H, Sq, D] -> [B*H, Sq, D]
         query_3d = query.reshape((bh, sq, dq))
         # [B, H, Sk, D] -> [B*H, D, Sk]  (pre-transposed for the matmul)
@@ -379,13 +414,8 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         # [B*H, Sq, Sk]
         scores = query_3d @ key_3d
         scores = scores * (1.0 / self.scale)
-        if attention_mask is not None:
-            # Promote to 4D for the mask addition — element-wise ops are not
-            # BMMs so rank-4 is safe here. This correctly broadcasts
-            # [B, 1, Sq, Sk] mask across all H heads without any concat trick.
-            scores = scores.reshape((batch_size, self.heads, sq, sk))
-            scores = scores + attention_mask
-            scores = scores.reshape((bh, sq, sk))
+        if attn_bias_3d is not None:
+            scores = scores + attn_bias_3d
         # [B*H, Sq, Sk] @ [B*H, Sv, D] -> [B*H, Sq, D]
         hidden_states = F.softmax(scores, axis=-1) @ value_3d
 
@@ -1156,9 +1186,13 @@ class LTX2AudioVideoRotaryPosEmbed(
             # Reshape freqs to be compatible with multi-head attention
             b = cos_freq.shape[0]
             t = cos_freq.shape[1]
-
-            cos_freq = cos_freq.reshape((b, t, self.num_attention_heads, -1))
-            sin_freq = sin_freq.reshape((b, t, self.num_attention_heads, -1))
+            dim_per_head = expected_freqs // self.num_attention_heads
+            cos_freq = cos_freq.reshape(
+                (b, t, self.num_attention_heads, dim_per_head)
+            )
+            sin_freq = sin_freq.reshape(
+                (b, t, self.num_attention_heads, dim_per_head)
+            )
 
             cos_freqs = cos_freq.transpose(1, 2)  # (B,H,T,D//2)
             sin_freqs = sin_freq.transpose(1, 2)  # (B,H,T,D//2)
