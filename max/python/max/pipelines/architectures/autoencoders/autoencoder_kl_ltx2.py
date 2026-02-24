@@ -23,8 +23,8 @@ from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
 from max.tensor import Tensor
 
-from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..common_layers.activation import activation_function_from_name
+from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from .model import BaseAutoencoderModel
 from .model_config import AutoencoderKLLTX2VideoConfig
 

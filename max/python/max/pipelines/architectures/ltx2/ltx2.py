@@ -24,9 +24,9 @@ from max.graph import TensorType
 from max.nn.activations import FeedForward
 from max.tensor import Tensor
 
+from ..common_layers.activation import activation_function_from_name
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings
 from ..flux1.layers.embeddings import PixArtAlphaTextProjection
-from ..common_layers.activation import activation_function_from_name
 from .model_config import LTX2TransformerConfigBase
 
 logger = logging.getLogger(__name__)
