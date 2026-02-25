@@ -270,13 +270,28 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
 
         if out_dim == 3:
             if attention_mask.shape[0] < batch_size * head_size:
-                attention_mask = F.repeat_interleave(
-                    attention_mask, head_size, axis=0
+                # (B, T_q, T_k) -> (B*heads, T_q, T_k) via broadcast + reshape
+                b = attention_mask.shape[0]
+                t_q = attention_mask.shape[1]
+                t_k = attention_mask.shape[2]
+                attention_mask = F.reshape(
+                    F.broadcast_to(
+                        F.unsqueeze(attention_mask, 1),
+                        (b, head_size, t_q, t_k),
+                    ),
+                    (b * head_size, t_q, t_k),
                 )
         elif out_dim == 4:
             attention_mask = F.unsqueeze(attention_mask, 1)
-            attention_mask = F.repeat_interleave(
-                attention_mask, head_size, axis=1
+            # (B, 1, T_q, T_k) -> (B, heads, T_q, T_k) via broadcast
+            attention_mask = F.broadcast_to(
+                attention_mask,
+                (
+                    attention_mask.shape[0],
+                    head_size,
+                    attention_mask.shape[2],
+                    attention_mask.shape[3],
+                ),
             )
 
         return attention_mask
