@@ -358,26 +358,37 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             value, (batch_size, sequence_length, self.kv_heads, self.head_dim)
         )
 
-        # Scaled dot-product attention
-        q = F.transpose(query, 1, 2)  # (B, heads, T_q, head_dim)
-        k = F.transpose(key, 1, 2)  # (B, kv_heads, T_k, head_dim)
-        v = F.transpose(value, 1, 2)  # (B, kv_heads, T_k, head_dim)
-        attn_scores = (
-            F.matmul(q, F.transpose(k, 2, 3)) / self.scale
-        )  # (B, heads, T_q, T_k)
-        if attention_mask is not None:
-            attn_scores = attn_scores + attention_mask
-        attn_weights = F.softmax(attn_scores.cast(DType.float32), axis=-1).cast(
-            q.dtype
+        # Scaled dot-product attention.
+        # F.matmul only supports 3D batch-matmul (B, M, N), so we fold the
+        # heads dimension into the batch dimension for the two matmuls.
+        # (B, T, heads, head_dim) -> (B*heads, T, head_dim)
+        q = F.reshape(
+            F.transpose(query, 1, 2), (batch_size * self.heads, query_len, self.head_dim)
         )
+        k = F.reshape(
+            F.transpose(key, 1, 2), (batch_size * self.kv_heads, sequence_length, self.head_dim)
+        )
+        v = F.reshape(
+            F.transpose(value, 1, 2), (batch_size * self.kv_heads, sequence_length, self.head_dim)
+        )
+        # (B*heads, T_q, head_dim) x (B*heads, head_dim, T_k) -> (B*heads, T_q, T_k)
+        attn_scores = F.matmul(q, F.transpose(k, 1, 2)) / self.scale
+        if attention_mask is not None:
+            # attention_mask is (B, heads, T_q, T_k) -> (B*heads, T_q, T_k)
+            attn_scores = attn_scores + F.reshape(
+                attention_mask, (batch_size * self.heads, -1, attention_mask.shape[-1])
+            )
+        attn_weights = F.softmax(attn_scores.cast(DType.float32), axis=-1).cast(
+            query.dtype
+        )
+        # (B*heads, T_q, T_k) x (B*heads, T_k, head_dim) -> (B*heads, T_q, head_dim)
+        hidden_states = F.matmul(attn_weights, v)
+        # (B*heads, T_q, head_dim) -> (B, heads, T_q, head_dim) -> (B, T_q, heads, head_dim)
         hidden_states = F.transpose(
-            F.matmul(attn_weights, v), 1, 2
-        )  # (B, T_q, heads, head_dim)
-
-        hidden_states = F.flatten(
-            hidden_states, 2, 3
-        )  # (B, T_q, heads*head_dim)
-        hidden_states = hidden_states.cast(query.dtype)
+            F.reshape(hidden_states, (batch_size, self.heads, query_len, self.head_dim)),
+            1, 2,
+        )
+        hidden_states = F.flatten(hidden_states, 2, 3)  # (B, T_q, heads*head_dim)
 
         hidden_states = self.to_out[0](hidden_states)
         hidden_states = self.to_out[1](hidden_states)
