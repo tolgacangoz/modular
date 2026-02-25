@@ -13,13 +13,13 @@
 
 import math
 
-import max.functional as F
+import max.experimental.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
 from max.graph import TensorType
 from max.nn.activations import FeedForward
-from max.tensor import Tensor
+from max.experimental.tensor import Tensor
 
 from ..ltx2 import LTX2Attention
 from ..model_config import LTX2TextConnectorsConfig

@@ -12,11 +12,12 @@
 # ===----------------------------------------------------------------------=== #
 """Activation function modules for MAX neural networks."""
 
-from max import functional as F
-from max.tensor import Tensor
+import max.experimental.functional as F
+from max.experimental.tensor import Tensor
 
 from .linear import Linear
-from .module import Module
+from .module_v3 import Module
+from .module_v3 import ModuleList
 
 
 class SiLU(Module[[Tensor], Tensor]):
@@ -260,8 +261,6 @@ class FeedForward(Module[[Tensor], Tensor]):
             act_fn = SwiGLU(dim, inner_dim, bias=bias)
         else:
             raise ValueError(f"Unknown activation_fn: {activation_fn}")
-
-        from .sequential import ModuleList
 
         self.net = ModuleList([])
         self.net.append(act_fn)

@@ -35,7 +35,7 @@ from max.interfaces import (
     TextGenerationContext,
     TextGenerationRequest,
 )
-from max.nn.legacy.kv_cache import KVCacheStrategy
+from max.nn.kv_cache import KVCacheStrategy
 from max.pipelines.core import PixelContext, TextAndVisionContext, TextContext
 from transformers import (
     AutoConfig,

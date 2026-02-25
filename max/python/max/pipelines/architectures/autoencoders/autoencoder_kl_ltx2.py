@@ -14,14 +14,14 @@
 
 from typing import Any
 
-from max import functional as F
+import max.experimental.functional as F
 from max import nn, random
 from max.driver import Device
 from max.dtype import DType
 from max.graph import DeviceRef, TensorType
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
-from max.tensor import Tensor
+from max.experimental.tensor import Tensor
 
 from ..common_layers.activation import activation_function_from_name
 from ..embeddings import PixArtAlphaCombinedTimestepSizeEmbeddings

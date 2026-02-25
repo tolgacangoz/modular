@@ -17,7 +17,7 @@ from typing import Any, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
-from max import functional as F
+import max.experimental.functional as F
 from max import random
 from max.driver import CPU, Device
 from max.dtype import DType
@@ -28,7 +28,7 @@ from max.pipelines.lib.interfaces import (
     PixelModelInputs,
 )
 from max.pipelines.lib.interfaces.diffusion_pipeline import max_compile
-from max.tensor import Tensor
+from max.experimental.tensor import Tensor
 from tqdm import tqdm
 from transformers import Gemma3ForConditionalGeneration
 

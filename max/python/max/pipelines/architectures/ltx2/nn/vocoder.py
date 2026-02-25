@@ -13,10 +13,10 @@
 
 import math
 
-import max.functional as F
+import max.experimental.functional as F
 from max import nn
 from max.graph import TensorType
-from max.tensor import Tensor
+from max.experimental.tensor import Tensor
 
 from ..model_config import LTX2VocoderConfig
 
