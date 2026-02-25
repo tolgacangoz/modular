@@ -258,10 +258,9 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             encoder_hidden_states = hidden_states
         sequence_length = encoder_hidden_states.shape[1]
 
-        input_dtype = hidden_states.dtype
-        query = self.norm_q(self.to_q(hidden_states)).cast(input_dtype)
-        key = self.norm_k(self.to_k(encoder_hidden_states)).cast(input_dtype)
-        value = self.to_v(encoder_hidden_states).cast(input_dtype)
+        query = self.norm_q(self.to_q(hidden_states))
+        key = self.norm_k(self.to_k(encoder_hidden_states))
+        value = self.to_v(encoder_hidden_states)
 
         if query_rotary_emb is not None:
             if self.rope_type == "interleaved":
@@ -313,16 +312,15 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             )  # (B,)
 
         # flash_attention_gpu handles dynamic sequence lengths natively and
-        # expects (B, T, H, D) inputs, returning (B, T_q, H, D).
-        # Cast to bfloat16 for flash attention efficiency, then restore dtype.
+        # expects (B, T, H, D) inputs in bfloat16, returning (B, T_q, H, D).
         hidden_states = flash_attention_gpu(
-            query.cast(DType.bfloat16),
-            key.cast(DType.bfloat16),
-            value.cast(DType.bfloat16),
+            query,
+            key,
+            value,
             mask_variant=MHAMaskVariant.NULL_MASK,
             scale=1.0 / self.scale,
             valid_length=valid_length,
-        ).cast(input_dtype)
+        )
 
         # (B, T_q, H, D) -> (B, T_q, H*D)
         hidden_states = F.reshape(
@@ -394,6 +392,7 @@ class LTX2VideoTransformerBlock(
         eps: float = 1e-6,
         elementwise_affine: bool = False,
         rope_type: str = "interleaved",
+        dtype: DType = DType.bfloat16,
     ):
         # 1. Self-Attention (video and audio)
         self.norm1 = nn.RMSNorm(
@@ -504,18 +503,18 @@ class LTX2VideoTransformerBlock(
         # 5. Per-Layer Modulation Parameters
         # Self-Attention / Feedforward AdaLayerNorm-Zero mod params
         self.scale_shift_table = Tensor.ones(
-            (6, dim), dtype=DType.float32
+            (6, dim), dtype=dtype
         )  # / dim**0.5
         self.audio_scale_shift_table = Tensor.ones(
-            (6, audio_dim), dtype=DType.float32
+            (6, audio_dim), dtype=dtype
         )  # / audio_dim**0.5
 
         # Per-layer a2v, v2a Cross-Attention mod params
         self.video_a2v_cross_attn_scale_shift_table = Tensor.ones(
-            (5, dim), dtype=DType.float32
+            (5, dim), dtype=dtype
         )
         self.audio_a2v_cross_attn_scale_shift_table = Tensor.ones(
-            (5, audio_dim), dtype=DType.float32
+            (5, audio_dim), dtype=dtype
         )
 
     def forward(
@@ -1338,6 +1337,7 @@ class LTX2VideoTransformer3DModel(
                     eps=norm_eps,
                     elementwise_affine=norm_elementwise_affine,
                     rope_type=rope_type,
+                    dtype=config.dtype,
                 )
                 for _ in range(num_layers)
             ]
