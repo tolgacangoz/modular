@@ -295,20 +295,23 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         # valid_length (B,) expected by flash_attention_gpu.
         valid_length = None
         if attention_mask is not None:
-            valid_length = F.cast(
-                F.sum(
-                    F.cast(
-                        F.greater(
-                            F.reshape(
-                                attention_mask, (batch_size, sequence_length)
+            valid_length = F.reshape(
+                F.cast(
+                    F.sum(
+                        F.cast(
+                            F.greater(
+                                F.reshape(
+                                    attention_mask, (batch_size, sequence_length)
+                                ),
+                                -0.5,
                             ),
-                            -0.5,
+                            DType.int32,
                         ),
-                        DType.int32,
+                        axis=-1,
                     ),
-                    axis=-1,
+                    DType.uint32,
                 ),
-                DType.uint32,
+                (batch_size,),
             )  # (B,)
 
         # flash_attention_gpu handles dynamic sequence lengths natively and
