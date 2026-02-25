@@ -163,38 +163,97 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def save_video(video_data: str, output_path: str) -> None:
-    """Save base64-encoded video data to a file.
+def mux_and_save(
+    video_data: str,
+    audio_data: str | None,
+    output_path: str,
+    frame_rate: int,
+) -> None:
+    """Mux base64-encoded video and audio into a single MP4 file.
+
+    When audio is provided the video (H.264 MP4) and audio (WAV) streams are
+    combined into one container with PyAV, mirroring the behaviour of the
+    diffusers ``encode_video`` helper.  When no audio is available the video
+    is saved as-is.
 
     Args:
-        video_data: Base64-encoded video data string
-        output_path: Path where the video should be saved
+        video_data: Base64-encoded MP4 video data string.
+        audio_data: Base64-encoded WAV audio data string, or None.
+        output_path: Path where the merged video should be saved.
+        frame_rate: Frames per second – used for the video stream time-base.
     """
+    import io
+
     try:
-        video_bytes = base64.b64decode(video_data)
+        import av
+    except ImportError:
+        # PyAV not installed – fall back to saving the video stream only.
+        av = None  # type: ignore[assignment]
+
+    video_bytes = base64.b64decode(video_data)
+
+    if av is None or audio_data is None:
+        # No PyAV or no audio: just write the raw video bytes.
         with open(output_path, "wb") as f:
             f.write(video_bytes)
         print(f"Video saved to: {output_path}")
-    except Exception as e:
-        print(f"WARNING: Cannot save video: {e}")
-        print(f"Base64 data length: {len(video_data)} chars")
+        return
 
+    audio_bytes = base64.b64decode(audio_data)
 
-def save_audio(audio_data: str, output_path: str) -> None:
-    """Save base64-encoded audio data to a file.
-
-    Args:
-        audio_data: Base64-encoded audio data string
-        output_path: Path where the audio should be saved
-    """
     try:
-        audio_bytes = base64.b64decode(audio_data)
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
-        print(f"Audio saved to: {output_path}")
+        in_video = av.open(io.BytesIO(video_bytes), mode="r")
+        in_audio = av.open(io.BytesIO(audio_bytes), mode="r")
+        out = av.open(output_path, mode="w", format="mp4")
+
+        # Remap video stream with copy codec.
+        in_v_stream = in_video.streams.video[0]
+        out_v_stream = out.add_stream(template=in_v_stream)
+
+        # Add AAC audio stream.
+        in_a_stream = in_audio.streams.audio[0]
+        sample_rate = in_a_stream.codec_context.sample_rate or 24000
+        out_a_stream = out.add_stream("aac", rate=sample_rate)
+        out_a_stream.codec_context.sample_rate = sample_rate
+        out_a_stream.codec_context.layout = "stereo"
+
+        # Remux video packets directly (no re-encode).
+        for packet in in_video.demux(in_v_stream):
+            if packet.dts is None:
+                continue
+            packet.stream = out_v_stream
+            out.mux(packet)
+
+        # Re-encode audio through the AAC encoder.
+        audio_next_pts = 0
+        resampler = av.audio.resampler.AudioResampler(
+            format="fltp",
+            layout="stereo",
+            rate=sample_rate,
+        )
+        for packet in in_audio.demux(in_a_stream):
+            for frame in packet.decode():
+                for rframe in resampler.resample(frame):
+                    if rframe.pts is None:
+                        rframe.pts = audio_next_pts
+                    audio_next_pts += rframe.samples
+                    for out_packet in out_a_stream.encode(rframe):
+                        out.mux(out_packet)
+
+        # Flush audio encoder.
+        for out_packet in out_a_stream.encode():
+            out.mux(out_packet)
+
+        in_video.close()
+        in_audio.close()
+        out.close()
+        print(f"Video (with audio) saved to: {output_path}")
     except Exception as e:
-        print(f"WARNING: Cannot save audio: {e}")
-        print(f"Base64 data length: {len(audio_data)} chars")
+        # Muxing failed – fall back to writing video-only.
+        print(f"WARNING: Audio muxing failed ({e}); saving video without audio.")
+        with open(output_path, "wb") as f:
+            f.write(video_bytes)
+        print(f"Video (no audio) saved to: {output_path}")
 
 
 async def generate_video(args: argparse.Namespace) -> None:
@@ -296,42 +355,52 @@ async def generate_video(args: argparse.Namespace) -> None:
         print("ERROR: No content generated")
         return
 
-    # Save each generated item
-    video_count = 0
-    audio_count = 0
+    # Separate video and audio items so they can be muxed together.
+    video_items: list[OutputVideoContent] = []
+    audio_items: list[OutputAudioContent] = []
+    unknown_items = []
 
     for content_item in response.output:
         if isinstance(content_item, OutputVideoContent):
-            # Determine output filename
-            base_name, ext = os.path.splitext(args.output)
-            if video_count > 0:
-                output_path = f"{base_name}_{video_count}{ext}"
-            else:
-                output_path = args.output
-
-            if content_item.video_data:
-                save_video(content_item.video_data, output_path)
-            elif content_item.video_url:
-                print(f"Video available at URL: {content_item.video_url}")
-            video_count += 1
-
+            video_items.append(content_item)
         elif isinstance(content_item, OutputAudioContent):
-            # Determine output filename (replace extension with .wav or .raw)
-            base_name, _ = os.path.splitext(args.output)
-            # Simple heuristic for audio extension
-            ext = ".wav"
-            if audio_count > 0:
-                output_path = f"{base_name}_{audio_count}{ext}"
-            else:
-                output_path = f"{base_name}{ext}"
-
-            if content_item.audio_data:
-                save_audio(content_item.audio_data, output_path)
-            elif content_item.audio_url:
-                print(f"Audio available at URL: {content_item.audio_url}")
-            audio_count += 1
+            audio_items.append(content_item)
         else:
-            print(f"Unknown content type: {content_item.type}")
+            unknown_items.append(content_item)
+
+    for idx, video_item in enumerate(video_items):
+        base_name, ext = os.path.splitext(args.output)
+        output_path = args.output if idx == 0 else f"{base_name}_{idx}{ext}"
+
+        # Pair each video with the corresponding audio track (if present).
+        audio_item = audio_items[idx] if idx < len(audio_items) else None
+        audio_data = audio_item.audio_data if audio_item is not None else None
+
+        if video_item.video_data:
+            mux_and_save(
+                video_item.video_data,
+                audio_data,
+                output_path,
+                args.frame_rate,
+            )
+        elif video_item.video_url:
+            print(f"Video available at URL: {video_item.video_url}")
+
+    # Save any audio tracks that had no matching video.
+    for idx in range(len(video_items), len(audio_items)):
+        audio_item = audio_items[idx]
+        base_name, _ = os.path.splitext(args.output)
+        audio_path = f"{base_name}_{idx}.wav" if idx > 0 else f"{base_name}.wav"
+        if audio_item.audio_data:
+            audio_bytes = base64.b64decode(audio_item.audio_data)
+            with open(audio_path, "wb") as f:
+                f.write(audio_bytes)
+            print(f"Audio saved to: {audio_path}")
+        elif audio_item.audio_url:
+            print(f"Audio available at URL: {audio_item.audio_url}")
+
+    for item in unknown_items:
+        print(f"Unknown content type: {item.type}")
 
 
 def main(argv: list[str] | None = None) -> int:

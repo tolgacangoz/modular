@@ -207,19 +207,11 @@ class LTX2Pipeline(DiffusionPipeline):
     # -----------------------------------------------------------------------
 
     def build_pack_latents(self) -> None:
-        """Compile _pack_video_latents: [B,C,F,H,W] -> [B,S,D].
-
-        Shapes are hardcoded for height=512, width=768, num_frames=121:
-          in_channels       = 128
-          latent_num_frames = (121-1)//4+1 = 31
-          latent_height     = 512//32      = 16
-          latent_width      = 768//32      = 24
-        """
         device = self.transformer.devices[0]
-        _channels = self.transformer.config.in_channels  # 128
-        _latent_num_frames = 31  # (121-1)//4+1
-        _latent_height = 16  # 512//32
-        _latent_width = 24  # 768//32
+        _channels = self.transformer.config.in_channels
+        _latent_num_frames = 31
+        _latent_height = 16
+        _latent_width = 24
         input_types = [
             TensorType(
                 DType.float32,
@@ -239,13 +231,6 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
     def build_pack_audio_latents(self) -> None:
-        """Compile _pack_audio_latents_packed: [B,C,L,M] -> [B,S,D].
-
-        Shapes are hardcoded for num_frames=121, frame_rate=24:
-          latent_mel_bins  = 64 // audio_vae_mel_compression_ratio = 16
-          audio_channels   = audio_in_channels // latent_mel_bins   = 8
-          audio_num_frames = round((121/24) * 25.0) = 126, padded to 128
-        """
         device = self.transformer.devices[0]
         _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
         _audio_channels = (

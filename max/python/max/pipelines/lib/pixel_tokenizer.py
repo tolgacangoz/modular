@@ -232,6 +232,13 @@ class PixelGenerationTokenizer(
         # These match the current MAX LTX2 pipeline implementation.
         self._is_ltx2 = self._pipeline_class_name == "LTX2Pipeline"
         if self._is_ltx2:
+            # LTX-2 uses CausalVideoAutoencoder which has no standard
+            # block_out_channels, so the generic formula above gives 8.
+            # Override here to match the true spatial compression ratio of 32.
+            self._vae_scale_factor = 32
+            # LTX-2 uses patch_size=1 (no spatial packing), so VAE latent
+            # channels == transformer in_channels (128), not in_channels // 4.
+            self._num_channels_latents = transformer_config["in_channels"]
             # VAE temporal downsample factor (frames per latent frame).
             self._ltx2_vae_temporal_compression_ratio = 4
             # Pixel-space temporal scale factor used by the RoPE coordinate
