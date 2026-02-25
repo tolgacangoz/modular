@@ -238,9 +238,7 @@ class LTX2Pipeline(DiffusionPipeline):
         _audio_channels = (
             self.transformer.config.audio_in_channels // _latent_mel_bins
         )  # 8
-        # Padded from 126 to 128 to match the transformer's audio_seq_len=128,
-        # which avoids fully-masked GEMM tiles (BM=BN=128 > 126) at compile time.
-        _audio_num_frames = 128  # round((121/24)*25.0)=126, padded to 128
+        _audio_num_frames = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(
                 DType.float32,
@@ -293,12 +291,12 @@ class LTX2Pipeline(DiffusionPipeline):
     def build_scheduler_step_audio(self) -> None:
         """Compile _scheduler_step_audio: Euler update for audio latents.
 
-        batch=1, seq=128 (round((121/24)*25)=126, padded to 128), channels=128
+        batch=1, seq=126 (round((121/24)*25)=126), channels=128
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.audio_in_channels  # 128
-        _audio_seq_len = 128  # round((121/24)*25.0)=126, padded to 128
+        _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(
                 dtype, shape=[1, _audio_seq_len, _channels], device=device
@@ -357,8 +355,7 @@ class LTX2Pipeline(DiffusionPipeline):
         device = self.transformer.devices[0]
         num_channels = int(self._audio_latents_mean.shape[0])  # C_audio (8)
         _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
-        # Padded from 126 to 128 to match the transformer's audio_seq_len=128.
-        _audio_num_frames = 128  # round((121/24)*25.0)=126, padded to 128
+        _audio_num_frames = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(
                 dtype,
@@ -379,14 +376,14 @@ class LTX2Pipeline(DiffusionPipeline):
         Fuses two F.concat calls and two casts into a single compiled graph,
         eliminating per-step Python dispatch overhead.
           video: [1, 11904, 128] bfloat16 -> [2, 11904, 128] bfloat16
-          audio: [1, 128, 128]   bfloat16 -> [2, 128, 128]   bfloat16
+          audio: [1, 126, 128]   bfloat16 -> [2, 126, 128]   bfloat16
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 11904  # 31 * 16 * 24
         _audio_channels = self.transformer.config.audio_in_channels  # 128
-        _audio_seq_len = 128  # padded from 126
+        _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
             TensorType(dtype, shape=[1, _audio_seq_len, _audio_channels], device=device),
@@ -401,7 +398,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         Fuses cast + split + guidance arithmetic into a single compiled graph:
           video in:  [2, 11904, 128] bfloat16 -> [1, 11904, 128] bfloat16
-          audio in:  [2, 128, 128]   bfloat16 -> [1, 128, 128]   bfloat16
+          audio in:  [2, 126, 128]   bfloat16 -> [1, 126, 128]   bfloat16
           guidance:  [1]             float32
         """
         dtype = self.transformer.config.dtype
@@ -409,7 +406,7 @@ class LTX2Pipeline(DiffusionPipeline):
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 11904  # 31 * 16 * 24
         _audio_channels = self.transformer.config.audio_in_channels  # 128
-        _audio_seq_len = 128  # padded from 126
+        _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(dtype, shape=[2, _video_seq_len, _channels], device=device),
             TensorType(dtype, shape=[2, _audio_seq_len, _audio_channels], device=device),
@@ -945,22 +942,14 @@ class LTX2Pipeline(DiffusionPipeline):
         latents: Tensor,
         audio_num_frames: int,
         latent_mel_bins: int,
-        actual_num_frames: int | None = None,
         output_type: Literal["np", "latent", "pil"] = "np",
     ) -> Tensor | np.ndarray:
         """Decode packed audio latents into a waveform Tensor (or return latents).
 
-        Mirrors Flux2's decode_latents for the audio stream.
-
         Args:
             latents: Packed audio latents [B, L, C*M].
-            audio_num_frames: Latent audio length used for unpacking (may be padded
-                to 128 to satisfy BMM tile constraints at compile time).
+            audio_num_frames: Latent audio length used for unpacking.
             latent_mel_bins: Number of mel frequency bins in the latent space.
-            actual_num_frames: True number of audio frames before padding (e.g. 126).
-                If provided, the latents are sliced from [B, C, audio_num_frames, M]
-                to [B, C, actual_num_frames, M] before the audio VAE decode so that
-                the VAE and vocoder receive only real content frames.
             output_type: "latent" returns latents as-is; otherwise decodes via vocoder.
 
         Returns:
@@ -972,7 +961,7 @@ class LTX2Pipeline(DiffusionPipeline):
         latents = self._unpack_audio_latents(
             latents, audio_num_frames, latent_mel_bins
         )
-        # Compiled postprocess: denormalize (operates on the full padded shape).
+        # Compiled postprocess: denormalize.
         if (
             self._audio_latents_mean is not None
             and self._audio_latents_std is not None
@@ -980,13 +969,6 @@ class LTX2Pipeline(DiffusionPipeline):
             latents = self._postprocess_audio_latents(
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
-        # Slice away zero-padded frames so the audio VAE and vocoder receive
-        # only the real content (e.g. 126 frames instead of padded 128).
-        if (
-            actual_num_frames is not None
-            and actual_num_frames < audio_num_frames
-        ):
-            latents = latents[:, :, :actual_num_frames, :]
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
         return self.vocoder(mel_spectrograms)
 
@@ -1180,10 +1162,6 @@ class LTX2Pipeline(DiffusionPipeline):
         latents = self._pack_video_latents(latents)
 
         # 6. Prepare audio latents
-        # The transformer is compiled with audio_seq_len=128 (padded up from the
-        # natural 126) to avoid Mojo BMM tile-masking constraint failures.
-        # We keep track of the true frame count for the final VAE decode.
-        _AUDIO_SEQ_PAD = 128  # must match input_types() _audio_seq_len
         if audio_latents_np is not None:
             if audio_latents_np.ndim != 4:
                 raise ValueError(
@@ -1218,37 +1196,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 audio_shape, dtype=DType.float32
             ).to(device)
 
-        # Preserve the true content length for the final VAE/vocoder decode.
-        actual_audio_num_frames = audio_num_frames
-
-        # Zero-pad the audio frames dimension to _AUDIO_SEQ_PAD (128) so the
-        # compiled transformer receives exactly the expected static shape.
-        if actual_audio_num_frames < _AUDIO_SEQ_PAD:
-            pad_frames = _AUDIO_SEQ_PAD - actual_audio_num_frames
-            if isinstance(audio_latents_arr, np.ndarray):
-                pad_shape = list(audio_latents_arr.shape)
-                pad_shape[2] = pad_frames
-                audio_latents_arr = np.concatenate(
-                    [
-                        audio_latents_arr,
-                        np.zeros(pad_shape, dtype=audio_latents_arr.dtype),
-                    ],
-                    axis=2,
-                )
-            else:
-                # Tensor case (e.g. random.gaussian on-device): pad with zeros on device.
-                # MAX Tensor.shape returns Dim objects so we convert to int explicitly.
-                _b = int(audio_latents_arr.shape[0])
-                _c = int(audio_latents_arr.shape[1])
-                _m = int(audio_latents_arr.shape[3])
-                zeros_pad = Tensor.from_dlpack(
-                    np.zeros((_b, _c, pad_frames, _m), dtype=np.float32),
-                ).to(device).cast(audio_latents_arr.dtype)
-                audio_latents_arr = F.concat(
-                    [audio_latents_arr, zeros_pad], axis=2
-                )
-            audio_num_frames = _AUDIO_SEQ_PAD
-
         audio_latents = (
             audio_latents_arr
             if isinstance(audio_latents_arr, Tensor)
@@ -1262,20 +1209,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # compilation cost).
         video_coords = Tensor.from_dlpack(video_coords_np).to(device)
 
-        # Pad audio_coords from [B, 1, actual_frames, 2] to [B, 1, _AUDIO_SEQ_PAD, 2]
-        # by repeating the last coordinate entry for the extra padding positions.
-        # This gives the padding frames valid (though unused) RoPE embeddings.
         audio_coords_np_f32 = audio_coords_np.astype(np.float32, copy=False)
-        if audio_coords_np_f32.shape[2] < _AUDIO_SEQ_PAD:
-            _coord_pad = _AUDIO_SEQ_PAD - audio_coords_np_f32.shape[2]
-            last_coord = audio_coords_np_f32[:, :, -1:, :]  # [B, 1, 1, 2]
-            audio_coords_np_f32 = np.concatenate(
-                [
-                    audio_coords_np_f32,
-                    np.repeat(last_coord, _coord_pad, axis=2),
-                ],
-                axis=2,
-            )
         audio_coords = Tensor.from_dlpack(audio_coords_np_f32).to(device)
 
         # Duplicate positional coords for CFG (batch dim doubles).
@@ -1352,13 +1286,10 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
         # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
-        # Pass actual_num_frames so the VAE receives only the real content frames
-        # (slicing away the zero-padding added before the transformer call).
         audio = self.decode_audio_latents(
             audio_latents,
             audio_num_frames,
             latent_mel_bins,
-            actual_num_frames=actual_audio_num_frames,
         )
 
         return LTX2PipelineOutput(
