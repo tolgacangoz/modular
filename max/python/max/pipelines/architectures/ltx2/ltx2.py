@@ -22,6 +22,8 @@ from max.driver import Device
 from max.dtype import DType
 from max.graph import TensorType
 from max.nn.activations import FeedForward
+from max.nn.legacy.attention.mask_config import MHAMaskVariant
+from max.nn.legacy.kernels import flash_attention_gpu as _flash_attention_gpu
 from max.tensor import Tensor
 
 from ..common_layers.activation import activation_function_from_name
@@ -30,6 +32,8 @@ from ..flux1.layers.embeddings import PixArtAlphaTextProjection
 from .model_config import LTX2TransformerConfigBase
 
 logger = logging.getLogger(__name__)
+
+flash_attention_gpu = F.functional(_flash_attention_gpu)
 
 
 def apply_interleaved_rotary_emb(
@@ -239,63 +243,6 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             ]
         )
 
-    def prepare_attention_mask(
-        self,
-        attention_mask: Tensor,
-        target_length: int,
-        batch_size: int,
-        out_dim: int = 3,
-    ) -> Tensor:
-        """
-        Prepare the attention mask for the attention computation.
-
-        Args:
-            attention_mask (`Tensor`): The attention mask to prepare.
-            target_length (`int`): The target length of the attention mask.
-            batch_size (`int`): The batch size for repeating the attention mask.
-            out_dim (`int`, *optional*, defaults to `3`): Output dimension.
-
-        Returns:
-            `Tensor`: The prepared attention mask.
-        """
-        head_size = self.heads
-        if attention_mask is None:
-            return attention_mask
-
-        current_length: int = attention_mask.shape[-1]
-        if current_length != target_length:
-            attention_mask = F.pad(
-                attention_mask, (0, target_length), value=0.0
-            )
-
-        if out_dim == 3:
-            if attention_mask.shape[0] < batch_size * head_size:
-                # (B, T_q, T_k) -> (B*heads, T_q, T_k) via broadcast + reshape
-                b = attention_mask.shape[0]
-                t_q = attention_mask.shape[1]
-                t_k = attention_mask.shape[2]
-                attention_mask = F.reshape(
-                    F.broadcast_to(
-                        F.unsqueeze(attention_mask, 1),
-                        (b, head_size, t_q, t_k),
-                    ),
-                    (b * head_size, t_q, t_k),
-                )
-        elif out_dim == 4:
-            attention_mask = F.unsqueeze(attention_mask, 1)
-            # (B, 1, T_q, T_k) -> (B, heads, T_q, T_k) via broadcast
-            attention_mask = F.broadcast_to(
-                attention_mask,
-                (
-                    attention_mask.shape[0],
-                    head_size,
-                    attention_mask.shape[2],
-                    attention_mask.shape[3],
-                ),
-            )
-
-        return attention_mask
-
     def forward(
         self,
         hidden_states: Tensor,
@@ -304,30 +251,16 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         query_rotary_emb: tuple[Tensor, Tensor] | None = None,
         key_rotary_emb: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
-        batch_size, sequence_length, _ = (
-            hidden_states.shape
-            if encoder_hidden_states is None
-            else encoder_hidden_states.shape
-        )
-
-        if attention_mask is not None:
-            attention_mask = self.prepare_attention_mask(
-                attention_mask, sequence_length, batch_size
-            )
-            attention_mask = F.reshape(
-                attention_mask,
-                (batch_size, self.heads, -1, attention_mask.shape[-1]),
-            )
+        batch_size = hidden_states.shape[0]
+        query_len = hidden_states.shape[1]
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
+        sequence_length = encoder_hidden_states.shape[1]
 
-        query = self.to_q(hidden_states)
-        key = self.to_k(encoder_hidden_states)
+        query = self.norm_q(self.to_q(hidden_states))
+        key = self.norm_k(self.to_k(encoder_hidden_states))
         value = self.to_v(encoder_hidden_states)
-
-        query = self.norm_q(query)
-        key = self.norm_k(key)
 
         if query_rotary_emb is not None:
             if self.rope_type == "interleaved":
@@ -347,7 +280,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     else query_rotary_emb,
                 )
 
-        query_len = hidden_states.shape[1]
+        # Reshape to (B, T, H, D) for flash_attention_gpu
         query = F.reshape(
             query, (batch_size, query_len, self.heads, self.head_dim)
         )
@@ -358,37 +291,41 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             value, (batch_size, sequence_length, self.kv_heads, self.head_dim)
         )
 
-        # Scaled dot-product attention.
-        # F.matmul only supports 3D batch-matmul (B, M, N), so we fold the
-        # heads dimension into the batch dimension for the two matmuls.
-        # (B, T, heads, head_dim) -> (B*heads, T, head_dim)
-        q = F.reshape(
-            F.transpose(query, 1, 2), (batch_size * self.heads, query_len, self.head_dim)
-        )
-        k = F.reshape(
-            F.transpose(key, 1, 2), (batch_size * self.kv_heads, sequence_length, self.head_dim)
-        )
-        v = F.reshape(
-            F.transpose(value, 1, 2), (batch_size * self.kv_heads, sequence_length, self.head_dim)
-        )
-        # (B*heads, T_q, head_dim) x (B*heads, head_dim, T_k) -> (B*heads, T_q, T_k)
-        attn_scores = F.matmul(q, F.transpose(k, 1, 2)) / self.scale
+        # Convert additive bias mask (B, 1, T_k): 0=valid, -10000=masked to
+        # valid_length (B,) expected by flash_attention_gpu.
+        valid_length = None
         if attention_mask is not None:
-            # attention_mask is (B, heads, T_q, T_k) -> (B*heads, T_q, T_k)
-            attn_scores = attn_scores + F.reshape(
-                attention_mask, (batch_size * self.heads, -1, attention_mask.shape[-1])
-            )
-        attn_weights = F.softmax(attn_scores.cast(DType.float32), axis=-1).cast(
-            query.dtype
+            valid_length = F.cast(
+                F.sum(
+                    F.cast(
+                        F.greater(
+                            F.reshape(
+                                attention_mask, (batch_size, sequence_length)
+                            ),
+                            -0.5,
+                        ),
+                        DType.int32,
+                    ),
+                    axis=-1,
+                ),
+                DType.int64,
+            )  # (B,)
+
+        # flash_attention_gpu handles dynamic sequence lengths natively and
+        # expects (B, T, H, D) inputs, returning (B, T_q, H, D).
+        hidden_states = flash_attention_gpu(
+            query,
+            key,
+            value,
+            mask_variant=MHAMaskVariant.NULL_MASK,
+            scale=1.0 / self.scale,
+            valid_length=valid_length,
         )
-        # (B*heads, T_q, T_k) x (B*heads, T_k, head_dim) -> (B*heads, T_q, head_dim)
-        hidden_states = F.matmul(attn_weights, v)
-        # (B*heads, T_q, head_dim) -> (B, heads, T_q, head_dim) -> (B, T_q, heads, head_dim)
-        hidden_states = F.transpose(
-            F.reshape(hidden_states, (batch_size, self.heads, query_len, self.head_dim)),
-            1, 2,
+
+        # (B, T_q, H, D) -> (B, T_q, H*D)
+        hidden_states = F.reshape(
+            hidden_states, (batch_size, query_len, self.heads * self.head_dim)
         )
-        hidden_states = F.flatten(hidden_states, 2, 3)  # (B, T_q, heads*head_dim)
 
         hidden_states = self.to_out[0](hidden_states)
         hidden_states = self.to_out[1](hidden_states)
