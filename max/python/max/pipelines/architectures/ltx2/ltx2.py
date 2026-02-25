@@ -258,8 +258,9 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             encoder_hidden_states = hidden_states
         sequence_length = encoder_hidden_states.shape[1]
 
-        query = self.norm_q(self.to_q(hidden_states))
-        key = self.norm_k(self.to_k(encoder_hidden_states))
+        input_dtype = hidden_states.dtype
+        query = self.norm_q(self.to_q(hidden_states)).cast(input_dtype)
+        key = self.norm_k(self.to_k(encoder_hidden_states)).cast(input_dtype)
         value = self.to_v(encoder_hidden_states)
 
         if query_rotary_emb is not None:
