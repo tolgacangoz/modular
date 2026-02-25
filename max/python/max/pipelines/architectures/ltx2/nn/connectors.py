@@ -416,9 +416,17 @@ class LTX2TextConnectors(
                 device=video_text_embedding.device,
             )  # [seq_len]
             output_mask = (
-                positions.unsqueeze(0)
-                < (out_valid_length if out_valid_length is not None else valid_length).unsqueeze(1)
-            ).cast(video_text_embedding.dtype).unsqueeze(-1)  # [B, seq_len, 1]
+                (
+                    positions.unsqueeze(0)
+                    < (
+                        out_valid_length
+                        if out_valid_length is not None
+                        else valid_length
+                    ).unsqueeze(1)
+                )
+                .cast(video_text_embedding.dtype)
+                .unsqueeze(-1)
+            )  # [B, seq_len, 1]
 
         video_text_embedding = video_text_embedding * output_mask
         # [B, seq_len] binary mask for the caller (1.0 = valid slot)
