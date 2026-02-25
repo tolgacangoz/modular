@@ -16,8 +16,7 @@ import max.experimental.functional as F
 from max.experimental.tensor import Tensor
 
 from .linear import Linear
-from .module_v3 import Module
-from .module_v3 import ModuleList
+from .module_v3 import Module, ModuleList
 
 
 class SiLU(Module[[Tensor], Tensor]):

@@ -15,8 +15,8 @@ import math
 
 import max.experimental.functional as F
 from max import nn
-from max.graph import TensorType
 from max.experimental.tensor import Tensor
+from max.graph import TensorType
 
 from ..model_config import LTX2VocoderConfig
 

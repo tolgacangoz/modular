@@ -18,10 +18,10 @@ import max.experimental.functional as F
 from max import nn
 from max.driver import Device
 from max.dtype import DType
+from max.experimental.tensor import Tensor
 from max.graph import DeviceRef, TensorType
 from max.graph.weights import Weights
 from max.pipelines.lib import SupportedEncoding
-from max.experimental.tensor import Tensor
 
 from .layers.upsampling import interpolate_2d_nearest
 from .model import BaseAutoencoderModel

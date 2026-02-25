@@ -15,12 +15,13 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+import max.experimental.functional as F
 import numpy as np
 import numpy.typing as npt
-import max.experimental.functional as F
 from max import random
 from max.driver import CPU, Device
 from max.dtype import DType
+from max.experimental.tensor import Tensor
 from max.graph import TensorType
 from max.pipelines import PixelContext
 from max.pipelines.lib.interfaces import (
@@ -28,7 +29,6 @@ from max.pipelines.lib.interfaces import (
     PixelModelInputs,
 )
 from max.pipelines.lib.interfaces.diffusion_pipeline import max_compile
-from max.experimental.tensor import Tensor
 from tqdm import tqdm
 from transformers import Gemma3ForConditionalGeneration
 
