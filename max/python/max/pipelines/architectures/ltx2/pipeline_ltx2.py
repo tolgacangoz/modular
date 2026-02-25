@@ -18,8 +18,8 @@ from typing import Any, Literal, cast
 import max.experimental.functional as F
 import numpy as np
 import numpy.typing as npt
-from max import random
 from max.driver import CPU, Device
+from max.experimental import random
 from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.graph import TensorType

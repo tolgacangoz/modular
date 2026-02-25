@@ -15,7 +15,8 @@
 from typing import Any
 
 import max.experimental.functional as F
-from max import nn, random
+from max import nn
+from max.experimental import random
 from max.driver import Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
