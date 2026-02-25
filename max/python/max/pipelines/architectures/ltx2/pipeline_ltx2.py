@@ -190,6 +190,8 @@ class LTX2Pipeline(DiffusionPipeline):
         self.build_scheduler_step_audio()
         self.build_decode_video_latents()
         self.build_decode_audio_latents()
+        self.build_prepare_cfg_latents()
+        self.build_apply_cfg_guidance()
 
         # A workaround to remove overhead from `functional.wrapped`.
         if unwrapped_transformer := self.transformer.unwrap_model():
@@ -368,6 +370,53 @@ class LTX2Pipeline(DiffusionPipeline):
         ]
         self.__dict__["_postprocess_audio_latents"] = max_compile(
             self._postprocess_audio_latents,
+            input_types=input_types,
+        )
+
+    def build_prepare_cfg_latents(self) -> None:
+        """Compile _prepare_cfg_latents: concat+cast for CFG latent doubling.
+
+        Fuses two F.concat calls and two casts into a single compiled graph,
+        eliminating per-step Python dispatch overhead.
+          video: [1, 11904, 128] bfloat16 -> [2, 11904, 128] bfloat16
+          audio: [1, 128, 128]   bfloat16 -> [2, 128, 128]   bfloat16
+        """
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        _channels = self.transformer.config.in_channels  # 128
+        _video_seq_len = 11904  # 31 * 16 * 24
+        _audio_channels = self.transformer.config.audio_in_channels  # 128
+        _audio_seq_len = 128  # padded from 126
+        input_types = [
+            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
+            TensorType(dtype, shape=[1, _audio_seq_len, _audio_channels], device=device),
+        ]
+        self.__dict__["_prepare_cfg_latents"] = max_compile(
+            self._prepare_cfg_latents,
+            input_types=input_types,
+        )
+
+    def build_apply_cfg_guidance(self) -> None:
+        """Compile _apply_cfg_guidance: CFG formula for video+audio noise preds.
+
+        Fuses cast + split + guidance arithmetic into a single compiled graph:
+          video in:  [2, 11904, 128] bfloat16 -> [1, 11904, 128] bfloat16
+          audio in:  [2, 128, 128]   bfloat16 -> [1, 128, 128]   bfloat16
+          guidance:  [1]             float32
+        """
+        dtype = self.transformer.config.dtype
+        device = self.transformer.devices[0]
+        _channels = self.transformer.config.in_channels  # 128
+        _video_seq_len = 11904  # 31 * 16 * 24
+        _audio_channels = self.transformer.config.audio_in_channels  # 128
+        _audio_seq_len = 128  # padded from 126
+        input_types = [
+            TensorType(dtype, shape=[2, _video_seq_len, _channels], device=device),
+            TensorType(dtype, shape=[2, _audio_seq_len, _audio_channels], device=device),
+            TensorType(DType.float32, shape=[1], device=device),
+        ]
+        self.__dict__["_apply_cfg_guidance"] = max_compile(
+            self._apply_cfg_guidance,
             input_types=input_types,
         )
 
@@ -701,6 +750,47 @@ class LTX2Pipeline(DiffusionPipeline):
     # Compiled instance methods (overridden in __dict__ by build_* at startup)
     # -----------------------------------------------------------------------
 
+    def _prepare_cfg_latents(
+        self, video_latents: Tensor, audio_latents: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Concat+cast video and audio latents for CFG [1,S,D]->[2,S,D].
+
+        Compiled via build_prepare_cfg_latents. Called once per denoising step
+        when do_classifier_free_guidance is True.
+        """
+        dtype = self.transformer.config.dtype
+        video = F.concat([video_latents, video_latents], axis=0).cast(dtype)
+        audio = F.concat([audio_latents, audio_latents], axis=0).cast(dtype)
+        return video, audio
+
+    def _apply_cfg_guidance(
+        self,
+        noise_pred_video: Tensor,
+        noise_pred_audio: Tensor,
+        guidance_scale: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        """Apply classifier-free guidance formula to video and audio noise preds.
+
+        Compiled via build_apply_cfg_guidance. Fuses cast + split + arithmetic
+        for both modalities into a single compiled graph, called once per step.
+
+        guidance: uncond + scale * (cond - uncond)
+        """
+        dtype = DType.float32
+        scale = guidance_scale.cast(dtype)
+
+        video = noise_pred_video.cast(dtype)
+        v_uncond = F.slice_tensor(video, [slice(0, 1)])
+        v_cond = F.slice_tensor(video, [slice(1, 2)])
+        guided_video = v_uncond + scale * (v_cond - v_uncond)
+
+        audio = noise_pred_audio.cast(dtype)
+        a_uncond = F.slice_tensor(audio, [slice(0, 1)])
+        a_cond = F.slice_tensor(audio, [slice(1, 2)])
+        guided_audio = a_uncond + scale * (a_cond - a_uncond)
+
+        return guided_video, guided_audio
+
     def _pack_video_latents(self, latents: Tensor) -> Tensor:
         """Cast and pack video latents [B,C,F,H,W] -> [B,S,C] (patch_size=1).
 
@@ -971,11 +1061,7 @@ class LTX2Pipeline(DiffusionPipeline):
         if sigmas_key in self._cached_sigmas:
             sigmas = self._cached_sigmas[sigmas_key]
         else:
-            sigmas = Tensor.constant(
-                sigmas_np.astype(np.float32, copy=False),
-                dtype=DType.float32,
-                device=device,
-            )
+            sigmas = Tensor.from_dlpack(sigmas_np).to(device)
             self._cached_sigmas[sigmas_key] = sigmas
         all_timesteps, all_dts = self.prepare_scheduler(sigmas)
 
@@ -1002,11 +1088,9 @@ class LTX2Pipeline(DiffusionPipeline):
             mask_np = np.ones_like(token_ids_np, dtype=np.bool_)
         if mask_np.ndim == 1:
             mask_np = np.expand_dims(mask_np, axis=0)
-        prompt_attention_mask = Tensor.constant(
-            mask_np.astype(np.bool_, copy=False),
-            dtype=DType.bool,
-            device=device,
-        )
+        prompt_attention_mask = Tensor.from_dlpack(
+            mask_np.astype(np.bool_),
+        ).to(device).cast(DType.bool)
 
         text_encoder_hidden_states = self._encode_tokens(
             token_ids_np, device="cuda"
@@ -1023,13 +1107,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                # negative_ids_np = Tensor.from_dlpack(
-                #     negative_ids_np.astype(np.int64, copy=False),
-                #     dtype=DType.int64,
-                #     device=device,
-                # )
                 negative_attention_mask = prompt_attention_mask
-
                 negative_hidden_states = self._encode_tokens(
                     negative_ids_np, device="cuda"
                 )
@@ -1163,11 +1241,9 @@ class LTX2Pipeline(DiffusionPipeline):
                 _b = int(audio_latents_arr.shape[0])
                 _c = int(audio_latents_arr.shape[1])
                 _m = int(audio_latents_arr.shape[3])
-                zeros_pad = Tensor.constant(
+                zeros_pad = Tensor.from_dlpack(
                     np.zeros((_b, _c, pad_frames, _m), dtype=np.float32),
-                    dtype=audio_latents_arr.dtype,
-                    device=device,
-                )
+                ).to(device).cast(audio_latents_arr.dtype)
                 audio_latents_arr = F.concat(
                     [audio_latents_arr, zeros_pad], axis=2
                 )
@@ -1184,9 +1260,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # 7. Pre-compute positional embeddings.
         # Prefer numpy arrays precomputed by PixelGenerationTokenizer (zero
         # compilation cost).
-        video_coords = Tensor.from_dlpack(
-            video_coords_np.astype(np.float32, copy=False)
-        ).to(device)
+        video_coords = Tensor.from_dlpack(video_coords_np).to(device)
 
         # Pad audio_coords from [B, 1, actual_frames, 2] to [B, 1, _AUDIO_SEQ_PAD, 2]
         # by repeating the last coordinate entry for the extra padding positions.
@@ -1210,17 +1284,23 @@ class LTX2Pipeline(DiffusionPipeline):
             video_coords = F.concat([video_coords, video_coords], axis=0)
             audio_coords = F.concat([audio_coords, audio_coords], axis=0)
 
+        # Pre-create the guidance scale tensor once so it can be passed to
+        # the compiled _apply_cfg_guidance graph without recreation per step.
+        guidance_scale_tensor = Tensor.from_dlpack(
+            np.array([guidance_scale], dtype=np.float32),
+        ).to(device)
+
         # 8. Denoising loop
         for i in tqdm(range(num_inference_steps), desc="Denoising"):
             timestep = timesteps_seq[i : i + 1]
             dt = dts_seq[i : i + 1]
 
-            # Prepare CFG inputs
+            # Prepare CFG inputs (compiled: concat+cast for both modalities).
             if self.do_classifier_free_guidance:
-                latent_model_input = F.concat([latents, latents], axis=0)
-                audio_latent_model_input = F.concat(
-                    [audio_latents, audio_latents], axis=0
+                latent_model_input, audio_latent_model_input = (
+                    self._prepare_cfg_latents(latents, audio_latents)
                 )
+                timestep = F.concat([timestep, timestep], axis=0)
             else:
                 latent_model_input = latents
                 audio_latent_model_input = audio_latents
@@ -1229,10 +1309,6 @@ class LTX2Pipeline(DiffusionPipeline):
             audio_latent_model_input = audio_latent_model_input.cast(
                 prompt_embeds.dtype
             )
-
-            # Broadcast timestep for CFG
-            if self.do_classifier_free_guidance:
-                timestep = F.concat([timestep, timestep], axis=0)
 
             noise_pred_video, noise_pred_audio = self.transformer(
                 hidden_states=latent_model_input,
@@ -1248,25 +1324,18 @@ class LTX2Pipeline(DiffusionPipeline):
                 video_coords=video_coords,
                 audio_coords=audio_coords,
             )
-            noise_pred_video = noise_pred_video.cast(
-                self.transformer.config.dtype
-            )
-            noise_pred_audio = noise_pred_audio.cast(
-                self.transformer.config.dtype
-            )
 
             if self.do_classifier_free_guidance:
-                # Split into uncond and cond predictions
-                noise_pred_video_uncond = noise_pred_video[0:1]
-                noise_pred_video_text = noise_pred_video[1:2]
-                noise_pred_video = noise_pred_video_uncond + guidance_scale * (
-                    noise_pred_video_text - noise_pred_video_uncond
+                # Compiled: cast + split + guidance formula for both modalities.
+                noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
+                    noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
-
-                noise_pred_audio_uncond = noise_pred_audio[0:1]
-                noise_pred_audio_text = noise_pred_audio[1:2]
-                noise_pred_audio = noise_pred_audio_uncond + guidance_scale * (
-                    noise_pred_audio_text - noise_pred_audio_uncond
+            else:
+                noise_pred_video = noise_pred_video.cast(
+                    DType.float32
+                )
+                noise_pred_audio = noise_pred_audio.cast(
+                    DType.float32
                 )
 
             # Euler scheduler step (separate compiled functions for video and audio).
