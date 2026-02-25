@@ -1059,11 +1059,6 @@ class LTX2Pipeline(DiffusionPipeline):
         token_ids_np: np.ndarray = model_inputs.tokens.array
         if token_ids_np.ndim == 1:
             token_ids_np = np.expand_dims(token_ids_np, axis=0)
-        # token_ids = Tensor.constant(
-        #     token_ids_np.astype(np.int64, copy=False),
-        #     dtype=DType.int64,
-        #     device=device,
-        # )
 
         mask_np: npt.NDArray[np.bool_] | None = model_inputs.mask
         if mask_np is None:
@@ -1118,11 +1113,9 @@ class LTX2Pipeline(DiffusionPipeline):
         # Fallback handles the case where no tokenizer is used (e.g. tests).
         valid_length_np = extra_params.get("ltx2_valid_length")
         if valid_length_np is not None:
-            prompt_valid_length = Tensor.constant(
-                valid_length_np.astype(np.uint32, copy=False),
-                dtype=DType.uint32,
-                device=device,
-            )
+            prompt_valid_length = Tensor.from_dlpack(
+                valid_length_np.astype(np.uint32),
+            ).to(device).cast(DType.uint32)
         else:
             # Fallback: recompute from the bool mask tensor (CFG-doubled already).
             prompt_valid_length = prompt_attention_mask.cast(DType.uint32).sum(
@@ -1144,7 +1137,7 @@ class LTX2Pipeline(DiffusionPipeline):
             batch_size, _, latent_num_frames, latent_height, latent_width = (
                 video_latents_5d_np.shape
             )
-            latents_5d = video_latents_5d_np.astype(np.float32, copy=False)
+            latents_5d = video_latents_5d_np.astype(np.float32)
         else:
             # Fallback: expand 4D latents [B, C, H, W] along temporal dimension.
             latents_np_4d: np.ndarray = model_inputs.latents
@@ -1155,7 +1148,7 @@ class LTX2Pipeline(DiffusionPipeline):
             batch_size = int(latents_np_4d.shape[0])
             latents_5d = latents_np_4d[:, :, None, :, :]
             latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
-            latents_5d = latents_5d.astype(np.float32, copy=False)
+            latents_5d = latents_5d.astype(np.float32)
 
         latents = Tensor.from_dlpack(latents_5d).to(device)
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
@@ -1181,7 +1174,7 @@ class LTX2Pipeline(DiffusionPipeline):
             if "ltx2_audio_num_frames" in extra_params:
                 audio_num_frames = int(extra_params["ltx2_audio_num_frames"])
                 latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
-            audio_latents_arr = audio_latents_np.astype(np.float32, copy=False)
+            audio_latents_arr = audio_latents_np.astype(np.float32)
         else:
             # Fallback: sample audio latents matching the original pipeline logic.
             num_mel_bins = 64  # From audio VAE config
@@ -1209,7 +1202,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # compilation cost).
         video_coords = Tensor.from_dlpack(video_coords_np).to(device)
 
-        audio_coords_np_f32 = audio_coords_np.astype(np.float32, copy=False)
+        audio_coords_np_f32 = audio_coords_np.astype(np.float32)
         audio_coords = Tensor.from_dlpack(audio_coords_np_f32).to(device)
 
         # Duplicate positional coords for CFG (batch dim doubles).
