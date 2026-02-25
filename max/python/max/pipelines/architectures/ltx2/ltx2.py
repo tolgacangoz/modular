@@ -1393,42 +1393,14 @@ class LTX2VideoTransformer3DModel(
     def input_types(self) -> tuple[TensorType, ...]:
         """Define input tensor types for the model.
 
-        # TODO: Verify these!
-        Shapes are hardcoded for the target resolution and duration:
-          height=512, width=768, num_frames=121, frame_rate=24.
-          latent_num_frames = (121-1)//4+1 = 31
-          latent_height     = 512//32      = 16
-          latent_width      = 768//32      = 24
-          video_seq_len     = 31*16*24     = 11904
-          duration_s        = 121/24       ≈ 5.042
-          audio_latents/s   = 16000/160/4  = 25.0
-          audio_num_frames  = round(5.042*25) = 126, padded to 128
-          audio_encoder seq = text seq len = 1024 (connector output)
-          batch_size=2 (CFG doubles the batch in the denoising loop)
-
-        Audio latent sequence is padded from 126 to 128 to avoid BMM tile
-        masking constraints: the Mojo GPU GEMM kernel selects BM=BN=128, so
-        sequences shorter than 128 create fully-masked tiles, triggering:
-          - "Should not swizzle scalar copy" (swizzle + fully-masked A)
-          - "Static layout with known dims is required" (masked epilogue store)
-        Padding to 128 ensures exactly one full, unmasked tile per dimension.
-
-        The audio encoder (text cross-attention conditioning) uses the same
-        sequence length as the video encoder (1024), matching the actual
-        connector output fed at inference time.
-
         Returns:
             Tuple of TensorType specifications for all model inputs.
         """
         # Hardcoded for height=512, width=768, num_frames=121, frame_rate=24, CFG on.
         _batch = 2
-        _video_seq_len = 11904  # 31 * 16 * 24
-        # Audio latents: round((121/24)*25.0)=126, padded to the next multiple of
-        # the BMM tile size (128) to avoid masked-tile kernel constraint failures.
-        _audio_seq_len = 128
-        _text_seq_len = (
-            1024  # text conditioning seq len (video and audio encoder)
-        )
+        _video_seq_len = 6144
+        _audio_seq_len = 126
+        _text_seq_len = 1024
 
         hidden_states_type = TensorType(
             self.config.dtype,
