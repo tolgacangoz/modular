@@ -308,7 +308,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     ),
                     axis=-1,
                 ),
-                DType.int64,
+                DType.uint32,
             )  # (B,)
 
         # flash_attention_gpu handles dynamic sequence lengths natively and
