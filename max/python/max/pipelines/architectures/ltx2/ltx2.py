@@ -198,6 +198,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
 
         self.head_dim = dim_head
         self.inner_dim = dim_head * heads
+        self.kv_heads = kv_heads
         self.inner_kv_dim = (
             self.inner_dim if kv_heads is None else dim_head * kv_heads
         )
@@ -231,11 +232,54 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         self.to_v = nn.Linear(
             self.cross_attention_dim, self.inner_kv_dim, bias=bias
         )
-        self.to_out = nn.ModuleList([])
-        self.to_out.append(
-            nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
+        self.to_out = nn.ModuleList(
+            [
+                nn.Linear(self.inner_dim, self.out_dim, bias=out_bias),
+                nn.Dropout(dropout),
+            ]
         )
-        self.to_out.append(nn.Dropout(dropout))
+
+    def prepare_attention_mask(
+        self,
+        attention_mask: Tensor,
+        target_length: int,
+        batch_size: int,
+        out_dim: int = 3,
+    ) -> Tensor:
+        """
+        Prepare the attention mask for the attention computation.
+
+        Args:
+            attention_mask (`Tensor`): The attention mask to prepare.
+            target_length (`int`): The target length of the attention mask.
+            batch_size (`int`): The batch size for repeating the attention mask.
+            out_dim (`int`, *optional*, defaults to `3`): Output dimension.
+
+        Returns:
+            `Tensor`: The prepared attention mask.
+        """
+        head_size = self.heads
+        if attention_mask is None:
+            return attention_mask
+
+        current_length: int = attention_mask.shape[-1]
+        if current_length != target_length:
+            attention_mask = F.pad(
+                attention_mask, (0, target_length), value=0.0
+            )
+
+        if out_dim == 3:
+            if attention_mask.shape[0] < batch_size * head_size:
+                attention_mask = F.repeat_interleave(
+                    attention_mask, head_size, axis=0
+                )
+        elif out_dim == 4:
+            attention_mask = F.unsqueeze(attention_mask, 1)
+            attention_mask = F.repeat_interleave(
+                attention_mask, head_size, axis=1
+            )
+
+        return attention_mask
 
     def forward(
         self,
@@ -245,22 +289,23 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         query_rotary_emb: tuple[Tensor, Tensor] | None = None,
         key_rotary_emb: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
-        batch_size, _, _ = (
+        batch_size, sequence_length, _ = (
             hidden_states.shape
             if encoder_hidden_states is None
             else encoder_hidden_states.shape
         )
 
-        # Defer attention_mask shaping until we know the final K length.
-        # We'll convert it to a rank-3 additive bias matching the rank-3
-        # attention scores to avoid any rank-4 matmul/reshape lowering.
+        if attention_mask is not None:
+            attention_mask = self.prepare_attention_mask(
+                attention_mask, sequence_length, batch_size
+            )
+            attention_mask = F.reshape(
+                attention_mask,
+                (batch_size, self.heads, -1, attention_mask.shape[-1]),
+            )
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-
-        # Preserve static sequence lengths through reshapes.
-        query_seq_len = hidden_states.shape[1]
-        key_value_seq_len = encoder_hidden_states.shape[1]
 
         query = self.to_q(hidden_states)
         key = self.to_k(encoder_hidden_states)
@@ -287,81 +332,37 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
                     else query_rotary_emb,
                 )
 
-        # In cross-attention, query and key/value can have different sequence
-        # lengths, so use the source tensors' explicit lengths.
-        query = query.reshape(
-            (batch_size, query_seq_len, self.heads, self.head_dim)
+        query_len = hidden_states.shape[1]
+        query = F.reshape(
+            query, (batch_size, query_len, self.heads, self.head_dim)
         )
-        key = key.reshape(
-            (batch_size, key_value_seq_len, self.heads, self.head_dim)
+        key = F.reshape(
+            key, (batch_size, sequence_length, self.kv_heads, self.head_dim)
         )
-        value = value.reshape(
-            (batch_size, key_value_seq_len, self.heads, self.head_dim)
+        value = F.reshape(
+            value, (batch_size, sequence_length, self.kv_heads, self.head_dim)
         )
 
         # Scaled dot-product attention
-        # Transpose to [B, heads, seq, head_dim] for attention computation
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2)
-        value = value.transpose(1, 2)
-
-        # The MAX BMM kernel only supports rank-3 tensors. A rank-4 matmul
-        # (B, H, Sq, D) @ (B, H, D, Sk) triggers a shape-tracking bug where
-        # the kernel's internal _rank = rank - 1 = 3 mismatches a 4-element
-        # shape array, causing the "rebind !pop.array<3> vs !pop.array<4>"
-        # compile error. Fix: merge B and H into one batch dim, do rank-3
-        # matmuls, then restore the 4D layout.
-        # Use symbolic Dim objects directly — int() is only valid for static
-        # dims and will raise at graph-tracing time for dynamic sequence lengths.
-        sq = query.shape[2]
-        sk = key.shape[2]
-        sv = value.shape[2]
-        dq = self.head_dim  # static; avoids int() on a potentially symbolic dim
-        dk = self.head_dim
-        bh = batch_size * self.heads
-
-        attn_bias_3d: Tensor | None = None
+        scale = F.sqrt(1.0 / self.head_dim)
+        q = F.transpose(query, 1, 2)  # (B, heads, T_q, head_dim)
+        k = F.transpose(key, 1, 2)  # (B, kv_heads, T_k, head_dim)
+        v = F.transpose(value, 1, 2)  # (B, kv_heads, T_k, head_dim)
+        attn_scores = (
+            F.matmul(q, F.transpose(k, 2, 3)) * scale
+        )  # (B, heads, T_q, T_k)
         if attention_mask is not None:
-            # attention_mask arrives as [B, 1, K] (rank 3) from the transformer
-            # forward(), which calls unsqueeze(1) on the [B, K] additive bias.
-            # Also accept a bare [B, K] (rank 2) for callers that skip that step.
-            if attention_mask.rank == 2:
-                # [B, K] -> [B, 1, K]
-                attn = attention_mask.unsqueeze(1)
-            else:
-                # [B, 1, K] or any [B, Qmask, K]
-                attn = attention_mask
+            attn_scores = attn_scores + attention_mask
+        attn_weights = F.softmax(attn_scores.cast(DType.float32), axis=-1).cast(
+            q.dtype
+        )
+        hidden_states = F.transpose(
+            F.matmul(attn_weights, v), 1, 2
+        )  # (B, T_q, heads, head_dim)
 
-            # Expand heads and merge B and H: [B, Qmask, K] -> [B*H, Qmask, K]
-            attn = attn.unsqueeze(1)  # [B, 1, Qmask, K]
-            tile_shape = [1] * attn.rank
-            tile_shape[1] = self.heads
-            attn = F.tile(attn, tile_shape)  # [B, H, Qmask, K]
-            attn_bias_3d = attn.reshape(
-                (bh, attn.shape[-2], attn.shape[-1])
-            )
-
-        # [B, H, Sq, D] -> [B*H, Sq, D]
-        query_3d = query.reshape((bh, sq, dq))
-        # [B, H, Sk, D] -> [B*H, D, Sk]  (pre-transposed for the matmul)
-        key_3d = key.reshape((bh, sk, dk)).transpose(1, 2)
-        # [B, H, Sv, D] -> [B*H, Sv, D]
-        value_3d = value.reshape((bh, sv, dk))
-
-        # [B*H, Sq, Sk]
-        scores = query_3d @ key_3d
-        scores = scores * (1.0 / self.scale)
-        if attn_bias_3d is not None:
-            scores = scores + attn_bias_3d
-        # [B*H, Sq, Sk] @ [B*H, Sv, D] -> [B*H, Sq, D]
-        hidden_states = F.softmax(scores, axis=-1) @ value_3d
-
-        # [B*H, Sq, D] -> [B, H, Sq, D] -> [B, Sq, H, D]
-        hidden_states = hidden_states.reshape((batch_size, self.heads, sq, dq))
-
-        # Transpose back to [B, seq, heads, head_dim] and flatten
-        hidden_states = hidden_states.transpose(1, 2)
-        hidden_states = F.flatten(hidden_states, 2, 3)
+        hidden_states = F.flatten(
+            hidden_states, 2, 3
+        )  # (B, T_q, heads*head_dim)
         hidden_states = hidden_states.cast(query.dtype)
 
         hidden_states = self.to_out[0](hidden_states)
@@ -1425,7 +1426,9 @@ class LTX2VideoTransformer3DModel(
         # Audio latents: round((121/24)*25.0)=126, padded to the next multiple of
         # the BMM tile size (128) to avoid masked-tile kernel constraint failures.
         _audio_seq_len = 128
-        _text_seq_len = 1024  # text conditioning seq len (video and audio encoder)
+        _text_seq_len = (
+            1024  # text conditioning seq len (video and audio encoder)
+        )
 
         hidden_states_type = TensorType(
             self.config.dtype,

@@ -907,7 +907,10 @@ class LTX2Pipeline(DiffusionPipeline):
             )
         # Slice away zero-padded frames so the audio VAE and vocoder receive
         # only the real content (e.g. 126 frames instead of padded 128).
-        if actual_num_frames is not None and actual_num_frames < audio_num_frames:
+        if (
+            actual_num_frames is not None
+            and actual_num_frames < audio_num_frames
+        ):
             latents = latents[:, :, :actual_num_frames, :]
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
         return self.vocoder(mel_spectrograms)
@@ -1154,7 +1157,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 pad_shape = list(audio_latents_arr.shape)
                 pad_shape[2] = pad_frames
                 audio_latents_arr = np.concatenate(
-                    [audio_latents_arr, np.zeros(pad_shape, dtype=audio_latents_arr.dtype)],
+                    [
+                        audio_latents_arr,
+                        np.zeros(pad_shape, dtype=audio_latents_arr.dtype),
+                    ],
                     axis=2,
                 )
             else:
@@ -1196,7 +1202,10 @@ class LTX2Pipeline(DiffusionPipeline):
             _coord_pad = _AUDIO_SEQ_PAD - audio_coords_np_f32.shape[2]
             last_coord = audio_coords_np_f32[:, :, -1:, :]  # [B, 1, 1, 2]
             audio_coords_np_f32 = np.concatenate(
-                [audio_coords_np_f32, np.repeat(last_coord, _coord_pad, axis=2)],
+                [
+                    audio_coords_np_f32,
+                    np.repeat(last_coord, _coord_pad, axis=2),
+                ],
                 axis=2,
             )
         audio_coords = Tensor.from_dlpack(audio_coords_np_f32).to(device)
@@ -1285,7 +1294,9 @@ class LTX2Pipeline(DiffusionPipeline):
         # Pass actual_num_frames so the VAE receives only the real content frames
         # (slicing away the zero-padding added before the transformer call).
         audio = self.decode_audio_latents(
-            audio_latents, audio_num_frames, latent_mel_bins,
+            audio_latents,
+            audio_num_frames,
+            latent_mel_bins,
             actual_num_frames=actual_audio_num_frames,
         )
 
