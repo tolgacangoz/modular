@@ -1089,13 +1089,6 @@ class LTX2Pipeline(DiffusionPipeline):
             connector_attention_mask,
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
-        # Derive transformer encoder_valid_length from the connector output mask.
-        # With learnable registers every output slot is filled, so this equals
-        # the connector output seq_len (1024) for all batch items.
-        encoder_valid_length = (connector_attention_mask > 0.5).cast(
-            DType.uint32
-        ).sum(axis=-1)  # [B] uint32
-
         # 5. Prepare video latents
         # Prefer precomputed 5D latents from PixelGenerationTokenizer when available.
         if video_latents_5d_np is not None:
@@ -1262,8 +1255,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 encoder_hidden_states=connector_prompt_embeds,
                 audio_encoder_hidden_states=connector_audio_prompt_embeds,
                 timestep=timestep,
-                encoder_valid_length=encoder_valid_length,
-                audio_encoder_valid_length=encoder_valid_length,
                 num_frames=latent_num_frames,
                 height=latent_height,
                 width=latent_width,

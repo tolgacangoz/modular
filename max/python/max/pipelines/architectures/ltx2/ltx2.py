@@ -515,8 +515,6 @@ class LTX2VideoTransformerBlock(
         audio_rotary_emb: tuple[Tensor, Tensor] | None = None,
         ca_video_rotary_emb: tuple[Tensor, Tensor] | None = None,
         ca_audio_rotary_emb: tuple[Tensor, Tensor] | None = None,
-        encoder_valid_length: Tensor | None = None,
-        audio_encoder_valid_length: Tensor | None = None,
         a2v_cross_attention_mask: Tensor | None = None,
         v2a_cross_attention_mask: Tensor | None = None,
     ) -> Tensor:
@@ -596,7 +594,6 @@ class LTX2VideoTransformerBlock(
         attn_hidden_states = self.attn2(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            valid_length=encoder_valid_length,
         )
         hidden_states = hidden_states + attn_hidden_states
 
@@ -604,7 +601,6 @@ class LTX2VideoTransformerBlock(
         attn_audio_hidden_states = self.audio_attn2(
             norm_audio_hidden_states,
             encoder_hidden_states=audio_encoder_hidden_states,
-            valid_length=audio_encoder_valid_length,
         )
         audio_hidden_states = audio_hidden_states + attn_audio_hidden_states
 
@@ -1375,18 +1371,6 @@ class LTX2VideoTransformer3DModel(
         audio_timestep_type = TensorType(
             DType.float32, shape=[_batch], device=self.config.device
         )
-        # valid_length must be a graph input (not computed inside the graph) so
-        # that the Mojo kernel receives si64 stride metadata as required.
-        encoder_valid_length_type = TensorType(
-            DType.uint32,
-            shape=[_batch],
-            device=self.config.device,
-        )
-        audio_encoder_valid_length_type = TensorType(
-            DType.uint32,
-            shape=[_batch],
-            device=self.config.device,
-        )
         video_coords_type = TensorType(
             DType.float32,
             shape=[_batch, 3, _video_seq_len, 2],
@@ -1405,8 +1389,6 @@ class LTX2VideoTransformer3DModel(
             audio_encoder_hidden_states_type,
             timestep_type,
             audio_timestep_type,
-            encoder_valid_length_type,
-            audio_encoder_valid_length_type,
             video_coords_type,
             audio_coords_type,
         )
@@ -1419,8 +1401,6 @@ class LTX2VideoTransformer3DModel(
         audio_encoder_hidden_states: Tensor,
         timestep: Tensor,
         audio_timestep: Tensor | None = None,
-        encoder_valid_length: Tensor | None = None,
-        audio_encoder_valid_length: Tensor | None = None,
         video_coords: Tensor | None = None,
         audio_coords: Tensor | None = None,
         num_frames: int | None = None,
@@ -1597,8 +1577,6 @@ class LTX2VideoTransformer3DModel(
                 audio_rotary_emb=audio_rotary_emb,
                 ca_video_rotary_emb=video_cross_attn_rotary_emb,
                 ca_audio_rotary_emb=audio_cross_attn_rotary_emb,
-                encoder_valid_length=encoder_valid_length,
-                audio_encoder_valid_length=audio_encoder_valid_length,
             )
 
         # 6. Output layers (including unpatchification)

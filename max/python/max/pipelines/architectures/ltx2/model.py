@@ -101,8 +101,6 @@ class LTX2TransformerModel(ComponentModel):
             "audio_encoder_hidden_states",
             "timestep",
             "audio_timestep",
-            "encoder_valid_length",
-            "audio_encoder_valid_length",
             "video_coords",
             "audio_coords",
         }
