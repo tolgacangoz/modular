@@ -261,7 +261,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         input_dtype = hidden_states.dtype
         query = self.norm_q(self.to_q(hidden_states)).cast(input_dtype)
         key = self.norm_k(self.to_k(encoder_hidden_states)).cast(input_dtype)
-        value = self.to_v(encoder_hidden_states)
+        value = self.to_v(encoder_hidden_states).cast(input_dtype)
 
         if query_rotary_emb is not None:
             if self.rope_type == "interleaved":
@@ -314,14 +314,15 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
 
         # flash_attention_gpu handles dynamic sequence lengths natively and
         # expects (B, T, H, D) inputs, returning (B, T_q, H, D).
+        # Cast to bfloat16 for flash attention efficiency, then restore dtype.
         hidden_states = flash_attention_gpu(
-            query,
-            key,
-            value,
+            query.cast(DType.bfloat16),
+            key.cast(DType.bfloat16),
+            value.cast(DType.bfloat16),
             mask_variant=MHAMaskVariant.NULL_MASK,
             scale=1.0 / self.scale,
             valid_length=valid_length,
-        )
+        ).cast(input_dtype)
 
         # (B, T_q, H, D) -> (B, T_q, H*D)
         hidden_states = F.reshape(
