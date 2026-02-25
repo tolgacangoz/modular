@@ -101,8 +101,8 @@ class LTX2TransformerModel(ComponentModel):
             "audio_encoder_hidden_states",
             "timestep",
             "audio_timestep",
-            "encoder_attention_mask",
-            "audio_encoder_attention_mask",
+            "encoder_valid_length",
+            "audio_encoder_valid_length",
             "video_coords",
             "audio_coords",
         }
@@ -185,7 +185,7 @@ class LTX2TextConnectorsModel(ComponentModel):
     def __call__(
         self,
         text_encoder_hidden_states: Tensor,
-        attention_mask: Tensor,
+        valid_length: Tensor,
         **kwargs: Any,
     ) -> Any:
-        return self.model(text_encoder_hidden_states, attention_mask)
+        return self.model(text_encoder_hidden_states, valid_length)

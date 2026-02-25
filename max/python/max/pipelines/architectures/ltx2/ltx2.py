@@ -247,7 +247,7 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         self,
         hidden_states: Tensor,
         encoder_hidden_states: Tensor | None = None,
-        attention_mask: Tensor | None = None,
+        valid_length: Tensor | None = None,
         query_rotary_emb: tuple[Tensor, Tensor] | None = None,
         key_rotary_emb: tuple[Tensor, Tensor] | None = None,
     ) -> Tensor:
@@ -291,31 +291,10 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
             value, (batch_size, sequence_length, self.kv_heads, self.head_dim)
         )
 
-        # Convert additive bias mask (B, 1, T_k): 0=valid, -10000=masked to
-        # valid_length (B,) expected by flash_attention_gpu.
-        valid_length = None
-        if attention_mask is not None:
-            valid_length = F.reshape(
-                F.cast(
-                    F.sum(
-                        F.cast(
-                            F.greater(
-                                F.reshape(
-                                    attention_mask, (batch_size, sequence_length)
-                                ),
-                                -0.5,
-                            ),
-                            DType.int32,
-                        ),
-                        axis=-1,
-                    ),
-                    DType.uint32,
-                ),
-                (batch_size,),
-            )  # (B,)
-
         # flash_attention_gpu handles dynamic sequence lengths natively and
         # expects (B, T, H, D) inputs in bfloat16, returning (B, T_q, H, D).
+        # valid_length must be a graph *input* (TensorType), not computed inside
+        # the graph, to avoid a si32/si64 metadata mismatch in the Mojo kernel.
         hidden_states = flash_attention_gpu(
             query,
             key,
@@ -536,8 +515,8 @@ class LTX2VideoTransformerBlock(
         audio_rotary_emb: tuple[Tensor, Tensor] | None = None,
         ca_video_rotary_emb: tuple[Tensor, Tensor] | None = None,
         ca_audio_rotary_emb: tuple[Tensor, Tensor] | None = None,
-        encoder_attention_mask: Tensor | None = None,
-        audio_encoder_attention_mask: Tensor | None = None,
+        encoder_valid_length: Tensor | None = None,
+        audio_encoder_valid_length: Tensor | None = None,
         a2v_cross_attention_mask: Tensor | None = None,
         v2a_cross_attention_mask: Tensor | None = None,
     ) -> Tensor:
@@ -617,8 +596,7 @@ class LTX2VideoTransformerBlock(
         attn_hidden_states = self.attn2(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            query_rotary_emb=None,
-            attention_mask=encoder_attention_mask,
+            valid_length=encoder_valid_length,
         )
         hidden_states = hidden_states + attn_hidden_states
 
@@ -626,8 +604,7 @@ class LTX2VideoTransformerBlock(
         attn_audio_hidden_states = self.audio_attn2(
             norm_audio_hidden_states,
             encoder_hidden_states=audio_encoder_hidden_states,
-            query_rotary_emb=None,
-            attention_mask=audio_encoder_attention_mask,
+            valid_length=audio_encoder_valid_length,
         )
         audio_hidden_states = audio_hidden_states + attn_audio_hidden_states
 
@@ -719,7 +696,7 @@ class LTX2VideoTransformerBlock(
             encoder_hidden_states=mod_norm_audio_hidden_states,
             query_rotary_emb=ca_video_rotary_emb,
             key_rotary_emb=ca_audio_rotary_emb,
-            attention_mask=a2v_cross_attention_mask,
+            valid_length=a2v_cross_attention_mask,
         )
 
         hidden_states = hidden_states + a2v_gate * a2v_attn_hidden_states
@@ -738,7 +715,7 @@ class LTX2VideoTransformerBlock(
             encoder_hidden_states=mod_norm_hidden_states,
             query_rotary_emb=ca_audio_rotary_emb,
             key_rotary_emb=ca_video_rotary_emb,
-            attention_mask=v2a_cross_attention_mask,
+            valid_length=v2a_cross_attention_mask,
         )
 
         audio_hidden_states = (
@@ -1247,11 +1224,11 @@ class LTX2VideoTransformer3DModel(
 
         # 3.3. Output Layer Scale/Shift Modulation parameters
         self.scale_shift_table = (
-            Tensor.ones((2, inner_dim), dtype=DType.float32)  # / inner_dim**0.5
+            Tensor.ones((2, inner_dim), dtype=config.dtype)  # / inner_dim**0.5
         )
         self.audio_scale_shift_table = (
             Tensor.ones(
-                (2, audio_inner_dim), dtype=DType.float32
+                (2, audio_inner_dim), dtype=config.dtype
             )  # / audio_inner_dim**0.5
         )
 
@@ -1398,16 +1375,16 @@ class LTX2VideoTransformer3DModel(
         audio_timestep_type = TensorType(
             DType.float32, shape=[_batch], device=self.config.device
         )
-        encoder_attention_mask_type = TensorType(
-            self.config.dtype,
-            shape=[_batch, _text_seq_len],
+        # valid_length must be a graph input (not computed inside the graph) so
+        # that the Mojo kernel receives si64 stride metadata as required.
+        encoder_valid_length_type = TensorType(
+            DType.uint32,
+            shape=[_batch],
             device=self.config.device,
         )
-        # Audio encoder attention mask mirrors the audio encoder hidden states:
-        # uses _text_seq_len to match the connector-output mask shape at inference.
-        audio_encoder_attention_mask_type = TensorType(
-            self.config.dtype,
-            shape=[_batch, _text_seq_len],
+        audio_encoder_valid_length_type = TensorType(
+            DType.uint32,
+            shape=[_batch],
             device=self.config.device,
         )
         video_coords_type = TensorType(
@@ -1428,8 +1405,8 @@ class LTX2VideoTransformer3DModel(
             audio_encoder_hidden_states_type,
             timestep_type,
             audio_timestep_type,
-            encoder_attention_mask_type,
-            audio_encoder_attention_mask_type,
+            encoder_valid_length_type,
+            audio_encoder_valid_length_type,
             video_coords_type,
             audio_coords_type,
         )
@@ -1442,8 +1419,8 @@ class LTX2VideoTransformer3DModel(
         audio_encoder_hidden_states: Tensor,
         timestep: Tensor,
         audio_timestep: Tensor | None = None,
-        encoder_attention_mask: Tensor | None = None,
-        audio_encoder_attention_mask: Tensor | None = None,
+        encoder_valid_length: Tensor | None = None,
+        audio_encoder_valid_length: Tensor | None = None,
         video_coords: Tensor | None = None,
         audio_coords: Tensor | None = None,
         num_frames: int | None = None,
@@ -1475,29 +1452,6 @@ class LTX2VideoTransformer3DModel(
         audio_timestep = (
             audio_timestep if audio_timestep is not None else timestep
         )
-
-        # convert encoder_attention_mask to a bias the same way we do for attention_mask
-        if (
-            encoder_attention_mask is not None
-            and encoder_attention_mask.rank == 2
-        ):
-            # Use float32 for the bias calculation to avoid uint8 promotion issues
-            mask = encoder_attention_mask.cast(DType.float32)
-            encoder_attention_mask = (1.0 - mask) * -10000.0
-            encoder_attention_mask = encoder_attention_mask.cast(
-                hidden_states.dtype
-            ).unsqueeze(1)
-
-        if (
-            audio_encoder_attention_mask is not None
-            and audio_encoder_attention_mask.rank == 2
-        ):
-            # Use float32 for the bias calculation to avoid uint8 promotion issues
-            audio_mask = audio_encoder_attention_mask.cast(DType.float32)
-            audio_encoder_attention_mask = (1.0 - audio_mask) * -10000.0
-            audio_encoder_attention_mask = audio_encoder_attention_mask.cast(
-                audio_hidden_states.dtype
-            ).unsqueeze(1)
 
         batch_size = hidden_states.shape[0]
 
@@ -1643,8 +1597,8 @@ class LTX2VideoTransformer3DModel(
                 audio_rotary_emb=audio_rotary_emb,
                 ca_video_rotary_emb=video_cross_attn_rotary_emb,
                 ca_audio_rotary_emb=audio_cross_attn_rotary_emb,
-                encoder_attention_mask=encoder_attention_mask,
-                audio_encoder_attention_mask=audio_encoder_attention_mask,
+                encoder_valid_length=encoder_valid_length,
+                audio_encoder_valid_length=audio_encoder_valid_length,
             )
 
         # 6. Output layers (including unpatchification)

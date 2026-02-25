@@ -1039,6 +1039,17 @@ class PixelGenerationTokenizer(
             extra_params["ltx2_audio_coords"] = audio_coords
             extra_params["ltx2_coords_cfg_doubled"] = np.array(do_cfg)
 
+            # Number of real (non-padding) text tokens per batch item (uint32).
+            # Pre-doubled for CFG here on CPU, mirroring the coords treatment
+            # above, so the pipeline can wrap it in a Tensor without any
+            # further mask arithmetic.
+            valid_length_np = attn_mask.sum(axis=-1).astype(np.uint32)  # [B]
+            if do_cfg:
+                valid_length_np = np.concatenate(
+                    [valid_length_np, valid_length_np], axis=0
+                )  # [2B]
+            extra_params["ltx2_valid_length"] = valid_length_np
+
         # 5. Build the context
         context = PixelContext(
             request_id=request.request_id,

@@ -154,13 +154,13 @@ class LTX2TransformerBlock1d(
     def forward(
         self,
         hidden_states: Tensor,
-        attention_mask: Tensor | None = None,
+        valid_length: Tensor | None = None,
         rotary_emb: Tensor | None = None,
     ) -> Tensor:
         norm_hidden_states = self.norm1(hidden_states)
         attn_hidden_states = self.attn1(
             norm_hidden_states,
-            attention_mask=attention_mask,
+            valid_length=valid_length,
             query_rotary_emb=rotary_emb,
         )
         hidden_states = hidden_states + attn_hidden_states
@@ -235,28 +235,41 @@ class LTX2ConnectorTransformer1d(
     def forward(
         self,
         hidden_states: Tensor,
-        attention_mask: Tensor | None = None,
+        valid_length: Tensor | None = None,
         attn_mask_binarize_threshold: float = -9000.0,
-    ) -> tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor | None]:
         # hidden_states shape: [batch_size, seq_len, hidden_dim]
-        # attention_mask shape: [batch_size, seq_len] or [batch_size, 1, 1, seq_len]
+        # valid_length shape:  [batch_size] uint32 — number of real (non-padding) tokens
         batch_size, seq_len, _ = hidden_states.shape
 
-        # 1. Replace padding with learned registers, if using
+        # valid_length for the self-attention blocks after register replacement.
+        # Overridden to None (NULL_MASK) when registers fill all positions.
+        block_valid_length: Tensor | None = valid_length
+
+        # 1. Replace padding positions with learned registers, if enabled.
         if self.learnable_registers is not None:
             num_register_repeats = seq_len // self.num_learnable_registers
             registers = F.tile(
                 self.learnable_registers, (num_register_repeats, 1)
             )  # [seq_len, inner_dim]
 
-            binary_attn_mask = (
-                attention_mask >= attn_mask_binarize_threshold
-            ).cast(DType.int32)
-            if binary_attn_mask.rank == 4:
-                binary_attn_mask = binary_attn_mask.squeeze(1).squeeze(1)
-            elif binary_attn_mask.rank == 3:
-                binary_attn_mask = binary_attn_mask.squeeze(1)
-            # [B, L]
+            # Reconstruct a per-position binary mask from valid_length.
+            # positions [seq_len] < valid_length [B] → binary_attn_mask [B, seq_len]
+            # This is computed inside the graph but only used for F.where (not the
+            # MHA padded kernel), so there is no si32/si64 metadata issue.
+            positions = Tensor.arange(
+                seq_len, dtype=DType.uint32, device=hidden_states.device
+            )  # [seq_len]
+            if valid_length is not None:
+                binary_attn_mask = (
+                    positions.unsqueeze(0) < valid_length.unsqueeze(1)
+                ).cast(DType.int32)  # [B, seq_len]
+            else:
+                binary_attn_mask = Tensor.ones(
+                    (batch_size, seq_len),
+                    dtype=DType.int32,
+                    device=hidden_states.device,
+                )
 
             padded_hidden_states = F.where(
                 binary_attn_mask.cast(DType.bool).unsqueeze(-1),
@@ -269,7 +282,7 @@ class LTX2ConnectorTransformer1d(
                 -1,
                 -1,
                 dtype=DType.int32,
-                device=binary_attn_mask.device,
+                device=hidden_states.device,
             )
             flipped_mask = (
                 F.gather(binary_attn_mask, reverse_indices, axis=1)
@@ -281,8 +294,9 @@ class LTX2ConnectorTransformer1d(
                 + (1.0 - flipped_mask) * registers
             )
 
-            # Overwrite attention_mask with an all-zeros mask if using registers.
-            attention_mask = Tensor.zeros_like(attention_mask)
+            # After registers fill every slot, all seq_len positions are valid
+            # → self-attention uses NULL_MASK.
+            block_valid_length = None
 
         # 2. Calculate 1D RoPE positional embeddings
         rotary_emb = self.rope(batch_size, seq_len, device=hidden_states.device)
@@ -291,13 +305,15 @@ class LTX2ConnectorTransformer1d(
         for block in self.transformer_blocks:
             hidden_states = block(
                 hidden_states,
-                attention_mask=attention_mask,
+                valid_length=block_valid_length,
                 rotary_emb=rotary_emb,
             )
 
         hidden_states = self.norm_out(hidden_states)
 
-        return hidden_states, attention_mask
+        # Return valid_length unchanged so the caller can determine which output
+        # positions carry real content (vs. registers).
+        return hidden_states, valid_length
 
 
 class LTX2TextConnectors(
@@ -354,52 +370,62 @@ class LTX2TextConnectors(
             ],
             device=self.config.device,
         )
-        attention_mask_type = TensorType(
-            self.config.dtype,
-            shape=[2, 1024],
+        # valid_length: number of real (non-padding) tokens per batch item.
+        # Must be a graph input (not computed inside the graph) so the MHA
+        # padded kernel receives si64 stride metadata as required.
+        valid_length_type = TensorType(
+            DType.uint32,
+            shape=[2],
             device=self.config.device,
         )
-        return (text_encoder_hidden_states_type, attention_mask_type)
+        return (text_encoder_hidden_states_type, valid_length_type)
 
     def forward(
         self,
         text_encoder_hidden_states: Tensor,
-        attention_mask: Tensor,
-        additive_mask: bool = False,
+        valid_length: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        # Convert to additive attention mask, if necessary
-        if not additive_mask:
-            text_dtype = text_encoder_hidden_states.dtype
-            # Use float32 for arithmetic to avoid promotion issues with bool/uint8 masks
-            mask_float = attention_mask.cast(DType.float32)
-            # [B, L] -> [B, 1, 1, L]
-            if attention_mask.rank == 2:
-                attention_mask = (mask_float - 1.0).unsqueeze(1).unsqueeze(1)
-            elif attention_mask.rank == 3:
-                attention_mask = (mask_float - 1.0).unsqueeze(1)
-            elif attention_mask.rank == 4:
-                attention_mask = mask_float - 1.0
-            attention_mask = (
-                attention_mask.cast(text_dtype) * DType.finfo(text_dtype).max
-            )
-
         text_encoder_hidden_states = self.text_proj_in(
             text_encoder_hidden_states
         )
 
-        video_text_embedding, new_attn_mask = self.video_connector(
-            text_encoder_hidden_states, attention_mask
+        video_text_embedding, out_valid_length = self.video_connector(
+            text_encoder_hidden_states, valid_length
         )
 
-        attn_mask = (new_attn_mask < 1e-6).cast(video_text_embedding.dtype)
-        attn_mask = attn_mask.reshape(
-            (video_text_embedding.shape[0], video_text_embedding.shape[1], 1)
-        )
-        video_text_embedding = video_text_embedding * attn_mask
-        new_attn_mask = attn_mask.squeeze(-1)
+        # With learnable registers every output slot is meaningful, so the
+        # output mask is all-ones (all seq_len positions are valid for
+        # cross-attention in the main transformer).  When registers are
+        # disabled we zero out slots beyond valid_length.
+        if self.video_connector.learnable_registers is not None:
+            # All positions are valid after register replacement.
+            output_mask = Tensor.ones(
+                (
+                    video_text_embedding.shape[0],
+                    video_text_embedding.shape[1],
+                    1,
+                ),
+                dtype=video_text_embedding.dtype,
+                device=video_text_embedding.device,
+            )
+        else:
+            # No registers: zero out positions beyond valid_length.
+            positions = Tensor.arange(
+                video_text_embedding.shape[1],
+                dtype=DType.uint32,
+                device=video_text_embedding.device,
+            )  # [seq_len]
+            output_mask = (
+                positions.unsqueeze(0)
+                < (out_valid_length if out_valid_length is not None else valid_length).unsqueeze(1)
+            ).cast(video_text_embedding.dtype).unsqueeze(-1)  # [B, seq_len, 1]
+
+        video_text_embedding = video_text_embedding * output_mask
+        # [B, seq_len] binary mask for the caller (1.0 = valid slot)
+        output_attn_mask = output_mask.squeeze(-1)
 
         audio_text_embedding, _ = self.audio_connector(
-            text_encoder_hidden_states, attention_mask
+            text_encoder_hidden_states, valid_length
         )
 
-        return video_text_embedding, audio_text_embedding, new_attn_mask
+        return video_text_embedding, audio_text_embedding, output_attn_mask

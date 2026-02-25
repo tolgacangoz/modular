@@ -1067,18 +1067,34 @@ class LTX2Pipeline(DiffusionPipeline):
                 [prompt_attention_mask, prompt_attention_mask], axis=0
             )
 
-        # 4. Process text embeddings through connectors
-        mask = prompt_attention_mask.cast(DType.float32)
-        additive_attention_mask = ((1.0 - mask) * -1000000.0).cast(
-            prompt_embeds.dtype
-        )
+        # 4. Process text embeddings through connectors.
+        # valid_length was pre-computed by the tokenizer (pure numpy, outside
+        # any compiled graph) so the MHA padded kernel gets si64 stride metadata.
+        # Fallback handles the case where no tokenizer is used (e.g. tests).
+        valid_length_np = extra_params.get("ltx2_valid_length")
+        if valid_length_np is not None:
+            prompt_valid_length = Tensor.constant(
+                valid_length_np.astype(np.uint32, copy=False),
+                dtype=DType.uint32,
+                device=device,
+            )
+        else:
+            # Fallback: recompute from the bool mask tensor (CFG-doubled already).
+            prompt_valid_length = prompt_attention_mask.cast(DType.uint32).sum(
+                axis=-1
+            )
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,
             connector_attention_mask,
-        ) = self.connectors(
-            prompt_embeds, additive_attention_mask, additive_mask=True
-        )
+        ) = self.connectors(prompt_embeds, prompt_valid_length)
+
+        # Derive transformer encoder_valid_length from the connector output mask.
+        # With learnable registers every output slot is filled, so this equals
+        # the connector output seq_len (1024) for all batch items.
+        encoder_valid_length = (connector_attention_mask > 0.5).cast(
+            DType.uint32
+        ).sum(axis=-1)  # [B] uint32
 
         # 5. Prepare video latents
         # Prefer precomputed 5D latents from PixelGenerationTokenizer when available.
@@ -1246,8 +1262,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 encoder_hidden_states=connector_prompt_embeds,
                 audio_encoder_hidden_states=connector_audio_prompt_embeds,
                 timestep=timestep,
-                encoder_attention_mask=connector_attention_mask,
-                audio_encoder_attention_mask=connector_attention_mask,
+                encoder_valid_length=encoder_valid_length,
+                audio_encoder_valid_length=encoder_valid_length,
                 num_frames=latent_num_frames,
                 height=latent_height,
                 width=latent_width,
