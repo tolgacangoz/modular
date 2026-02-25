@@ -1086,7 +1086,7 @@ class LTX2Pipeline(DiffusionPipeline):
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,
-            connector_attention_mask,
+            _,
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
         # 5. Prepare video latents
