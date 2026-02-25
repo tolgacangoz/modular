@@ -344,12 +344,11 @@ class LTX2Attention(nn.Module[[Tensor, Tensor | None, Tensor | None], Tensor]):
         )
 
         # Scaled dot-product attention
-        scale = F.sqrt(1.0 / self.head_dim)
         q = F.transpose(query, 1, 2)  # (B, heads, T_q, head_dim)
         k = F.transpose(key, 1, 2)  # (B, kv_heads, T_k, head_dim)
         v = F.transpose(value, 1, 2)  # (B, kv_heads, T_k, head_dim)
         attn_scores = (
-            F.matmul(q, F.transpose(k, 2, 3)) * scale
+            F.matmul(q, F.transpose(k, 2, 3)) / self.scale
         )  # (B, heads, T_q, T_k)
         if attention_mask is not None:
             attn_scores = attn_scores + attention_mask
