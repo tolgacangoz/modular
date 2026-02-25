@@ -180,14 +180,14 @@ def mux_and_save(
         video_data: Base64-encoded MP4 video data string.
         audio_data: Base64-encoded WAV audio data string, or None.
         output_path: Path where the merged video should be saved.
-        frame_rate: Frames per second – used for the video stream time-base.
+        frame_rate: Frames per second - used for the video stream time-base.
     """
     import io
 
     try:
         import av
     except ImportError:
-        # PyAV not installed – fall back to saving the video stream only.
+        # PyAV not installed - fall back to saving the video stream only.
         av = None  # type: ignore[assignment]
 
     video_bytes = base64.b64decode(video_data)
@@ -249,8 +249,10 @@ def mux_and_save(
         out.close()
         print(f"Video (with audio) saved to: {output_path}")
     except Exception as e:
-        # Muxing failed – fall back to writing video-only.
-        print(f"WARNING: Audio muxing failed ({e}); saving video without audio.")
+        # Muxing failed - fall back to writing video-only.
+        print(
+            f"WARNING: Audio muxing failed ({e}); saving video without audio."
+        )
         with open(output_path, "wb") as f:
             f.write(video_bytes)
         print(f"Video (no audio) saved to: {output_path}")

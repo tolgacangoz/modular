@@ -385,8 +385,12 @@ class LTX2Pipeline(DiffusionPipeline):
         _audio_channels = self.transformer.config.audio_in_channels  # 128
         _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
-            TensorType(dtype, shape=[1, _video_seq_len, _channels], device=device),
-            TensorType(dtype, shape=[1, _audio_seq_len, _audio_channels], device=device),
+            TensorType(
+                dtype, shape=[1, _video_seq_len, _channels], device=device
+            ),
+            TensorType(
+                dtype, shape=[1, _audio_seq_len, _audio_channels], device=device
+            ),
         ]
         self.__dict__["_prepare_cfg_latents"] = max_compile(
             self._prepare_cfg_latents,
@@ -408,8 +412,12 @@ class LTX2Pipeline(DiffusionPipeline):
         _audio_channels = self.transformer.config.audio_in_channels  # 128
         _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
-            TensorType(dtype, shape=[2, _video_seq_len, _channels], device=device),
-            TensorType(dtype, shape=[2, _audio_seq_len, _audio_channels], device=device),
+            TensorType(
+                dtype, shape=[2, _video_seq_len, _channels], device=device
+            ),
+            TensorType(
+                dtype, shape=[2, _audio_seq_len, _audio_channels], device=device
+            ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
         self.__dict__["_apply_cfg_guidance"] = max_compile(
@@ -1065,9 +1073,13 @@ class LTX2Pipeline(DiffusionPipeline):
             mask_np = np.ones_like(token_ids_np, dtype=np.bool_)
         if mask_np.ndim == 1:
             mask_np = np.expand_dims(mask_np, axis=0)
-        prompt_attention_mask = Tensor.from_dlpack(
-            mask_np.astype(np.bool_),
-        ).to(device).cast(DType.bool)
+        prompt_attention_mask = (
+            Tensor.from_dlpack(
+                mask_np.astype(np.bool_),
+            )
+            .to(device)
+            .cast(DType.bool)
+        )
 
         text_encoder_hidden_states = self._encode_tokens(
             token_ids_np, device="cuda"
@@ -1113,9 +1125,13 @@ class LTX2Pipeline(DiffusionPipeline):
         # Fallback handles the case where no tokenizer is used (e.g. tests).
         valid_length_np = extra_params.get("ltx2_valid_length")
         if valid_length_np is not None:
-            prompt_valid_length = Tensor.from_dlpack(
-                valid_length_np.astype(np.uint32),
-            ).to(device).cast(DType.uint32)
+            prompt_valid_length = (
+                Tensor.from_dlpack(
+                    valid_length_np.astype(np.uint32),
+                )
+                .to(device)
+                .cast(DType.uint32)
+            )
         else:
             # Fallback: recompute from the bool mask tensor (CFG-doubled already).
             prompt_valid_length = prompt_attention_mask.cast(DType.uint32).sum(
@@ -1258,12 +1274,8 @@ class LTX2Pipeline(DiffusionPipeline):
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
             else:
-                noise_pred_video = noise_pred_video.cast(
-                    DType.float32
-                )
-                noise_pred_audio = noise_pred_audio.cast(
-                    DType.float32
-                )
+                noise_pred_video = noise_pred_video.cast(DType.float32)
+                noise_pred_audio = noise_pred_audio.cast(DType.float32)
 
             # Euler scheduler step (separate compiled functions for video and audio).
             latents = self._scheduler_step_video(latents, noise_pred_video, dt)
