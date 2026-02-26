@@ -894,13 +894,13 @@ class LTX2VideoDecoder3d(nn.Module[[Tensor, Tensor | None, bool], Tensor]):
 
         # Hardcoded for height=512, width=768, num_frames=121, frame_rate=24:
         #   in_channels       = 128
-        #   latent_num_frames = (121-1)//4+1 = 31
+        #   latent_num_frames = (121-1)//8+1 = 16
         #   latent_height     = 512//32      = 16
         #   latent_width      = 768//32      = 24
         return (
             TensorType(
                 self.dtype,
-                shape=[1, self.in_channels, 31, 16, 24],
+                shape=[1, self.in_channels, 16, 16, 24],
                 device=self.device,
             ),
         )
