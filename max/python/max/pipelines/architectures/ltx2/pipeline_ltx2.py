@@ -1243,7 +1243,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 latent_model_input, audio_latent_model_input = (
                     self._prepare_cfg_latents(latents, audio_latents)
                 )
-                timestep = F.concat([timestep, timestep], axis=0)
+                timestep_t = Tensor.from_dlpack(timestep)
+                timestep = F.concat([timestep_t, timestep_t], axis=0)
             else:
                 latent_model_input = latents
                 audio_latent_model_input = audio_latents
