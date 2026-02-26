@@ -277,6 +277,7 @@ async def generate_video(args: argparse.Namespace) -> None:
     config = PipelineConfig(
         model=MAXModelConfig(
             model_path=args.model,
+            quantization_encoding=args.encoding,
             device_specs=[DeviceSpec.accelerator()],
         ),
         prefer_module_v3=True,
