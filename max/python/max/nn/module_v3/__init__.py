@@ -13,7 +13,7 @@
 """Module implementation using eager tensors."""
 
 from .activations import ApproximateGELU, FeedForward, GEGLU, GELU, Identity, SiLU, SwiGLU
-from .conv import Conv2d, Conv3d
+from .conv import Conv1d, Conv2d, Conv3d, ConvTranspose1d
 from .dropout import Dropout
 from .embedding import Embedding
 from .linear import Linear
@@ -24,8 +24,10 @@ from .sequential import ModuleList, Sequential
 
 __all__ = [
     "ApproximateGELU",
+    "Conv1d",
     "Conv2d",
     "Conv3d",
+    "ConvTranspose1d",
     "FeedForward",
     "GEGLU",
     "GELU",

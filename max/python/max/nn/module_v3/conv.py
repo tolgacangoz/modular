@@ -22,7 +22,7 @@ from max.experimental import functional as F
 from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import DeviceRef
-from max.graph.type import FilterLayout
+from max.graph.type import ConvInputLayout, FilterLayout
 from max.nn.module_v3.module import Module
 
 
@@ -406,5 +406,327 @@ class Conv3d(Module[[Tensor], Tensor]):
             # Output: [batch_size, new_depth, new_height, new_width, out_channels]
             #      -> [batch_size, out_channels, new_depth, new_height, new_width]
             output = F.permute(output, [0, 4, 1, 2, 3])
+
+        return output
+
+
+class Conv1d(Module[[Tensor], Tensor]):
+    """A 1D convolution layer.
+
+    Implemented by unsqueezing a height=1 dimension and delegating to
+    :func:`max.experimental.functional.conv2d`.
+
+    Example:
+        .. code-block:: python
+
+            from max.nn.module_v3 import Conv1d
+            from max.experimental.tensor import Tensor
+
+            conv = Conv1d(
+                in_channels=16,
+                out_channels=32,
+                kernel_size=3,
+                padding=1,
+                permute=True,
+            )
+
+            x = Tensor.ones([1, 16, 64])  # [N, C, L] with permute=True
+            result = conv(x)
+    """
+
+    weight: Tensor
+    """The weight tensor. Shape [out_channels, in_channels // num_groups, kernel_size]
+    when permute=True, or [kernel_size, in_channels // num_groups, out_channels] otherwise."""
+
+    bias: Tensor | Literal[0]
+    """The bias tensor with shape [out_channels] (or 0 if bias is disabled)."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        dtype: DType | None = None,
+        stride: int = 1,
+        padding: int | tuple[int, int] | str = 0,
+        dilation: int = 1,
+        num_groups: int = 1,
+        device: DeviceRef | None = None,
+        has_bias: bool = False,
+        permute: bool = True,
+        name: str | None = None,
+    ):
+        """Initialize Conv1d layer.
+
+        Args:
+            in_channels: Number of channels in the input.
+            out_channels: Number of channels produced by the convolution.
+            kernel_size: Size of the convolving kernel.
+            dtype: The data type for weights and bias.
+            stride: Stride of the convolution. Default: 1
+            padding: Padding added to both sides of the input. Can be an int,
+                a tuple of 2 ints (pad_left, pad_right), or the string "same"
+                for same-size output (only valid with stride=1). Default: 0
+            dilation: Spacing between kernel elements. Default: 1
+            num_groups: Number of blocked connections from input to output channels.
+                Default: 1
+            device: The target device for computation.
+            has_bias: If True, adds a learnable bias. Default: False
+            permute: If True, expects PyTorch-style input [N, C, L] and stores
+                weights in PyTorch order [C_out, C_in//G, K].
+                If False, expects [N, L, C] and stores weights in [K, C_in//G, C_out].
+                Defaults to :obj:`True` to match PyTorch NCL convention.
+            name: Base name for weights. Default: None
+        """
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.dtype = dtype
+        self.device = device
+        self.permute = permute
+        self.num_groups = num_groups
+        self.has_bias = has_bias
+        self.name = name
+        self.stride = stride
+        self.dilation = dilation
+        self._padding_arg = padding
+
+        # Resolve padding to a (pad_left, pad_right) tuple.
+        # "same" is resolved at forward time since it depends on dilation.
+        if isinstance(padding, str):
+            if padding != "same":
+                raise ValueError(
+                    f"Conv1d only supports padding='same' or an integer/tuple, got {padding!r}"
+                )
+            # Compute same padding: total = dilation * (kernel_size - 1)
+            total = dilation * (kernel_size - 1)
+            pad_left = total // 2
+            pad_right = total - pad_left
+            self.padding = (0, 0, pad_left, pad_right)
+        elif isinstance(padding, int):
+            self.padding = (0, 0, padding, padding)
+        else:
+            pad_left, pad_right = padding
+            self.padding = (0, 0, pad_left, pad_right)
+
+        _dev = self.device.to_device() if self.device is not None else None
+
+        self.weight = random.normal(
+            [out_channels, in_channels // num_groups, kernel_size]
+            if permute
+            else [kernel_size, in_channels // num_groups, out_channels],
+            dtype=self.dtype,
+            device=_dev,
+        )
+
+        if has_bias:
+            self.bias = random.normal([out_channels], dtype=self.dtype, device=_dev)
+        else:
+            self.bias = 0
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Apply 1D convolution to input.
+
+        Args:
+            x: Input tensor.
+                - If permute=True: [batch_size, in_channels, length]
+                - If permute=False: [batch_size, length, in_channels]
+
+        Returns:
+            Output tensor.
+                - If permute=True: [batch_size, out_channels, new_length]
+                - If permute=False: [batch_size, new_length, out_channels]
+        """
+        weight = self.weight.to(x.device)
+
+        if self.permute:
+            # [N, C, L] -> [N, L, C] -> [N, 1, L, C]
+            x = F.permute(x, [0, 2, 1])
+            x = F.unsqueeze(x, 1)
+            # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
+            weight = F.permute(weight, [2, 1, 0])
+            weight = F.unsqueeze(weight, 0)
+        else:
+            # [N, L, C] -> [N, 1, L, C]
+            x = F.unsqueeze(x, 1)
+            # [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
+            weight = F.unsqueeze(weight, 0)
+
+        output = F.conv2d(
+            x,
+            weight,
+            stride=(1, self.stride),
+            dilation=(1, self.dilation),
+            padding=self.padding,
+            num_groups=self.num_groups,
+            bias=self.bias if isinstance(self.bias, Tensor) else None,
+            filter_layout=FilterLayout.RSCF,
+        )
+
+        # [N, 1, L', C_out] -> [N, L', C_out]
+        output = F.squeeze(output, 1)
+
+        if self.permute:
+            # [N, L', C_out] -> [N, C_out, L']
+            output = F.permute(output, [0, 2, 1])
+
+        return output
+
+
+class ConvTranspose1d(Module[[Tensor], Tensor]):
+    """A 1D transposed convolution layer.
+
+    Implemented by unsqueezing a height=1 dimension and delegating to
+    :func:`max.experimental.functional.conv2d_transpose`.
+
+    Example:
+        .. code-block:: python
+
+            from max.nn.module_v3 import ConvTranspose1d
+            from max.experimental.tensor import Tensor
+
+            conv = ConvTranspose1d(
+                in_channels=16,
+                out_channels=32,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                permute=True,
+            )
+
+            x = Tensor.ones([1, 16, 32])  # [N, C_in, L] with permute=True
+            result = conv(x)
+    """
+
+    weight: Tensor
+    """The weight tensor. Shape [in_channels, out_channels // num_groups, kernel_size]
+    when permute=True (PyTorch order), or [kernel_size, out_channels, in_channels // num_groups] otherwise (RSCF after unsqueeze)."""
+
+    bias: Tensor | Literal[0]
+    """The bias tensor with shape [out_channels] (or 0 if bias is disabled)."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int,
+        dtype: DType | None = None,
+        stride: int = 1,
+        padding: int | tuple[int, int] = 0,
+        output_padding: int = 0,
+        dilation: int = 1,
+        num_groups: int = 1,
+        device: DeviceRef | None = None,
+        has_bias: bool = False,
+        permute: bool = True,
+        name: str | None = None,
+    ):
+        """Initialize ConvTranspose1d layer.
+
+        Args:
+            in_channels: Number of channels in the input.
+            out_channels: Number of channels produced by the transposed convolution.
+            kernel_size: Size of the convolving kernel.
+            dtype: The data type for weights and bias.
+            stride: Stride of the convolution. Default: 1
+            padding: Amount to crop from each side of the output. Can be an int
+                or tuple of 2 ints (pad_left, pad_right). Default: 0
+            output_padding: Additional size added to the output. Must be less than
+                stride. Default: 0
+            dilation: Spacing between kernel elements. Default: 1
+            num_groups: Number of blocked connections. Default: 1
+            device: The target device for computation.
+            has_bias: If True, adds a learnable bias. Default: False
+            permute: If True, expects PyTorch-style input [N, C_in, L] and stores
+                weights in PyTorch order [C_in, C_out//G, K].
+                If False, expects [N, L, C_in] and stores weights in [K, C_out, C_in//G].
+                Defaults to :obj:`True` to match PyTorch NCL convention.
+            name: Base name for weights. Default: None
+        """
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.dtype = dtype
+        self.device = device
+        self.permute = permute
+        self.num_groups = num_groups
+        self.has_bias = has_bias
+        self.name = name
+        self.stride = stride
+        self.dilation = dilation
+
+        if isinstance(padding, int):
+            self.padding = (0, 0, padding, padding)
+        else:
+            pad_left, pad_right = padding
+            self.padding = (0, 0, pad_left, pad_right)
+
+        self.output_padding = (0, output_padding)
+
+        _dev = self.device.to_device() if self.device is not None else None
+
+        # PyTorch ConvTranspose1d weight shape: [in_channels, out_channels/groups, K]
+        # MAX RSCF (after unsqueeze): [1, K, out_channels, in_channels/groups]
+        self.weight = random.normal(
+            [in_channels, out_channels // num_groups, kernel_size]
+            if permute
+            else [kernel_size, out_channels, in_channels // num_groups],
+            dtype=self.dtype,
+            device=_dev,
+        )
+
+        if has_bias:
+            self.bias = random.normal(
+                [out_channels], dtype=self.dtype, device=_dev
+            )
+        else:
+            self.bias = 0
+
+    def forward(self, x: Tensor) -> Tensor:
+        """Apply 1D transposed convolution to input.
+
+        Args:
+            x: Input tensor.
+                - If permute=True: [batch_size, in_channels, length]
+                - If permute=False: [batch_size, length, in_channels]
+
+        Returns:
+            Output tensor.
+                - If permute=True: [batch_size, out_channels, new_length]
+                - If permute=False: [batch_size, new_length, out_channels]
+        """
+        weight = self.weight.to(x.device)
+
+        if self.permute:
+            # [N, C_in, L] -> [N, L, C_in] -> [N, 1, L, C_in]
+            x = F.permute(x, [0, 2, 1])
+            x = F.unsqueeze(x, 1)
+            # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
+            weight = F.permute(weight, [2, 1, 0])
+            weight = F.unsqueeze(weight, 0)
+        else:
+            # [N, L, C_in] -> [N, 1, L, C_in]
+            x = F.unsqueeze(x, 1)
+            # [K, C_out, C_in/G] -> [1, K, C_out, C_in/G] (RSCF)
+            weight = F.unsqueeze(weight, 0)
+
+        output = F.conv2d_transpose(
+            x,
+            weight,
+            stride=(1, self.stride),
+            dilation=(1, self.dilation),
+            padding=self.padding,
+            output_paddings=self.output_padding,
+            bias=self.bias if isinstance(self.bias, Tensor) else None,
+            input_layout=ConvInputLayout.NHWC,
+            filter_layout=FilterLayout.RSCF,
+        )
+
+        # [N, 1, L', C_out] -> [N, L', C_out]
+        output = F.squeeze(output, 1)
+
+        if self.permute:
+            # [N, L', C_out] -> [N, C_out, L']
+            output = F.permute(output, [0, 2, 1])
 
         return output
