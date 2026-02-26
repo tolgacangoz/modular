@@ -710,13 +710,24 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         """
         weight = self.weight.to(x.device)
 
+        is_nvidia_gpu = (
+            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # [N, C_in, L] -> [N, L, C_in] -> [N, 1, L, C_in]
             x = F.permute(x, [0, 2, 1])
             x = F.unsqueeze(x, 1)
-            # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
-            weight = F.permute(weight, [2, 1, 0])
-            weight = F.unsqueeze(weight, 0)
+            if not is_nvidia_gpu:
+                # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
+                weight = F.permute(weight, [2, 1, 0])
+                weight = F.unsqueeze(weight, 0)
+            else:
+                # For conv_transpose FCRS, C (2nd dim) must equal input channels.
+                # PyTorch weight is [C_in, C_out/G, K], so swap first two dims
+                # to get [C_out/G, C_in, K] then unsqueeze -> [C_out/G, C_in, 1, K].
+                weight = F.permute(weight, [1, 0, 2])
+                weight = F.unsqueeze(weight, 2)
         else:
             # [N, L, C_in] -> [N, 1, L, C_in]
             x = F.unsqueeze(x, 1)
@@ -732,7 +743,9 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             output_paddings=self.output_padding,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
             input_layout=ConvInputLayout.NHWC,
-            filter_layout=FilterLayout.RSCF,
+            filter_layout=FilterLayout.FCRS
+            if (self.permute and is_nvidia_gpu)
+            else FilterLayout.RSCF,
         )
 
         # [N, 1, L', C_out] -> [N, L', C_out]
