@@ -15,6 +15,7 @@ import math
 
 import max.experimental.functional as F
 import max.nn.module_v3 as nn
+from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.graph import TensorType
 
@@ -193,7 +194,12 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             hidden_states = F.max(
                 0, hidden_states
             ) + self.negative_slope * F.min(0, hidden_states)
+            # Cast to float32 for ConvTranspose1d to avoid cuDNN bfloat16
+            # crash with conv_transpose + RSCF on NVIDIA GPUs.
+            input_dtype = hidden_states.dtype
+            hidden_states = hidden_states.cast(DType.float32)
             hidden_states = self.upsamplers[i](hidden_states)
+            hidden_states = hidden_states.cast(input_dtype)
 
             # Run all resnets in parallel on hidden_states
             start = i * self.resnets_per_upsample
