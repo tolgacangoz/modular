@@ -11,11 +11,11 @@
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
 
-import max.nn.module_v3 as nn
+from max.nn.module_v3.module import Module
 from max.experimental.tensor import Tensor
 
 
-class Dropout(nn.Module[[Tensor], Tensor]):
+class Dropout(Module[[Tensor], Tensor]):
     """Dropout module for regularization.
 
     During inference (which is the primary use case in MAX), this module
