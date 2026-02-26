@@ -278,7 +278,6 @@ async def generate_video(args: argparse.Namespace) -> None:
         model_path=args.model,
         device_specs=device_specs,
         quantization_encoding=args.encoding,
-        use_legacy_module=False,
     )
 
     # Step 2: Initialize the tokenizer
