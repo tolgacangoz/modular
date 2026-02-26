@@ -1254,19 +1254,22 @@ class LTX2Pipeline(DiffusionPipeline):
                 prompt_embeds.dtype
             )
 
+            # After unwrap_model(), the transformer is a compiled engine
+            # expecting exactly 8 positional tensor inputs matching
+            # input_types(): hidden_states, audio_hidden_states,
+            # encoder_hidden_states, audio_encoder_hidden_states,
+            # timestep, audio_timestep, video_coords, audio_coords.
+            # Non-tensor kwargs (num_frames, height, etc.) are only used
+            # during graph tracing and must not be passed at inference.
             noise_pred_video, noise_pred_audio = self.transformer(
-                hidden_states=latent_model_input,
-                audio_hidden_states=audio_latent_model_input,
-                encoder_hidden_states=connector_prompt_embeds,
-                audio_encoder_hidden_states=connector_audio_prompt_embeds,
-                timestep=timestep,
-                num_frames=latent_num_frames,
-                height=latent_height,
-                width=latent_width,
-                fps=frame_rate,
-                audio_num_frames=audio_num_frames,
-                video_coords=video_coords,
-                audio_coords=audio_coords,
+                latent_model_input,
+                audio_latent_model_input,
+                connector_prompt_embeds,
+                connector_audio_prompt_embeds,
+                timestep,
+                timestep,  # audio_timestep = timestep
+                video_coords,
+                audio_coords,
             )
 
             if self.do_classifier_free_guidance:
