@@ -116,8 +116,8 @@ class LTX2Pipeline(DiffusionPipeline):
         """
 
         # VAE compression ratios: fall back to known LTX2 defaults if not present.
-        # LTX2 uses (t, h, w) scale factors of (4, 32, 32) for the video VAE.
-        self.vae_temporal_compression_ratio = 4
+        # LTX2 uses (t, h, w) scale factors of (8, 32, 32) for the video VAE.
+        self.vae_temporal_compression_ratio = 8
         self.vae_spatial_compression_ratio = 32
 
         # Audio VAE configuration (matching AutoencoderKLLTX2AudioConfig defaults).
@@ -211,7 +211,7 @@ class LTX2Pipeline(DiffusionPipeline):
     def build_pack_latents(self) -> None:
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels
-        _latent_num_frames = 31
+        _latent_num_frames = 16  # (121-1)//8+1
         _latent_height = 16
         _latent_width = 24
         input_types = [
@@ -268,12 +268,12 @@ class LTX2Pipeline(DiffusionPipeline):
     def build_scheduler_step_video(self) -> None:
         """Compile _scheduler_step_video: Euler update for video latents.
 
-        batch=1, seq=11904 (31*16*24), channels=128
+        batch=1, seq=6144 (16*16*24), channels=128
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
-        _video_seq_len = 11904  # 31 * 16 * 24
+        _video_seq_len = 6144  # 16 * 16 * 24
         input_types = [
             TensorType(
                 dtype, shape=[1, _video_seq_len, _channels], device=device
@@ -321,7 +321,7 @@ class LTX2Pipeline(DiffusionPipeline):
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         num_channels = int(self._vae_latents_mean.shape[0])  # 128
-        _latent_num_frames = 31  # (121-1)//4+1
+        _latent_num_frames = 16  # (121-1)//8+1
         _latent_height = 16  # 512//32
         _latent_width = 24  # 768//32
         input_types = [
@@ -375,13 +375,13 @@ class LTX2Pipeline(DiffusionPipeline):
 
         Fuses two F.concat calls and two casts into a single compiled graph,
         eliminating per-step Python dispatch overhead.
-          video: [1, 11904, 128] bfloat16 -> [2, 11904, 128] bfloat16
+          video: [1, 6144, 128] bfloat16 -> [2, 6144, 128] bfloat16
           audio: [1, 126, 128]   bfloat16 -> [2, 126, 128]   bfloat16
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
-        _video_seq_len = 11904  # 31 * 16 * 24
+        _video_seq_len = 6144  # 16 * 16 * 24
         _audio_channels = self.transformer.config.audio_in_channels  # 128
         _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
@@ -401,14 +401,14 @@ class LTX2Pipeline(DiffusionPipeline):
         """Compile _apply_cfg_guidance: CFG formula for video+audio noise preds.
 
         Fuses cast + split + guidance arithmetic into a single compiled graph:
-          video in:  [2, 11904, 128] bfloat16 -> [1, 11904, 128] bfloat16
+          video in:  [2, 6144, 128] bfloat16 -> [1, 6144, 128] bfloat16
           audio in:  [2, 126, 128]   bfloat16 -> [1, 126, 128]   bfloat16
           guidance:  [1]             float32
         """
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
-        _video_seq_len = 11904  # 31 * 16 * 24
+        _video_seq_len = 6144  # 16 * 16 * 24
         _audio_channels = self.transformer.config.audio_in_channels  # 128
         _audio_seq_len = 126  # round((121/24)*25.0)=126
         input_types = [
