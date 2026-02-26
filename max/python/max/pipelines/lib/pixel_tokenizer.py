@@ -232,23 +232,27 @@ class PixelGenerationTokenizer(
         # These match the current MAX LTX2 pipeline implementation.
         self._is_ltx2 = self._pipeline_class_name == "LTX2Pipeline"
         if self._is_ltx2:
-            # LTX-2 uses CausalVideoAutoencoder which has no standard
-            # block_out_channels, so the generic formula above gives 8.
-            # Override here to match the true spatial compression ratio of 32.
-            self._vae_scale_factor = 32
+            # LTX-2 uses CausalVideoAutoencoder with no standard block_out_channels;
+            # read spatial/temporal compression ratios directly from the VAE config.
+            self._vae_scale_factor = vae_config.get("spatial_compression_ratio", 32)
             # LTX-2 uses patch_size=1 (no spatial packing), so VAE latent
             # channels == transformer in_channels (128), not in_channels // 4.
             self._num_channels_latents = transformer_config["in_channels"]
             # VAE temporal downsample factor (frames per latent frame).
-            self._ltx2_vae_temporal_compression_ratio = 8
-            # Pixel-space temporal scale factor used by the RoPE coordinate
-            # computation (scale_factors[0] in LTX2AudioVideoRotaryPosEmbed).
-            self._ltx2_vae_temporal_scale = 8
-            # Audio configuration: 16 kHz, hop length 160, mel compression 4.
-            self._ltx2_audio_sampling_rate = 16_000
-            self._ltx2_audio_hop_length = 160
-            self._ltx2_audio_mel_compression_ratio = 4
-            self._ltx2_num_mel_bins = 64
+            self._ltx2_vae_temporal_compression_ratio = vae_config.get(
+                "temporal_compression_ratio", 8
+            )
+            # Pixel-space temporal scale used by RoPE coords == temporal compression ratio.
+            self._ltx2_vae_temporal_scale = self._ltx2_vae_temporal_compression_ratio
+            # Audio configuration: read from audio_vae config with safe fallbacks.
+            audio_vae_config = components.get("audio_vae", {}).get("config_dict", {})
+            self._ltx2_audio_sampling_rate = audio_vae_config.get("sample_rate", 16_000)
+            self._ltx2_audio_hop_length = audio_vae_config.get("mel_hop_length", 160)
+            self._ltx2_num_mel_bins = audio_vae_config.get("mel_bins", 64)
+            # Mel compression = 2^(num_downsampling_stages); ch_mult has one entry per
+            # resolution level, so num_downsampling_stages = len(ch_mult) - 1.
+            ch_mult = audio_vae_config.get("ch_mult", [1, 2, 4])
+            self._ltx2_audio_mel_compression_ratio = 2 ** (len(ch_mult) - 1)
 
         # Create scheduler
         scheduler_class_name = components.get("scheduler", {}).get(
