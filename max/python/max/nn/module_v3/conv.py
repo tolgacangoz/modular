@@ -549,24 +549,13 @@ class Conv1d(Module[[Tensor], Tensor]):
         """
         weight = self.weight.to(x.device)
 
-        is_nvidia_gpu = (
-            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
-        )
-
         if self.permute:
             # [N, C, L] -> [N, L, C] -> [N, 1, L, C]
             x = F.permute(x, [0, 2, 1])
             x = F.unsqueeze(x, 1)
-            if not is_nvidia_gpu:
-                # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
-                weight = F.permute(weight, [2, 1, 0])
-                weight = F.unsqueeze(weight, 0)
-            else:
-                # GPU: keep [C_out, C_in/G, K] -> [1, C_out, C_in/G, K] (FCRS emulated via height=1)
-                weight = F.unsqueeze(weight, 0)  # [1, C_out, C_in/G, K]
-                weight = F.permute(weight, [0, 3, 2, 1])  # [1, K, C_in/G, C_out] -> unsqueeze preserves FCRS intent
-                # Revert: just use RSCF path on GPU too (conv2d is used either way)
-                weight = F.permute(weight, [0, 3, 2, 1])  # undo — keep RSCF
+            # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
+            weight = F.permute(weight, [2, 1, 0])
+            weight = F.unsqueeze(weight, 0)
         else:
             # [N, L, C] -> [N, 1, L, C]
             x = F.unsqueeze(x, 1)
