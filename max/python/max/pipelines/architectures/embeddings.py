@@ -17,7 +17,8 @@ import math
 import max.experimental.functional as F
 from max.dtype import DType
 from max.experimental.tensor import Tensor
-from max.nn import Linear, Module
+from max.nn.module_v3.module import Module
+from max.nn.module_v3 import Linear
 
 
 def get_timestep_embedding(
