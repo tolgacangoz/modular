@@ -54,7 +54,7 @@ from max.pipelines.architectures.ltx2.pipeline_ltx2 import (
 )
 from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
-from max.pipelines.lib.config_enums import SupportedEncoding
+from max.pipelines.lib.config.config_enums import SupportedEncoding
 from max.pipelines.lib.pipeline_variants.pixel_generation import (
     PixelGenerationPipeline,
 )
