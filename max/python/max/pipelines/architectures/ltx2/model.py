@@ -15,10 +15,10 @@ from collections.abc import Callable
 from typing import Any
 
 import max.experimental.functional as F
+import max.nn.module_v3 as nn
 from max.driver import Device
 from max.experimental.tensor import Tensor
 from max.graph.weights import Weights
-import max.nn.module_v3 as nn
 from max.pipelines.lib import SupportedEncoding
 from max.pipelines.lib.interfaces.component_model import ComponentModel
 

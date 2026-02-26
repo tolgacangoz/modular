@@ -19,8 +19,8 @@ import max.experimental.functional as F
 import numpy as np
 import numpy.typing as npt
 from max.driver import CPU, Device
-from max.experimental import random
 from max.dtype import DType
+from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import TensorType
 from max.pipelines import PixelContext
