@@ -35,18 +35,13 @@ import os
 
 from max.driver import DeviceSpec
 from max.interfaces import (
-    PixelGenerationInputs,
-    RequestID,
-)
-from max.pipelines import PIPELINE_REGISTRY, MAXModelConfig, PipelineConfig
-from max.interfaces.provider_options import (
-    ProviderOptions,
-    VideoProviderOptions,
-)
-from max.interfaces import (
     PipelineTask,
     PixelGenerationInputs,
     RequestID,
+)
+from max.interfaces.provider_options import (
+    ProviderOptions,
+    VideoProviderOptions,
 )
 from max.interfaces.request import OpenResponsesRequest
 from max.interfaces.request.open_responses import (
@@ -54,7 +49,7 @@ from max.interfaces.request.open_responses import (
     OutputAudioContent,
     OutputVideoContent,
 )
-from max.pipelines import PipelineConfig
+from max.pipelines import PIPELINE_REGISTRY, MAXModelConfig, PipelineConfig
 from max.pipelines.architectures.ltx2.pipeline_ltx2 import (
     LTX2Pipeline,
 )
