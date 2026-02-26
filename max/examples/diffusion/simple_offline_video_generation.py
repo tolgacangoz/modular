@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import base64
 import os
+from typing import cast
 
 from max.driver import DeviceSpec
 from max.interfaces import (
@@ -50,12 +51,10 @@ from max.interfaces.request.open_responses import (
     OutputVideoContent,
 )
 from max.pipelines import PIPELINE_REGISTRY, MAXModelConfig, PipelineConfig
-from max.pipelines.architectures.ltx2.pipeline_ltx2 import (
-    LTX2Pipeline,
-)
 from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
 from max.pipelines.lib.config.config_enums import SupportedEncoding
+from max.pipelines.lib.interfaces import DiffusionPipeline
 from max.pipelines.lib.pipeline_variants.pixel_generation import (
     PixelGenerationPipeline,
 )
@@ -299,9 +298,10 @@ async def generate_video(args: argparse.Namespace) -> None:
 
     # Step 3: Initialize the pipeline
     # The pipeline executes the diffusion model
+    pipeline_model = cast(type[DiffusionPipeline], arch.pipeline_model)
     pipeline = PixelGenerationPipeline[PixelContext](
         pipeline_config=config,
-        pipeline_model=LTX2Pipeline,
+        pipeline_model=pipeline_model,
     )
 
     print(f"Generating video for prompt: '{args.prompt}'")
