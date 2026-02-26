@@ -390,8 +390,8 @@ class Conv3d(Module[[Tensor], Tensor]):
             #     -> [batch_size, depth, height, width, in_channels]
             x = F.permute(x, [0, 2, 3, 4, 1])
 
-            # GPU supports FQRSC but CPU doesn't. On CPU, permute from
-            # FQRSC to QRSCF format.
+            # GPU supports FCQRS but CPU doesn't. On CPU, permute from
+            # FCQRS to QRSCF format.
             if not is_nvidia_gpu:
                 # Permute weight from [out_channels, in_channels // num_groups, depth, height, width]
                 # to [depth, height, width, in_channels // num_groups, out_channels] (QRSCF)
@@ -405,7 +405,7 @@ class Conv3d(Module[[Tensor], Tensor]):
             self.padding,
             self.num_groups,
             self.bias if isinstance(self.bias, Tensor) else None,
-            filter_layout=FilterLayout.FQRSC
+            filter_layout=FilterLayout.FCQRS
             if (self.permute and is_nvidia_gpu)
             else FilterLayout.QRSCF,
         )
