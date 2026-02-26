@@ -15,7 +15,7 @@
 from typing import Any
 
 import max.experimental.functional as F
-from max import nn
+import max.nn.module_v3 as nn
 from max.driver import Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
