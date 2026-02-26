@@ -234,7 +234,9 @@ class PixelGenerationTokenizer(
         if self._is_ltx2:
             # LTX-2 uses CausalVideoAutoencoder with no standard block_out_channels;
             # read spatial/temporal compression ratios directly from the VAE config.
-            self._vae_scale_factor = vae_config.get("spatial_compression_ratio", 32)
+            self._vae_scale_factor = vae_config.get(
+                "spatial_compression_ratio", 32
+            )
             # LTX-2 uses patch_size=1 (no spatial packing), so VAE latent
             # channels == transformer in_channels (128), not in_channels // 4.
             self._num_channels_latents = transformer_config["in_channels"]
@@ -243,11 +245,19 @@ class PixelGenerationTokenizer(
                 "temporal_compression_ratio", 8
             )
             # Pixel-space temporal scale used by RoPE coords == temporal compression ratio.
-            self._ltx2_vae_temporal_scale = self._ltx2_vae_temporal_compression_ratio
+            self._ltx2_vae_temporal_scale = (
+                self._ltx2_vae_temporal_compression_ratio
+            )
             # Audio configuration: read from audio_vae config with safe fallbacks.
-            audio_vae_config = components.get("audio_vae", {}).get("config_dict", {})
-            self._ltx2_audio_sampling_rate = audio_vae_config.get("sample_rate", 16_000)
-            self._ltx2_audio_hop_length = audio_vae_config.get("mel_hop_length", 160)
+            audio_vae_config = components.get("audio_vae", {}).get(
+                "config_dict", {}
+            )
+            self._ltx2_audio_sampling_rate = audio_vae_config.get(
+                "sample_rate", 16_000
+            )
+            self._ltx2_audio_hop_length = audio_vae_config.get(
+                "mel_hop_length", 160
+            )
             self._ltx2_num_mel_bins = audio_vae_config.get("mel_bins", 64)
             # Mel compression = 2^(num_downsampling_stages); ch_mult has one entry per
             # resolution level, so num_downsampling_stages = len(ch_mult) - 1.

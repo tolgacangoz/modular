@@ -794,9 +794,9 @@ class LTX2Pipeline(DiffusionPipeline):
         a_cond = F.slice_tensor(audio, [slice(1, 2)])
         guided_audio = a_uncond + scale * (a_cond - a_uncond)
 
-        return guided_video.cast(self.transformer.config.dtype), guided_audio.cast(
+        return guided_video.cast(
             self.transformer.config.dtype
-        )
+        ), guided_audio.cast(self.transformer.config.dtype)
 
     def _pack_video_latents(self, latents: Tensor) -> Tensor:
         """Cast and pack video latents [B,C,F,H,W] -> [B,S,C] (patch_size=1).
