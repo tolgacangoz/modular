@@ -560,7 +560,7 @@ class Conv1d(Module[[Tensor], Tensor]):
             stride=(1, self.stride),
             dilation=(1, self.dilation),
             padding=self.padding,
-            num_groups=self.num_groups,
+            groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
             filter_layout=FilterLayout.RSCF,
         )
