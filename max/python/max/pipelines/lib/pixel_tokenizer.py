@@ -240,7 +240,7 @@ class PixelGenerationTokenizer(
             # channels == transformer in_channels (128), not in_channels // 4.
             self._num_channels_latents = transformer_config["in_channels"]
             # VAE temporal downsample factor (frames per latent frame).
-            self._ltx2_vae_temporal_compression_ratio = 4
+            self._ltx2_vae_temporal_compression_ratio = 8
             # Pixel-space temporal scale factor used by the RoPE coordinate
             # computation (scale_factors[0] in LTX2AudioVideoRotaryPosEmbed).
             self._ltx2_vae_temporal_scale = 8
