@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-from max.driver import Accelerator, accelerator_api
 from max.dtype import DType
 from max.experimental import functional as F
 from max.experimental import random
