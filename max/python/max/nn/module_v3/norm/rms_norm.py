@@ -101,7 +101,9 @@ class RMSNorm(Module[[Tensor], Tensor]):
         """Returns the embedding dimension."""
         if self.weight is not None:
             return self.weight.shape[0]
-        raise AttributeError("dim is not available when elementwise_affine=False")
+        raise AttributeError(
+            "dim is not available when elementwise_affine=False"
+        )
 
     def __rich_repr__(self):
         """Repr matching the Linear constructor."""

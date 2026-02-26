@@ -16,10 +16,10 @@ This module is a compatibility shim. Use max.nn.module_v3 directly.
 """
 
 from .module_v3.activations import (  # noqa: F401
-    ApproximateGELU,
-    FeedForward,
     GEGLU,
     GELU,
+    ApproximateGELU,
+    FeedForward,
     Identity,
     SiLU,
     SwiGLU,

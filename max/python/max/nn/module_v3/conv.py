@@ -520,7 +520,9 @@ class Conv1d(Module[[Tensor], Tensor]):
         )
 
         if has_bias:
-            self.bias = random.normal([out_channels], dtype=self.dtype, device=_dev)
+            self.bias = random.normal(
+                [out_channels], dtype=self.dtype, device=_dev
+            )
         else:
             self.bias = 0
 
