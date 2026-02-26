@@ -154,11 +154,12 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         """Define input tensor types for the model."""
         # Hardcoded for num_frames=121, frame_rate=24:
         #   out_channels (audio decoder output) = 2
-        #   time = audio_num_frames * LATENT_DOWNSAMPLE_FACTOR = 126 * 4 = 504
+        #   time = audio_num_frames * LATENT_DOWNSAMPLE_FACTOR - (LATENT_DOWNSAMPLE_FACTOR - 1)
+        #        = 126 * 4 - 3 = 501  (causal audio VAE trims LATENT_DOWNSAMPLE_FACTOR-1 frames)
         #   num_mel_bins = 64
         hidden_states_type = TensorType(
             self.config.dtype,
-            shape=[1, self.config.out_channels, 504, 64],
+            shape=[1, self.config.out_channels, 501, 64],
             device=self.config.device,
         )
         return (hidden_states_type,)

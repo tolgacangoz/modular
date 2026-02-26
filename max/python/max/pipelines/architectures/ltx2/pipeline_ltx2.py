@@ -1302,7 +1302,7 @@ class LTX2Pipeline(DiffusionPipeline):
             audio_num_frames,
             latent_mel_bins,
         )
-
+        print("End of the pipeline.")
         return LTX2PipelineOutput(
             frames=frames,
             audio=audio,
