@@ -12,7 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 """Module implementation using eager tensors."""
 
-from .conv import Conv2d
+from .conv import Conv2d, Conv3d
 from .dropout import Dropout
 from .embedding import Embedding
 from .linear import Linear
@@ -23,6 +23,7 @@ from .sequential import ModuleList, Sequential
 
 __all__ = [
     "Conv2d",
+    "Conv3d",
     "Dropout",
     "Embedding",
     "GemmaRMSNorm",
