@@ -38,9 +38,15 @@ from max.interfaces import (
     PixelGenerationInputs,
     RequestID,
 )
+from max.pipelines import PIPELINE_REGISTRY, MAXModelConfig, PipelineConfig
 from max.interfaces.provider_options import (
     ProviderOptions,
     VideoProviderOptions,
+)
+from max.interfaces import (
+    PipelineTask,
+    PixelGenerationInputs,
+    RequestID,
 )
 from max.interfaces.request import OpenResponsesRequest
 from max.interfaces.request.open_responses import (
@@ -275,9 +281,16 @@ async def generate_video(args: argparse.Namespace) -> None:
         device_specs = [DeviceSpec.cpu()]
 
     config = PipelineConfig(
-        model_path=args.model,
-        device_specs=device_specs,
-        quantization_encoding=args.encoding,
+        model=MAXModelConfig(
+            model_path=args.model,
+            device_specs=[DeviceSpec.accelerator()],
+        ),
+        prefer_module_v3=True,
+    )
+    arch = PIPELINE_REGISTRY.retrieve_architecture(
+        config.model.huggingface_weight_repo,
+        prefer_module_v3=config.prefer_module_v3,
+        task=PipelineTask.PIXEL_GENERATION,
     )
 
     # Step 2: Initialize the tokenizer
