@@ -540,13 +540,22 @@ class Conv1d(Module[[Tensor], Tensor]):
         """
         weight = self.weight.to(x.device)
 
+        is_nvidia_gpu = (
+            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # [N, C, L] -> [N, L, C] -> [N, 1, L, C]
             x = F.permute(x, [0, 2, 1])
             x = F.unsqueeze(x, 1)
-            # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
-            weight = F.permute(weight, [2, 1, 0])
-            weight = F.unsqueeze(weight, 0)
+            if is_nvidia_gpu:
+                # GPU supports FCRS: keep weight in [C_out, C_in/G, K]
+                # and unsqueeze to [C_out, C_in/G, 1, K] (FCRS)
+                weight = F.unsqueeze(weight, 2)
+            else:
+                # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
+                weight = F.permute(weight, [2, 1, 0])
+                weight = F.unsqueeze(weight, 0)
         else:
             # [N, L, C] -> [N, 1, L, C]
             x = F.unsqueeze(x, 1)
@@ -561,7 +570,9 @@ class Conv1d(Module[[Tensor], Tensor]):
             padding=self.padding,
             groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
-            filter_layout=FilterLayout.RSCF,
+            filter_layout=FilterLayout.FCRS
+            if (self.permute and is_nvidia_gpu)
+            else FilterLayout.RSCF,
         )
 
         # [N, 1, L', C_out] -> [N, L', C_out]
@@ -698,13 +709,22 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         """
         weight = self.weight.to(x.device)
 
+        is_nvidia_gpu = (
+            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # [N, C_in, L] -> [N, L, C_in] -> [N, 1, L, C_in]
             x = F.permute(x, [0, 2, 1])
             x = F.unsqueeze(x, 1)
-            # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
-            weight = F.permute(weight, [2, 1, 0])
-            weight = F.unsqueeze(weight, 0)
+            if is_nvidia_gpu:
+                # GPU supports FCRS: keep weight in [C_in, C_out/G, K]
+                # and unsqueeze to [C_in, C_out/G, 1, K] (FCRS)
+                weight = F.unsqueeze(weight, 2)
+            else:
+                # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
+                weight = F.permute(weight, [2, 1, 0])
+                weight = F.unsqueeze(weight, 0)
         else:
             # [N, L, C_in] -> [N, 1, L, C_in]
             x = F.unsqueeze(x, 1)
@@ -720,7 +740,9 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             output_paddings=self.output_padding,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
             input_layout=ConvInputLayout.NHWC,
-            filter_layout=FilterLayout.RSCF,
+            filter_layout=FilterLayout.FCRS
+            if (self.permute and is_nvidia_gpu)
+            else FilterLayout.RSCF,
         )
 
         # [N, 1, L', C_out] -> [N, L', C_out]
