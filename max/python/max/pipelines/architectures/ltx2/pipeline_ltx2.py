@@ -980,7 +980,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
-        return self.vocoder(mel_spectrograms)
+        print("[DEBUG] audio_vae.decode done", flush=True)
+        result = self.vocoder(mel_spectrograms)
+        print("[DEBUG] vocoder done", flush=True)
+        return result
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
         cpu_image: Tensor = image.cast(DType.float32).to(CPU())
