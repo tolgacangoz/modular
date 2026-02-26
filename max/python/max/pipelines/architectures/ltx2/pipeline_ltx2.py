@@ -980,7 +980,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
-        print("[DEBUG] audio_vae.decode done", flush=True)
+        print(f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}", flush=True)
+        print("[DEBUG] calling vocoder...", flush=True)
         result = self.vocoder(mel_spectrograms)
         print("[DEBUG] vocoder done", flush=True)
         return result

@@ -539,6 +539,7 @@ class Conv1d(Module[[Tensor], Tensor]):
                 - If permute=False: [batch_size, new_length, out_channels]
         """
         weight = self.weight.to(x.device)
+        weight = weight.cast(x.dtype)
 
         is_nvidia_gpu = (
             isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
