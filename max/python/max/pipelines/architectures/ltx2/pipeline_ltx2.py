@@ -826,8 +826,8 @@ class LTX2Pipeline(DiffusionPipeline):
         """Pre-compute timesteps and per-step dt values from sigmas.
 
         Returns:
-            (all_timesteps, all_dts) where timesteps = sigmas[:-1] cast to
-            model dtype, and dts = sigmas[1:] - sigmas[:-1] (float32).
+            (all_timesteps, all_dts) where timesteps = sigmas[:-1] as float32,
+            and dts = sigmas[1:] - sigmas[:-1] (float32).
         """
         sigmas_curr = F.slice_tensor(sigmas, [slice(0, -1)])
         sigmas_next = F.slice_tensor(sigmas, [slice(1, None)])

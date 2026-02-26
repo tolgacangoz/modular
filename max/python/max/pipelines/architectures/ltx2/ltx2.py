@@ -1379,10 +1379,10 @@ class LTX2VideoTransformer3DModel(
             device=self.config.device,
         )
         timestep_type = TensorType(
-            DType.float32, shape=[_batch], device=self.config.device
+            self.config.dtype, shape=[_batch], device=self.config.device
         )
         audio_timestep_type = TensorType(
-            DType.float32, shape=[_batch], device=self.config.device
+            self.config.dtype, shape=[_batch], device=self.config.device
         )
         video_coords_type = TensorType(
             DType.float32,
