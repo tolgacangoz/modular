@@ -181,20 +181,13 @@ class Conv2d(Module[[Tensor], Tensor]):
         # Move weight to same device as input
         weight = self.weight.to(x.device)
 
-        is_nvidia_gpu = (
-            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
-        )
-
         if self.permute:
             # Input: [batch_size, in_channels, height, width] -> [batch_size, height, width, in_channels]
             x = F.permute(x, [0, 2, 3, 1])
 
-            # GPU supports FCRS but CPU doesn't. On CPU, permute from
-            # FCRS to RSCF format.
-            if not is_nvidia_gpu:
-                # Permute weight from [out_channels, in_channels // num_groups, height, width]
-                # to [height, width, in_channels // num_groups, out_channels] (RSCF)
-                weight = F.permute(weight, [2, 3, 1, 0])
+            # Permute weight from [out_channels, in_channels // num_groups, height, width]
+            # to [height, width, in_channels // num_groups, out_channels] (RSCF)
+            weight = F.permute(weight, [2, 3, 1, 0])
 
         output = F.conv2d(
             x,
@@ -204,9 +197,7 @@ class Conv2d(Module[[Tensor], Tensor]):
             self.padding,
             self.num_groups,
             self.bias if isinstance(self.bias, Tensor) else None,
-            filter_layout=FilterLayout.FCRS
-            if (self.permute and is_nvidia_gpu)
-            else FilterLayout.RSCF,
+            filter_layout=FilterLayout.RSCF,
         )
 
         if self.permute:
