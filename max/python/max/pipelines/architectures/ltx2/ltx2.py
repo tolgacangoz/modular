@@ -22,7 +22,7 @@ from max.driver import Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
 from max.graph import TensorType
-from max.nn.activations import FeedForward
+from max.nn.module_v3 import FeedForward
 from max.nn.attention.mask_config import MHAMaskVariant
 from max.nn.kernels import flash_attention_gpu as _flash_attention_gpu
 

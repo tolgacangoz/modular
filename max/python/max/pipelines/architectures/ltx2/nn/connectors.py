@@ -20,7 +20,7 @@ from max.dtype import DType
 from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import TensorType
-from max.nn.activations import FeedForward
+from max.nn.module_v3 import FeedForward
 
 from ..ltx2 import LTX2Attention
 from ..model_config import LTX2TextConnectorsConfig
