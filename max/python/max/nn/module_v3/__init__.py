@@ -19,6 +19,7 @@ from .module import Module, module_dataclass
 from .norm import GemmaRMSNorm, GroupNorm, LayerNorm, RMSNorm
 from .rope import RotaryEmbedding, TransposedRotaryEmbedding
 from .sequential import ModuleList, Sequential
+from .dropout import Dropout
 
 __all__ = [
     "Conv2d",
@@ -32,6 +33,7 @@ __all__ = [
     "RMSNorm",
     "RotaryEmbedding",
     "Sequential",
+    "Dropout",
     "TransposedRotaryEmbedding",
     "module_dataclass",
 ]

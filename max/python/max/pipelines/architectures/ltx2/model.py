@@ -18,7 +18,7 @@ import max.experimental.functional as F
 from max.driver import Device
 from max.experimental.tensor import Tensor
 from max.graph.weights import Weights
-from max.nn import Module
+import max.nn.module_v3 as nn
 from max.pipelines.lib import SupportedEncoding
 from max.pipelines.lib.interfaces.component_model import ComponentModel
 
@@ -33,7 +33,7 @@ from .nn.vocoder import LTX2Vocoder
 
 
 def _reconcile_dtypes(
-    state_dict: dict[str, Any], model: Module[..., Any]
+    state_dict: dict[str, Any], model: nn.Module[..., Any]
 ) -> dict[str, Any]:
     """Cast state_dict values to match model parameter dtypes.
 
