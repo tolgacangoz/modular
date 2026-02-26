@@ -278,7 +278,7 @@ async def generate_video(args: argparse.Namespace) -> None:
         model=MAXModelConfig(
             model_path=args.model,
             quantization_encoding=args.encoding,
-            device_specs=[device_specs],
+            device_specs=device_specs,
         ),
         prefer_module_v3=True,
     )
