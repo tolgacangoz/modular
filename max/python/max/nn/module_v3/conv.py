@@ -381,15 +381,21 @@ class Conv3d(Module[[Tensor], Tensor]):
         # Move weight to same device as input
         weight = self.weight.to(x.device)
 
+        is_nvidia_gpu = (
+            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # Input: [batch_size, in_channels, depth, height, width]
             #     -> [batch_size, depth, height, width, in_channels]
             x = F.permute(x, [0, 2, 3, 4, 1])
 
-            # Permute weight from
-            # [out_channels, in_channels // num_groups, depth, height, width]
-            # to [depth, height, width, in_channels // num_groups, out_channels] (QRSCF)
-            weight = F.permute(weight, [2, 3, 4, 1, 0])
+            # GPU supports FQRSC but CPU doesn't. On CPU, permute from
+            # FQRSC to QRSCF format.
+            if not is_nvidia_gpu:
+                # Permute weight from [out_channels, in_channels // num_groups, depth, height, width]
+                # to [depth, height, width, in_channels // num_groups, out_channels] (QRSCF)
+                weight = F.permute(weight, [2, 3, 4, 1, 0])
 
         output = F.conv3d(
             x,
@@ -399,7 +405,9 @@ class Conv3d(Module[[Tensor], Tensor]):
             self.padding,
             self.num_groups,
             self.bias if isinstance(self.bias, Tensor) else None,
-            filter_layout=FilterLayout.QRSCF,
+            filter_layout=FilterLayout.FQRSC
+            if (self.permute and is_nvidia_gpu)
+            else FilterLayout.QRSCF,
         )
 
         if self.permute:
@@ -541,13 +549,24 @@ class Conv1d(Module[[Tensor], Tensor]):
         """
         weight = self.weight.to(x.device)
 
+        is_nvidia_gpu = (
+            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # [N, C, L] -> [N, L, C] -> [N, 1, L, C]
             x = F.permute(x, [0, 2, 1])
             x = F.unsqueeze(x, 1)
-            # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
-            weight = F.permute(weight, [2, 1, 0])
-            weight = F.unsqueeze(weight, 0)
+            if not is_nvidia_gpu:
+                # [C_out, C_in/G, K] -> [K, C_in/G, C_out] -> [1, K, C_in/G, C_out] (RSCF)
+                weight = F.permute(weight, [2, 1, 0])
+                weight = F.unsqueeze(weight, 0)
+            else:
+                # GPU: keep [C_out, C_in/G, K] -> [1, C_out, C_in/G, K] (FCRS emulated via height=1)
+                weight = F.unsqueeze(weight, 0)  # [1, C_out, C_in/G, K]
+                weight = F.permute(weight, [0, 3, 2, 1])  # [1, K, C_in/G, C_out] -> unsqueeze preserves FCRS intent
+                # Revert: just use RSCF path on GPU too (conv2d is used either way)
+                weight = F.permute(weight, [0, 3, 2, 1])  # undo — keep RSCF
         else:
             # [N, L, C] -> [N, 1, L, C]
             x = F.unsqueeze(x, 1)

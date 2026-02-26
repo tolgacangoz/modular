@@ -1289,6 +1289,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 audio_latents, noise_pred_audio, dt
             )
 
+        print("End of the denoising loop.")
         # 9. Decode video latents -> float32 [B,F,H,W,C] NumPy array.
         # decode_video_latents: unpack (shape-dependent) + compiled _postprocess_video_latents
         # + VAE decode + scale to [0,1] + permute to channel-last.
@@ -1296,13 +1297,14 @@ class LTX2Pipeline(DiffusionPipeline):
             latents, latent_num_frames, latent_height, latent_width
         )
 
+        print("End of the video decoding.")
         # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
         audio = self.decode_audio_latents(
             audio_latents,
             audio_num_frames,
             latent_mel_bins,
         )
-        print("End of the pipeline.")
+        print("End of the audio decoding.")
         return LTX2PipelineOutput(
             frames=frames,
             audio=audio,
