@@ -12,6 +12,7 @@
 # ===----------------------------------------------------------------------=== #
 """Module implementation using eager tensors."""
 
+from .activations import GELU, Identity, SiLU
 from .conv import Conv2d, Conv3d
 from .dropout import Dropout
 from .embedding import Embedding
@@ -24,6 +25,9 @@ from .sequential import ModuleList, Sequential
 __all__ = [
     "Conv2d",
     "Conv3d",
+    "GELU",
+    "Identity",
+    "SiLU",
     "Dropout",
     "Embedding",
     "GemmaRMSNorm",
