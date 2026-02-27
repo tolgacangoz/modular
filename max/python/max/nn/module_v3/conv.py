@@ -712,6 +712,15 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         weight = self.weight.to(x.device)
         weight = weight.cast(x.dtype)
 
+        # Save the original device so we can transfer back after conv_transpose.
+        # conv_transpose does not have a proper GPU kernel yet (GEX-2043),
+        # so we must run it on CPU.
+        original_device = x.device
+        is_nvidia_gpu = (
+            isinstance(original_device, Accelerator)
+            and accelerator_api() == "cuda"
+        )
+
         if self.permute:
             # [N, C_in, L] -> [N, L, C_in] -> [N, 1, L, C_in]
             x = F.permute(x, [0, 2, 1])
@@ -725,6 +734,13 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             # [K, C_out, C_in/G] -> [1, K, C_out, C_in/G] (RSCF)
             weight = F.unsqueeze(weight, 0)
 
+        # Transfer to CPU for conv_transpose (no GPU kernel support).
+        if is_nvidia_gpu:
+            from max.driver import CPU
+
+            x = x.to(CPU())
+            weight = weight.to(CPU())
+
         output = F.conv2d_transpose(
             x,
             weight,
@@ -736,6 +752,10 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             input_layout=ConvInputLayout.NHWC,
             filter_layout=FilterLayout.RSCF,
         )
+
+        # Transfer back to original GPU device.
+        if is_nvidia_gpu:
+            output = output.to(original_device)
 
         # [N, 1, L', C_out] -> [N, L', C_out]
         output = F.squeeze(output, 1)
