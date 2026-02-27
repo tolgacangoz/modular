@@ -1416,11 +1416,6 @@ class LTX2VideoTransformer3DModel(
         audio_timestep: Tensor | None = None,
         video_coords: Tensor | None = None,
         audio_coords: Tensor | None = None,
-        num_frames: int | None = None,
-        height: int | None = None,
-        width: int | None = None,
-        fps: float = 24.0,
-        audio_num_frames: int | None = None,
     ) -> tuple[Tensor, Tensor]:
         """
         Forward pass for LTX-2.0 audiovisual video transformer.
@@ -1440,43 +1435,11 @@ class LTX2VideoTransformer3DModel(
                 `tuple` is returned where the first element is the denoised video latent patch sequence and the second
                 element is the denoised audio latent patch sequence.
         """
-        # Note: PEFT/LoRA is not currently supported in MAX
-        # Determine timestep for audio.
         audio_timestep = (
             audio_timestep if audio_timestep is not None else timestep
         )
 
         batch_size = hidden_states.shape[0]
-
-        # 1. Prepare metadata defaults for tracing.
-        # These are used during compile() when coordinate inputs are not yet provided.
-        num_frames = num_frames if num_frames is not None else 121
-        height = height if height is not None else 512
-        width = width if width is not None else 512
-        audio_num_frames = (
-            audio_num_frames if audio_num_frames is not None else num_frames
-        )
-
-        # 2. Prepare RoPE positional embeddings
-        if video_coords is None:
-            video_coords = self.rope.prepare_video_coords(
-                batch_size,
-                num_frames,
-                height,
-                width,
-                hidden_states.device,
-                fps=fps,
-            )
-        if audio_coords is None:
-            if audio_num_frames is None:
-                raise ValueError(
-                    "audio_num_frames must be provided if audio_coords is not provided."
-                )
-            audio_coords = self.audio_rope.prepare_audio_coords(
-                batch_size,
-                audio_num_frames,
-                audio_hidden_states.device,
-            )
 
         video_rotary_emb = self.rope(video_coords, device=hidden_states.device)
         audio_rotary_emb = self.audio_rope(

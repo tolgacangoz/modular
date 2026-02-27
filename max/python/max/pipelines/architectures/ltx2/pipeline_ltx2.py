@@ -426,7 +426,7 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
     def _encode_tokens(
-        self, token_ids: np.ndarray, device: str = "cuda"
+        self, token_ids: np.ndarray, mask: np.ndarray
     ) -> Tensor:
         """Encode token_ids using transformers Gemma3ForConditionalGeneration.
 
@@ -436,16 +436,15 @@ class LTX2Pipeline(DiffusionPipeline):
 
         Args:
             token_ids: Token IDs from PixelGenerationTokenizer (via model_inputs.token_ids).
-            device: Device to run encoding on.
+            mask: Attention mask from PixelGenerationTokenizer (via model_inputs.mask).
 
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
         """
         import torch
 
-        # Convert MAX Tensor to PyTorch tensor
-        input_ids = torch.from_dlpack(token_ids).to(device)
-        attention_mask = torch.ones_like(input_ids)
+        input_ids = torch.from_dlpack(token_ids).to(self.devices[0])
+        attention_mask = torch.from_dlpack(mask).to(self.devices[0])
 
         with torch.no_grad():
             outputs = self.text_encoder(
@@ -454,7 +453,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 output_hidden_states=True,
             )
             # Stack all hidden states: [batch_size, seq_len, hidden_dim, num_layers]
-            hidden_states = torch.stack(outputs.hidden_states, axis=-1)
+            hidden_states = torch.stack(outputs.hidden_states, dim=-1)
 
         # Free GPU and CPU memory used by the text encoder after encoding.
         self.text_encoder.to("cpu")
@@ -1090,12 +1089,13 @@ class LTX2Pipeline(DiffusionPipeline):
             .to(device)
             .cast(DType.bool)
         )
+        mask = Tensor.from_dlpack(mask_np).to(device)
 
         text_encoder_hidden_states = self._encode_tokens(
-            token_ids_np, device="cuda"
+            token_ids_np, mask
         )
         # Reduce [B, seq_len] bool mask → [B] integer counts, matching
-        sequence_lengths = prompt_attention_mask.cast(DType.int64).sum(axis=-1)
+        sequence_lengths = extra_params.get("ltx2_valid_length")[1]
         prompt_embeds = self._pack_text_embeds(
             text_encoder_hidden_states, sequence_lengths, device
         )
@@ -1106,13 +1106,11 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                negative_attention_mask = prompt_attention_mask
+                mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get("ltx2_attn_mask_neg")
                 negative_hidden_states = self._encode_tokens(
                     negative_ids_np, device="cuda"
                 )
-                negative_sequence_lengths = negative_attention_mask.cast(
-                    DType.int64
-                ).sum(axis=-1)
+                negative_sequence_lengths = extra_params.get("ltx2_valid_length")[0]
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
                     negative_sequence_lengths,
@@ -1133,20 +1131,14 @@ class LTX2Pipeline(DiffusionPipeline):
         # valid_length was pre-computed by the tokenizer (pure numpy, outside
         # any compiled graph) so the MHA padded kernel gets si64 stride metadata.
         # Fallback handles the case where no tokenizer is used (e.g. tests).
-        valid_length_np = extra_params.get("ltx2_valid_length")
-        if valid_length_np is not None:
-            prompt_valid_length = (
-                Tensor.from_dlpack(
-                    valid_length_np.astype(np.uint32),
-                )
-                .to(device)
-                .cast(DType.uint32)
+        prompt_valid_length = (
+            Tensor.from_dlpack(
+                sequence_lengths.astype(np.uint32),
             )
-        else:
-            # Fallback: recompute from the bool mask tensor (CFG-doubled already).
-            prompt_valid_length = prompt_attention_mask.cast(DType.uint32).sum(
-                axis=-1
-            )
+            .to(device)
+            .cast(DType.uint32)
+        )
+
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,
@@ -1264,13 +1256,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 prompt_embeds.dtype
             )
 
-            # After unwrap_model(), the transformer is a compiled engine
-            # expecting exactly 8 positional tensor inputs matching
-            # input_types(): hidden_states, audio_hidden_states,
-            # encoder_hidden_states, audio_encoder_hidden_states,
-            # timestep, audio_timestep, video_coords, audio_coords.
-            # Non-tensor kwargs (num_frames, height, etc.) are only used
-            # during graph tracing and must not be passed at inference.
             noise_pred_video, noise_pred_audio = self.transformer(
                 latent_model_input,
                 audio_latent_model_input,

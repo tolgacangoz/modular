@@ -561,8 +561,9 @@ class PixelGenerationTokenizer(
 
         negative_token_ids: npt.NDArray[np.int64] | None = None
         negative_token_ids_2: npt.NDArray[np.int64] | None = None
+        attn_mask_neg: npt.NDArray[np.bool_] | None = None
         if do_true_cfg:
-            negative_token_ids, _attn_mask_neg = await self.encode(
+            negative_token_ids, attn_mask_neg = await self.encode(
                 negative_prompt or ""
             )
             if self.delegate_2 is not None:
@@ -574,6 +575,7 @@ class PixelGenerationTokenizer(
         return (
             token_ids,
             attn_mask,
+            attn_mask_neg,
             token_ids_2,
             negative_token_ids,
             negative_token_ids_2,
@@ -873,6 +875,7 @@ class PixelGenerationTokenizer(
         (
             token_ids,
             attn_mask,
+            attn_mask_neg,
             token_ids_2,
             negative_token_ids,
             negative_token_ids_2,
@@ -1065,11 +1068,16 @@ class PixelGenerationTokenizer(
             # above, so the pipeline can wrap it in a Tensor without any
             # further mask arithmetic.
             valid_length_np = np.array(
-                [attn_mask.sum()], dtype=np.uint32
+                [attn_mask.sum(dim=-1)], dtype=np.uint32
             )  # [1] — one batch item
+
             if do_cfg:
+                extra_params["ltx2_attn_mask_neg"] = attn_mask_neg
+                valid_length_neg_np = np.array(
+                    [attn_mask_neg.sum(dim=-1)], dtype=np.uint32
+                )  # [1] — one batch item
                 valid_length_np = np.concatenate(
-                    [valid_length_np, valid_length_np], axis=0
+                    [valid_length_neg_np, valid_length_np], axis=0
                 )  # [2]
             extra_params["ltx2_valid_length"] = valid_length_np
 
