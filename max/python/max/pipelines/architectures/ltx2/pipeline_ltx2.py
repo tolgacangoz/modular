@@ -1302,7 +1302,7 @@ class LTX2Pipeline(DiffusionPipeline):
         #     latents, latent_num_frames, latent_height, latent_width
         # )
 
-        print("End of the video decoding.")
+        # print("End of the video decoding.")
         # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
         audio = self.decode_audio_latents(
             audio_latents,
