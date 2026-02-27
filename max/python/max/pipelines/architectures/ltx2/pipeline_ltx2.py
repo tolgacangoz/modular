@@ -1298,9 +1298,9 @@ class LTX2Pipeline(DiffusionPipeline):
         # 9. Decode video latents -> float32 [B,F,H,W,C] NumPy array.
         # decode_video_latents: unpack (shape-dependent) + compiled _postprocess_video_latents
         # + VAE decode + scale to [0,1] + permute to channel-last.
-        frames = self.decode_video_latents(
-            latents, latent_num_frames, latent_height, latent_width
-        )
+        # frames = self.decode_video_latents(
+        #     latents, latent_num_frames, latent_height, latent_width
+        # )
 
         print("End of the video decoding.")
         # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
