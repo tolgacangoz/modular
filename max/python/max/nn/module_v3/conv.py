@@ -730,12 +730,27 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         )
         weight = F.gather(weight, rev_indices, axis=2)
 
-        # 2. Normalize input to [N, L, C_in]
+        # 2. Simulate weight dilation (zero-insertion)
+        D = self.dilation
+        K_eff = (K - 1) * D + 1
+        if D > 1:
+            # [C_in, C_out/G, K] -> [C_in, C_out/G, K, 1]
+            w_expand = F.unsqueeze(weight, 3)
+            zeros = F.mul(w_expand, 0.0)
+            pieces = [w_expand] + [zeros] * (D - 1)
+            # [C_in, C_out/G, K, D] -> [C_in, C_out/G, K * D]
+            w_interleaved = F.concat(pieces, axis=3)
+            weight = F.flatten(w_interleaved, 2, 3)
+            # Drop the trailing D-1 zeros: slice from 0 to K_eff
+            eff_indices = F.arange(start=0, stop=K_eff, step=1, dtype=DType.int64, device=x.device)
+            weight = F.gather(weight, eff_indices, axis=2)
+
+        # 3. Normalize input to [N, L, C_in]
         if self.permute:
             # [N, C_in, L] -> [N, L, C_in]
             x = F.permute(x, [0, 2, 1])
 
-        # 3. Zero-insertion for stride
+        # 4. Zero-insertion for stride
         S = self.stride
         if S > 1:
             x_expand = F.unsqueeze(x, 2)
@@ -744,8 +759,7 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             x_interleaved = F.concat(pieces, axis=2)
             x = F.flatten(x_interleaved, 1, 2)
 
-        # 4. Padding calculation
-        K_eff = (K - 1) * self.dilation + 1
+        # 5. Padding calculation
         pad_in_left = (
             self.padding[2]
             if isinstance(self.padding, tuple) and len(self.padding) == 4
@@ -767,19 +781,19 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         pad_right = K_eff - pad_in_right - S + op_val
         conv2d_padding = (0, 0, pad_left, pad_right)
 
-        # 5. Prepare input for 2D conv: [N, L*S, C_in] -> [N, 1, L*S, C_in]
+        # 6. Prepare input for 2D conv: [N, L*S, C_in] -> [N, 1, L*S, C_in]
         x = F.unsqueeze(x, 1)
 
-        # 6. Prepare weight for 2D conv
+        # 7. Prepare weight for 2D conv
         if is_nvidia_gpu:
-            # Want FCRS: [C_out, C_in/G, R(1), S(K)]
-            # weight is [C_in, C_out/G, K] -> [C_out/G, C_in, K]
+            # Want FCRS: [C_out, C_in/G, R(1), S(K_eff)]
+            # weight is [C_in, C_out/G, K_eff] -> [C_out/G, C_in, K_eff]
             weight = F.permute(weight, [1, 0, 2])
             weight = F.unsqueeze(weight, 2)
             flayout = FilterLayout.FCRS
         else:
-            # Want RSCF: [R(1), S(K), C_in/G, C_out]
-            # weight is [C_in, C_out/G, K] -> [K, C_in, C_out/G]
+            # Want RSCF: [R(1), S(K_eff), C_in/G, C_out]
+            # weight is [C_in, C_out/G, K_eff] -> [K_eff, C_in, C_out/G]
             weight = F.permute(weight, [2, 0, 1])
             weight = F.unsqueeze(weight, 0)
             flayout = FilterLayout.RSCF
@@ -788,7 +802,7 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             x,
             weight,
             stride=(1, 1),
-            dilation=(1, self.dilation),
+            dilation=(1, 1),  # We simulated dilation manually!
             padding=conv2d_padding,
             groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
