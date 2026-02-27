@@ -208,7 +208,12 @@ def mux_and_save(
 
         # Remap video stream with copy codec.
         in_v_stream = in_video.streams.video[0]
-        out_v_stream = out.add_stream(template=in_v_stream)
+        out_v_stream = out.add_stream(in_v_stream.codec_context.name, rate=in_v_stream.base_rate)
+        out_v_stream.width = in_v_stream.codec_context.width
+        out_v_stream.height = in_v_stream.codec_context.height
+        out_v_stream.pix_fmt = in_v_stream.codec_context.pix_fmt
+        if getattr(in_v_stream.codec_context, 'extradata', None) is not None:
+            out_v_stream.codec_context.extradata = in_v_stream.codec_context.extradata
 
         # Add AAC audio stream.
         in_a_stream = in_audio.streams.audio[0]

@@ -945,7 +945,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # Scale pixels to [0, 1] and permute to channel-last [B,F,H,W,C].
         video = (video / 2.0 + 0.5).clip(min=0.0, max=1.0)
         video = video.permute((0, 2, 3, 4, 1))
-        return video  # self._to_numpy(video)
+        return self._to_numpy(video)
 
     def decode_audio_latents(
         self,
@@ -1305,7 +1305,7 @@ class LTX2Pipeline(DiffusionPipeline):
             latents, latent_num_frames, latent_height, latent_width
         )
 
-        # print("End of the video decoding.")
+        print("End of the video decoding.")
         # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
         audio = self.decode_audio_latents(
             audio_latents,
