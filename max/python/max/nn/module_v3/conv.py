@@ -743,11 +743,12 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
 
         # 4. Padding calculation
         K_eff = (K - 1) * self.dilation + 1
-        P = self.padding[0] if isinstance(self.padding, tuple) else self.padding
-        OP = self.output_padding[0] if isinstance(self.output_padding, tuple) else self.output_padding
+        pad_in_left = self.padding[2] if isinstance(self.padding, tuple) and len(self.padding) == 4 else self.padding
+        pad_in_right = self.padding[3] if isinstance(self.padding, tuple) and len(self.padding) == 4 else self.padding
+        op_val = self.output_padding[1] if isinstance(self.output_padding, tuple) and len(self.output_padding) == 2 else self.output_padding
 
-        pad_left = K_eff - P - 1
-        pad_right = K_eff - P - S + OP
+        pad_left = K_eff - pad_in_left - 1
+        pad_right = K_eff - pad_in_right - S + op_val
         conv2d_padding = (0, 0, pad_left, pad_right)
 
         # 5. Prepare input for 2D conv: [N, L*S, C_in] -> [N, 1, L*S, C_in]
