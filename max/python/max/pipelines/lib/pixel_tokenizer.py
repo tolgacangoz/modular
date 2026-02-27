@@ -149,6 +149,11 @@ class PixelGenerationTokenizer(
                 subfolder=subfolder,
             )
 
+            # Gemma expects left padding for chat-style prompts
+            self.tokenizer.padding_side = "left"
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
             if subfolder_2 is not None:
                 self.delegate_2 = AutoTokenizer.from_pretrained(
                     model_path,
@@ -205,6 +210,7 @@ class PixelGenerationTokenizer(
         self._vae_scale_factor = (
             2 ** (len(block_out_channels) - 1) if block_out_channels else 8
         )
+        self._vae_temporal_compression_ratio = vae_config.get("temporal_compression_ratio")
 
         # Store static model dimensions
         self._default_sample_size = 128
@@ -213,16 +219,6 @@ class PixelGenerationTokenizer(
         scheduler_config = components.get("scheduler", {}).get(
             "config_dict", {}
         )
-        # Store static scheduler config for shift calculation
-        self._base_image_seq_len = scheduler_config.get(
-            "base_image_seq_len", 256
-        )
-        self._max_image_seq_len = scheduler_config.get(
-            "max_image_seq_len", 4096
-        )
-        self._base_shift = scheduler_config.get("base_shift", 0.5)
-        self._max_shift = scheduler_config.get("max_shift", 1.15)
-
         # Store guidance embeds flag
         self._use_guidance_embeds = transformer_config.get(
             "guidance_embeds", False
@@ -241,13 +237,6 @@ class PixelGenerationTokenizer(
             # channels == transformer in_channels (128), not in_channels // 4.
             self._num_channels_latents = transformer_config["in_channels"]
             # VAE temporal downsample factor (frames per latent frame).
-            self._ltx2_vae_temporal_compression_ratio = vae_config.get(
-                "temporal_compression_ratio", 8
-            )
-            # Pixel-space temporal scale used by RoPE coords == temporal compression ratio.
-            self._ltx2_vae_temporal_scale = (
-                self._ltx2_vae_temporal_compression_ratio
-            )
             # Audio configuration: read from audio_vae config with safe fallbacks.
             audio_vae_config = components.get("audio_vae", {}).get(
                 "config_dict", {}
@@ -510,10 +499,13 @@ class PixelGenerationTokenizer(
         num_channels_latents: int,
         latent_height: int,
         latent_width: int,
+        num_frames: int | None = None,
         seed: int | None,
     ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         shape = (batch_size, num_channels_latents, latent_height, latent_width)
-
+        if num_frames is not None:
+            num_latent_frames = (num_frames - 1) // self._vae_temporal_compression_ratio + 1
+            shape = (batch_size, num_channels_latents, num_latent_frames, latent_height, latent_width)
         latents = self._randn_tensor(shape, seed)
         latent_image_ids = self._prepare_latent_image_ids(
             latent_height // 2, latent_width // 2, batch_size
@@ -946,6 +938,7 @@ class PixelGenerationTokenizer(
             self._num_channels_latents,
             latent_height,
             latent_width,
+            video_options.num_frames or None,
             request.body.seed,
         )
 
@@ -955,16 +948,9 @@ class PixelGenerationTokenizer(
                 [image_options.guidance_scale], dtype=np.float32
             )
 
-        # 4b. LTX2-specific CPU-bound preprocessing: expand latents to 5D video latents
-        # and sample audio latents. These are stored in extra_params for consumption
-        # by LTX2Pipeline, without affecting other pipelines.
         extra_params: dict[str, npt.NDArray[Any]] = {}
         video_options = request.body.provider_options.video
-
         if self._is_ltx2:
-            num_frames = (
-                video_options.num_frames if video_options is not None else None
-            )
             frame_rate = (
                 video_options.frames_per_second
                 if video_options is not None
@@ -975,18 +961,6 @@ class PixelGenerationTokenizer(
                 num_frames = 1
             if frame_rate is None or frame_rate <= 0:
                 frame_rate = 24
-
-            # Expand 4D latents [B, C, H, W] to 5D [B, C, F, H, W] by repeating along
-            # the temporal dimension according to the VAE temporal compression ratio.
-            latent_num_frames = (
-                num_frames - 1
-            ) // self._ltx2_vae_temporal_compression_ratio + 1
-
-            latents_5d = latents[:, :, None, :, :]
-            latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
-            latents_5d = latents_5d.astype(np.float32, copy=False)
-
-            extra_params["ltx2_video_latents_5d"] = latents_5d
 
             # Audio latents: [B, 8, L, M]. Match the MAX LTX2 pipeline's defaults.
             num_mel_bins = self._ltx2_num_mel_bins

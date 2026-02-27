@@ -426,7 +426,10 @@ class LTX2Pipeline(DiffusionPipeline):
         )
 
     def _encode_tokens(
-        self, token_ids: np.ndarray, mask: np.ndarray
+        self,
+        token_ids: np.ndarray,
+        mask: np.ndarray,
+        delete_encoder: bool = True,
     ) -> Tensor:
         """Encode token_ids using transformers Gemma3ForConditionalGeneration.
 
@@ -456,11 +459,12 @@ class LTX2Pipeline(DiffusionPipeline):
             hidden_states = torch.stack(outputs.hidden_states, dim=-1)
 
         # Free GPU and CPU memory used by the text encoder after encoding.
-        self.text_encoder.to("cpu")
-        del self.text_encoder
-        self.text_encoder = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        if delete_encoder:
+            self.text_encoder.to("cpu")
+            del self.text_encoder
+            self.text_encoder = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Convert to MAX Tensor
         return Tensor.from_dlpack(hidden_states.to(torch.bfloat16))
@@ -1018,9 +1022,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Optional LTX2-specific precomputed latents from PixelGenerationTokenizer
         extra_params = model_inputs.extra_params or {}
-        video_latents_5d_np: np.ndarray | None = extra_params.get(
-            "ltx2_video_latents_5d"
-        )
+        video_latents_np: np.ndarray = model_inputs.latents
         audio_latents_np: np.ndarray | None = extra_params.get(
             "ltx2_audio_latents"
         )
@@ -1092,7 +1094,7 @@ class LTX2Pipeline(DiffusionPipeline):
         mask = Tensor.from_dlpack(mask_np).to(device)
 
         text_encoder_hidden_states = self._encode_tokens(
-            token_ids_np, mask
+            token_ids_np, mask, False
         )
         # Reduce [B, seq_len] bool mask → [B] integer counts, matching
         sequence_lengths = extra_params.get("ltx2_valid_length")[1]
@@ -1108,7 +1110,7 @@ class LTX2Pipeline(DiffusionPipeline):
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
                 mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get("ltx2_attn_mask_neg")
                 negative_hidden_states = self._encode_tokens(
-                    negative_ids_np, device="cuda"
+                    negative_ids_np, mask_neg_np
                 )
                 negative_sequence_lengths = extra_params.get("ltx2_valid_length")[0]
                 negative_prompt_embeds = self._pack_text_embeds(
@@ -1146,27 +1148,14 @@ class LTX2Pipeline(DiffusionPipeline):
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
         # 5. Prepare video latents
-        # Prefer precomputed 5D latents from PixelGenerationTokenizer when available.
-        if video_latents_5d_np is not None:
-            if video_latents_5d_np.ndim != 5:
-                raise ValueError(
-                    "ltx2_video_latents_5d must have shape [B, C, F, H, W]"
-                )
-            batch_size, _, latent_num_frames, latent_height, latent_width = (
-                video_latents_5d_np.shape
-            )
-            latents_5d = video_latents_5d_np.astype(np.float32)
-        else:
-            # Fallback: expand 4D latents [B, C, H, W] along temporal dimension.
-            latents_np_4d: np.ndarray = model_inputs.latents
-            if latents_np_4d.ndim != 4:
-                raise ValueError(
-                    "Expected 4D latents [B, C, H, W] when ltx2_video_latents_5d is not provided"
-                )
-            batch_size = int(latents_np_4d.shape[0])
-            latents_5d = latents_np_4d[:, :, None, :, :]
-            latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
-            latents_5d = latents_5d.astype(np.float32)
+        batch_size, _, latent_num_frames, latent_height, latent_width = (
+            video_latents_np.shape
+        )
+        # Fallback: expand 4D latents [B, C, H, W] along temporal dimension.
+        batch_size = int(batch_size)
+        latents_5d = video_latents_np[:, :, None, :, :]
+        latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
+        latents_5d = latents_5d.astype(np.float32)
 
         latents = Tensor.from_dlpack(latents_5d).to(device)
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
