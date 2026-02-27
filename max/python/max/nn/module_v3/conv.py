@@ -544,7 +544,8 @@ class Conv1d(Module[[Tensor], Tensor]):
         is_nvidia_gpu = False
         try:
             is_nvidia_gpu = (
-                isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+                isinstance(x.device, Accelerator)
+                and accelerator_api() == "cuda"
             )
         except Exception:
             pass
@@ -561,7 +562,9 @@ class Conv1d(Module[[Tensor], Tensor]):
                 pieces = [w_expand] + [zeros] * (D - 1)
                 w_interleaved = F.concat(pieces, axis=3)
                 weight = F.flatten(w_interleaved, 2, 3)
-                eff_indices = F.arange(0, K_eff, 1, dtype=DType.int64, device=x.device)
+                eff_indices = F.arange(
+                    0, K_eff, 1, dtype=DType.int64, device=x.device
+                )
                 weight = F.gather(weight, eff_indices, axis=2)
             else:
                 # weight is [K, C_in/G, C_out]
@@ -570,7 +573,9 @@ class Conv1d(Module[[Tensor], Tensor]):
                 pieces = [w_expand] + [zeros] * (D - 1)
                 w_interleaved = F.concat(pieces, axis=1)
                 weight = F.flatten(w_interleaved, 0, 1)
-                eff_indices = F.arange(0, K_eff, 1, dtype=DType.int64, device=x.device)
+                eff_indices = F.arange(
+                    0, K_eff, 1, dtype=DType.int64, device=x.device
+                )
                 weight = F.gather(weight, eff_indices, axis=0)
 
         if self.permute:
@@ -770,7 +775,9 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             w_interleaved = F.concat(pieces, axis=3)
             weight = F.flatten(w_interleaved, 2, 3)
             # Drop the trailing D-1 zeros: slice from 0 to K_eff
-            eff_indices = F.arange(start=0, stop=K_eff, step=1, dtype=DType.int64, device=x.device)
+            eff_indices = F.arange(
+                start=0, stop=K_eff, step=1, dtype=DType.int64, device=x.device
+            )
             weight = F.gather(weight, eff_indices, axis=2)
 
         # 3. Normalize input to [N, L, C_in]
