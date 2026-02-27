@@ -541,9 +541,37 @@ class Conv1d(Module[[Tensor], Tensor]):
         weight = self.weight.to(x.device)
         weight = weight.cast(x.dtype)
 
-        is_nvidia_gpu = (
-            isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
-        )
+        is_nvidia_gpu = False
+        try:
+            is_nvidia_gpu = (
+                isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+            )
+        except Exception:
+            pass
+
+        # Manually simulate dilation by inserting zeros strictly into the weight
+        D = self.dilation
+        if D > 1:
+            K = self.kernel_size
+            K_eff = (K - 1) * D + 1
+            if self.permute:
+                # weight is [C_out, C_in/G, K]
+                w_expand = F.unsqueeze(weight, 3)
+                zeros = F.mul(w_expand, 0.0)
+                pieces = [w_expand] + [zeros] * (D - 1)
+                w_interleaved = F.concat(pieces, axis=3)
+                weight = F.flatten(w_interleaved, 2, 3)
+                eff_indices = F.arange(0, K_eff, 1, dtype=DType.int64, device=x.device)
+                weight = F.gather(weight, eff_indices, axis=2)
+            else:
+                # weight is [K, C_in/G, C_out]
+                w_expand = F.unsqueeze(weight, 1)
+                zeros = F.mul(w_expand, 0.0)
+                pieces = [w_expand] + [zeros] * (D - 1)
+                w_interleaved = F.concat(pieces, axis=1)
+                weight = F.flatten(w_interleaved, 0, 1)
+                eff_indices = F.arange(0, K_eff, 1, dtype=DType.int64, device=x.device)
+                weight = F.gather(weight, eff_indices, axis=0)
 
         if self.permute:
             # [N, C, L] -> [N, L, C] -> [N, 1, L, C]
@@ -568,7 +596,7 @@ class Conv1d(Module[[Tensor], Tensor]):
             x,
             weight,
             stride=(1, self.stride),
-            dilation=(1, self.dilation),
+            dilation=(1, 1),
             padding=self.padding,
             groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
