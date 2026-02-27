@@ -22,7 +22,7 @@ from max.experimental import functional as F
 from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import DeviceRef
-from max.graph.type import ConvInputLayout, FilterLayout
+from max.graph.type import FilterLayout
 from max.nn.module_v3.module import Module
 
 
@@ -715,7 +715,8 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         is_nvidia_gpu = False
         try:
             is_nvidia_gpu = (
-                isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+                isinstance(x.device, Accelerator)
+                and accelerator_api() == "cuda"
             )
         except Exception:
             pass
@@ -745,9 +746,22 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
 
         # 4. Padding calculation
         K_eff = (K - 1) * self.dilation + 1
-        pad_in_left = self.padding[2] if isinstance(self.padding, tuple) and len(self.padding) == 4 else self.padding
-        pad_in_right = self.padding[3] if isinstance(self.padding, tuple) and len(self.padding) == 4 else self.padding
-        op_val = self.output_padding[1] if isinstance(self.output_padding, tuple) and len(self.output_padding) == 2 else self.output_padding
+        pad_in_left = (
+            self.padding[2]
+            if isinstance(self.padding, tuple) and len(self.padding) == 4
+            else self.padding
+        )
+        pad_in_right = (
+            self.padding[3]
+            if isinstance(self.padding, tuple) and len(self.padding) == 4
+            else self.padding
+        )
+        op_val = (
+            self.output_padding[1]
+            if isinstance(self.output_padding, tuple)
+            and len(self.output_padding) == 2
+            else self.output_padding
+        )
 
         pad_left = K_eff - pad_in_left - 1
         pad_right = K_eff - pad_in_right - S + op_val

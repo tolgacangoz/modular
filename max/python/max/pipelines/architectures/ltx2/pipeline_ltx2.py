@@ -945,7 +945,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # Scale pixels to [0, 1] and permute to channel-last [B,F,H,W,C].
         video = (video / 2.0 + 0.5).clip(min=0.0, max=1.0)
         video = video.permute((0, 2, 3, 4, 1))
-        return video#self._to_numpy(video)
+        return video  # self._to_numpy(video)
 
     def decode_audio_latents(
         self,
@@ -980,7 +980,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
-        print(f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}", flush=True)
+        print(
+            f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}",
+            flush=True,
+        )
         print("[DEBUG] calling vocoder...", flush=True)
         # Vocoder compiled as float32 (cuDNN conv_transpose hardcodes CUDNN_DATA_FLOAT).
         result = self.vocoder(mel_spectrograms.cast(DType.float32))
