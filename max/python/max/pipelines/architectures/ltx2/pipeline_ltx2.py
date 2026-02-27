@@ -31,6 +31,7 @@ from max.pipelines.lib.interfaces import (
 from max.pipelines.lib.interfaces.diffusion_pipeline import max_compile
 from tqdm import tqdm
 from transformers import Gemma3ForConditionalGeneration
+import torch
 
 from ..autoencoders import (
     AutoencoderKLLTX2AudioModel,
@@ -444,8 +445,6 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
         """
-        import torch
-
         input_ids = torch.from_dlpack(token_ids).to(self.devices[0])
         attention_mask = torch.from_dlpack(mask).to(self.devices[0])
 
@@ -466,12 +465,11 @@ class LTX2Pipeline(DiffusionPipeline):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # Convert to MAX Tensor
-        return Tensor.from_dlpack(hidden_states.to(torch.bfloat16))
+        return hidden_states.to(torch.bfloat16)
 
     @staticmethod
     def _pack_text_embeds(
-        text_hidden_states: Tensor,
+        text_hidden_states: torch.tensor,
         sequence_lengths: Tensor,
         device: Device,
         padding_side: str = "left",
@@ -504,7 +502,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Convert MAX Tensors to PyTorch: MAX Tensor lacks masked_fill, amin,
         # amax, and multi-axis sum with keepdim.
-        ths = torch.from_dlpack(text_hidden_states)
+        ths = text_hidden_states
         sl = torch.from_dlpack(sequence_lengths).view(
             -1
         )  # ensure 1D [batch_size]
@@ -1084,20 +1082,20 @@ class LTX2Pipeline(DiffusionPipeline):
             mask_np = np.ones_like(token_ids_np, dtype=np.bool_)
         if mask_np.ndim == 1:
             mask_np = np.expand_dims(mask_np, axis=0)
-        prompt_attention_mask = (
-            Tensor.from_dlpack(
-                mask_np.astype(np.bool_),
-            )
-            .to(device)
-            .cast(DType.bool)
-        )
         mask = Tensor.from_dlpack(mask_np).to(device)
 
         text_encoder_hidden_states = self._encode_tokens(
             token_ids_np, mask, False
         )
         # Reduce [B, seq_len] bool mask → [B] integer counts, matching
-        sequence_lengths = extra_params.get("ltx2_valid_length")[1]
+        sequence_lengths = extra_params.get("ltx2_valid_length")[-1]
+        prompt_valid_length = (
+            Tensor.from_dlpack(
+                sequence_lengths.astype(np.uint32),
+            )
+            .to(device)
+            .cast(DType.uint32)
+        )
         prompt_embeds = self._pack_text_embeds(
             text_encoder_hidden_states, sequence_lengths, device
         )
@@ -1113,6 +1111,13 @@ class LTX2Pipeline(DiffusionPipeline):
                     negative_ids_np, mask_neg_np
                 )
                 negative_sequence_lengths = extra_params.get("ltx2_valid_length")[0]
+                negative_prompt_valid_length = (
+                    Tensor.from_dlpack(
+                        negative_sequence_lengths.astype(np.uint32),
+                    )
+                    .to(device)
+                    .cast(DType.uint32)
+                )
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
                     negative_sequence_lengths,
@@ -1121,26 +1126,18 @@ class LTX2Pipeline(DiffusionPipeline):
             else:
                 # Use zeros for negative prompt if not provided
                 negative_prompt_embeds = Tensor.zeros_like(prompt_embeds)
+
             # Concatenate for CFG: [negative, positive]
             prompt_embeds = F.concat(
                 [negative_prompt_embeds, prompt_embeds], axis=0
             )
-            prompt_attention_mask = F.concat(
-                [prompt_attention_mask, prompt_attention_mask], axis=0
+            prompt_valid_length = F.concat(
+                [negative_prompt_valid_length, prompt_valid_length], axis=0
             )
 
         # 4. Process text embeddings through connectors.
         # valid_length was pre-computed by the tokenizer (pure numpy, outside
         # any compiled graph) so the MHA padded kernel gets si64 stride metadata.
-        # Fallback handles the case where no tokenizer is used (e.g. tests).
-        prompt_valid_length = (
-            Tensor.from_dlpack(
-                sequence_lengths.astype(np.uint32),
-            )
-            .to(device)
-            .cast(DType.uint32)
-        )
-
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,

@@ -499,8 +499,8 @@ class PixelGenerationTokenizer(
         num_channels_latents: int,
         latent_height: int,
         latent_width: int,
-        num_frames: int | None = None,
         seed: int | None,
+        num_frames: int | None = None,
     ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         shape = (batch_size, num_channels_latents, latent_height, latent_width)
         if num_frames is not None:
@@ -992,6 +992,7 @@ class PixelGenerationTokenizer(
             # and can be computed once here, avoiding repeated compilation.
             # Store scalar latent dimensions so the pipeline can skip
             # recomputing them from scratch.
+            latent_num_frames = (num_frames - 1) // self._vae_temporal_compression_ratio + 1
             extra_params["ltx2_latent_num_frames"] = np.array(
                 latent_num_frames, dtype=np.int64
             )
@@ -1042,13 +1043,13 @@ class PixelGenerationTokenizer(
             # above, so the pipeline can wrap it in a Tensor without any
             # further mask arithmetic.
             valid_length_np = np.array(
-                [attn_mask.sum(dim=-1)], dtype=np.uint32
+                [attn_mask.sum(axis=-1)], dtype=np.uint32
             )  # [1] — one batch item
 
             if do_cfg:
                 extra_params["ltx2_attn_mask_neg"] = attn_mask_neg
                 valid_length_neg_np = np.array(
-                    [attn_mask_neg.sum(dim=-1)], dtype=np.uint32
+                    [attn_mask_neg.sum(axis=-1)], dtype=np.uint32
                 )  # [1] — one batch item
                 valid_length_np = np.concatenate(
                     [valid_length_neg_np, valid_length_np], axis=0
