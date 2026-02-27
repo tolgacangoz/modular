@@ -732,7 +732,6 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
             dilation=(1, self.dilation),
             padding=self.padding,
             output_paddings=self.output_padding,
-            groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
             input_layout=ConvInputLayout.NHWC,
             filter_layout=FilterLayout.RSCF,

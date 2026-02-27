@@ -29,7 +29,6 @@ def conv2d_transpose(
     dilation: tuple[int, int] = (1, 1),
     padding: tuple[int, int, int, int] = (0, 0, 0, 0),
     output_paddings: tuple[int, int] = (0, 0),
-    groups: int = 1,
     bias: TensorValueLike | None = None,
     input_layout: ConvInputLayout = ConvInputLayout.NHWC,
     filter_layout: FilterLayout = FilterLayout.RSCF,
@@ -86,8 +85,6 @@ def conv2d_transpose(
             potential output shapes when any stride is greater than 1. Basically,
             we'll add `output_paddings[i]` number of zeros at the end of output's ith
             axis. We only support output_paddings = 0.
-        groups: Number of blocked connections from input channels to output
-            channels. Default: 1.
         bias: Tensor of shape (out_channels,).
         input_layout: Layout of the input tensor (default NHWC).
         filter_layout: Layout of the filter tensor (default RSCF).
@@ -136,7 +133,6 @@ def conv2d_transpose(
         dilations=Shape(dilation).to_mlir(),
         paddings=Shape(padding).to_mlir(),
         output_paddings=Shape(output_paddings).to_mlir(),
-        groups=groups,
         input_layout=input_layout.to_mlir(),
     )[0].tensor
 
