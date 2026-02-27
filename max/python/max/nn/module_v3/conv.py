@@ -712,36 +712,75 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
         weight = self.weight.to(x.device)
         weight = weight.cast(x.dtype)
 
-        if self.permute:
-            # [N, C_in, L] -> [N, L, C_in] -> [N, 1, L, C_in]
-            x = F.permute(x, [0, 2, 1])
-            x = F.unsqueeze(x, 1)
-            # [C_in, C_out/G, K] -> [K, C_out/G, C_in] -> [1, K, C_out/G, C_in] (RSCF)
-            weight = F.permute(weight, [2, 1, 0])
-            weight = F.unsqueeze(weight, 0)
-        else:
-            # [N, L, C_in] -> [N, 1, L, C_in]
-            x = F.unsqueeze(x, 1)
-            # [K, C_out, C_in/G] -> [1, K, C_out, C_in/G] (RSCF)
-            weight = F.unsqueeze(weight, 0)
+        is_nvidia_gpu = False
+        try:
+            is_nvidia_gpu = (
+                isinstance(x.device, Accelerator) and accelerator_api() == "cuda"
+            )
+        except Exception:
+            pass
 
-        output = F.conv2d_transpose(
+        # 1. Reverse the weight spatially (axis 2 of [C_in, C_out/G, K])
+        K = self.weight.shape[-1]
+        import numpy as np
+        from max.experimental.tensor import Tensor
+        rev_indices = Tensor.from_numpy(np.arange(K - 1, -1, -1, dtype=np.int64)).to(x.device)
+        weight = F.gather(weight, rev_indices, axis=2)
+
+        # 2. Normalize input to [N, L, C_in]
+        if self.permute:
+            # [N, C_in, L] -> [N, L, C_in]
+            x = F.permute(x, [0, 2, 1])
+
+        # 3. Zero-insertion for stride
+        S = self.stride
+        if S > 1:
+            x_expand = F.unsqueeze(x, 2)
+            zeros = F.mul(x_expand, 0.0)
+            pieces = [x_expand] + [zeros] * (S - 1)
+            x_interleaved = F.concat(pieces, axis=2)
+            x = F.flatten(x_interleaved, 1, 2)
+
+        # 4. Padding calculation
+        K_eff = (K - 1) * self.dilation + 1
+        P = self.padding[0] if isinstance(self.padding, tuple) else self.padding
+        OP = self.output_padding[0] if isinstance(self.output_padding, tuple) else self.output_padding
+
+        pad_left = K_eff - P - 1
+        pad_right = K_eff - P - S + OP
+        conv2d_padding = (0, 0, pad_left, pad_right)
+
+        # 5. Prepare input for 2D conv: [N, L*S, C_in] -> [N, 1, L*S, C_in]
+        x = F.unsqueeze(x, 1)
+
+        # 6. Prepare weight for 2D conv
+        if is_nvidia_gpu:
+            # Want FCRS: [C_out, C_in/G, R(1), S(K)]
+            # weight is [C_in, C_out/G, K] -> [C_out/G, C_in, K]
+            weight = F.permute(weight, [1, 0, 2])
+            weight = F.unsqueeze(weight, 2)
+            flayout = FilterLayout.FCRS
+        else:
+            # Want RSCF: [R(1), S(K), C_in/G, C_out]
+            # weight is [C_in, C_out/G, K] -> [K, C_in, C_out/G]
+            weight = F.permute(weight, [2, 0, 1])
+            weight = F.unsqueeze(weight, 0)
+            flayout = FilterLayout.RSCF
+
+        output = F.conv2d(
             x,
             weight,
-            stride=(1, self.stride),
+            stride=(1, 1),
             dilation=(1, self.dilation),
-            padding=self.padding,
-            output_paddings=self.output_padding,
+            padding=conv2d_padding,
+            groups=self.num_groups,
             bias=self.bias if isinstance(self.bias, Tensor) else None,
-            input_layout=ConvInputLayout.NHWC,
-            filter_layout=FilterLayout.RSCF,
+            filter_layout=flayout,
         )
 
-        # [N, 1, L', C_out] -> [N, L', C_out]
         output = F.squeeze(output, 1)
 
         if self.permute:
-            # [N, L', C_out] -> [N, C_out, L']
             output = F.permute(output, [0, 2, 1])
 
         return output
