@@ -722,9 +722,11 @@ class ConvTranspose1d(Module[[Tensor], Tensor]):
 
         # 1. Reverse the weight spatially (axis 2 of [C_in, C_out/G, K])
         K = self.weight.shape[-1]
-        import numpy as np
-        from max.experimental.tensor import Tensor
-        rev_indices = Tensor.from_numpy(np.arange(K - 1, -1, -1, dtype=np.int64)).to(x.device)
+
+        # Use MAX's native arange to build sequence [K-1, K-2, ..., 0]
+        rev_indices = F.arange(
+            start=K - 1, stop=-1, step=-1, dtype=DType.int64, device=x.device
+        )
         weight = F.gather(weight, rev_indices, axis=2)
 
         # 2. Normalize input to [N, L, C_in]
