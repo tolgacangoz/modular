@@ -982,7 +982,8 @@ class LTX2Pipeline(DiffusionPipeline):
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
         print(f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}", flush=True)
         print("[DEBUG] calling vocoder...", flush=True)
-        result = self.vocoder(mel_spectrograms)
+        # Vocoder compiled as float32 (cuDNN conv_transpose hardcodes CUDNN_DATA_FLOAT).
+        result = self.vocoder(mel_spectrograms.cast(DType.float32))
         print("[DEBUG] vocoder done", flush=True)
         return result
 

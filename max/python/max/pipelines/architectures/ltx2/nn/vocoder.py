@@ -158,8 +158,10 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         #   time = audio_num_frames * LATENT_DOWNSAMPLE_FACTOR - (LATENT_DOWNSAMPLE_FACTOR - 1)
         #        = 126 * 4 - 3 = 501  (causal audio VAE trims LATENT_DOWNSAMPLE_FACTOR-1 frames)
         #   num_mel_bins = 64
+        # Use float32 because the cuDNN conv_transpose kernel hardcodes
+        # CUDNN_DATA_FLOAT descriptors.
         hidden_states_type = TensorType(
-            self.config.dtype,
+            DType.float32,
             shape=[1, self.config.out_channels, 501, 64],
             device=self.config.device,
         )
@@ -181,10 +183,8 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
             `Tensor`:
                 Audio waveform tensor of shape (batch_size, out_channels, audio_length)
         """
-        # Cast to float32 for the entire vocoder to avoid cuDNN bfloat16
-        # crashes with conv/conv_transpose + RSCF on NVIDIA GPUs.
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.cast(DType.float32)
+        # Entire vocoder runs in float32 because cuDNN conv_transpose
+        # kernel hardcodes CUDNN_DATA_FLOAT descriptors.
 
         # Ensure that the time/frame dimension is last
         if not time_last:
@@ -215,8 +215,5 @@ class LTX2Vocoder(nn.Module[[Tensor, bool], Tensor]):
         hidden_states = F.max(0, hidden_states) + 0.01 * F.min(0, hidden_states)
         hidden_states = self.conv_out(hidden_states)
         hidden_states = F.tanh(hidden_states)
-
-        # Cast back to original dtype
-        hidden_states = hidden_states.cast(input_dtype)
 
         return hidden_states
