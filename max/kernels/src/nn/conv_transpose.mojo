@@ -1590,96 +1590,46 @@ fn _conv_transposed_cudnn[
 ) raises:
     var cudnn_handle = _get_cudnn_meta(ctx)
 
-    # Input is NHWC: [N, H, W, C_in]
-    # For cuDNN, logical dims are always (N, C, H, W).
-    var input_n = Int16(input.dim[0]())
-    var input_h = Int16(input.dim[1]())
-    var input_w = Int16(input.dim[2]())
-    var input_c = Int16(input.dim[3]())
-
-    # Output is NHWC: [N, H_out, W_out, C_out]
-    var output_n = Int16(output.dim[0]())
-    var output_h = Int16(output.dim[1]())
-    var output_w = Int16(output.dim[2]())
-    var output_c = Int16(output.dim[3]())
-
-    # Filter is RSCF: [R, S, C_out, C_in]
-    # For cudnnConvolutionBackwardData, the filter represents the forward conv:
-    #   K (forward out_channels) = C_in of transpose = filter.dim[3] (F)
-    #   C (forward in_channels)  = C_out of transpose = filter.dim[2] (C)
-    #   R (kernel height)        = filter.dim[0] (R)
-    #   S (kernel width)         = filter.dim[1] (S)
-    var filter_k = Int16(filter.dim[3]())  # F = forward K
-    var filter_c = Int16(filter.dim[2]())  # C = forward C
-    var filter_r = Int16(filter.dim[0]())  # R
-    var filter_s = Int16(filter.dim[1]())  # S
-
-    # Permute filter from RSCF [R,S,C,F] to NCHW [K,C,R,S] = [F,C,R,S]
-    # cuDNN requires the filter in NCHW memory layout.
-    var filter_numel = filter.numel()
-    var filter_nchw_buf = ctx.enqueue_create_buffer[filter_type](filter_numel)
-    var filter_nchw_ptr = filter_nchw_buf.unsafe_ptr()
-
-    var R = Int(filter_r)
-    var S = Int(filter_s)
-    var C = Int(filter_c)
-    var K = Int(filter_k)
-
-    # Copy with index remapping: RSCF[r,s,c,f] -> NCHW[f,c,r,s]
-    # RSCF offset: r*(S*C*K) + s*(C*K) + c*K + f
-    # NCHW offset: f*(C*R*S) + c*(R*S) + r*S + s
-    @parameter
-    fn permute_filter(linear_idx: Int):
-        # Decode linear index as RSCF
-        var f = linear_idx % K
-        var rem = linear_idx // K
-        var c = rem % C
-        rem = rem // C
-        var s = rem % S
-        var r = rem // S
-
-        # Compute NCHW offset
-        var nchw_idx = f * (C * R * S) + c * (R * S) + r * S + s
-        filter_nchw_ptr.store(nchw_idx, filter.ptr.load(linear_idx))
-
-    elementwise[1, target="gpu"](
-        IndexList[1](filter_numel), ctx, permute_filter
-    )
+    # basically, vibes are that a cuda handle is the gateway to using cudnn
+    # we want all the work from that handle to be done on a separate stream
+    # than the main stream, otherwise, everything goes on main stream and
+    # slows down the whole thing. binding handle to stream unclocks parallelism, and now
+    # 2 handles , with 2 separate functions, can work at same time.
 
     # ---------------- Tensor / filter descriptors -------------------------
     check_cudnn_error(
         cudnnSetFilter4dDescriptor(
             cudnn_handle[].ptr_filter_desc,
             cudnnDataType_t.CUDNN_DATA_FLOAT,
-            cudnnTensorFormat_t.CUDNN_TENSOR_NCHW,
-            filter_k,  # K (forward out_channels = transpose in_channels)
-            filter_c,  # C (forward in_channels = transpose out_channels)
-            filter_r,  # R (kernel height)
-            filter_s,  # S (kernel width)
+            cudnnTensorFormat_t.CUDNN_TENSOR_NCHW,  # cudnn documentation correction: cudnnSetFilter4dDescriptor() takes CKRS, not KCRS
+            Int16(filter.dim[0]()),  # C (out channels)
+            Int16(filter.dim[1]()),  # K (in channels)
+            Int16(filter.dim[2]()),  # R (kernel height)
+            Int16(filter.dim[3]()),  # S (kernel width)
         )
     )
 
     check_cudnn_error(
         cudnnSetTensor4dDescriptor(
             cudnn_handle[].ptr_input_desc,
-            cudnnTensorFormat_t.CUDNN_TENSOR_NHWC,
+            cudnnTensorFormat_t.CUDNN_TENSOR_NCHW,
             cudnnDataType_t.CUDNN_DATA_FLOAT,
-            input_n,  # N
-            input_c,  # C (logical channels, last dim in NHWC memory)
-            input_h,  # H
-            input_w,  # W
+            Int16(input.dim[0]()),  # N
+            Int16(input.dim[1]()),  # C_in
+            Int16(input.dim[2]()),  # H_in
+            Int16(input.dim[3]()),  # W_in
         )
     )
 
     check_cudnn_error(
         cudnnSetTensor4dDescriptor(
             cudnn_handle[].ptr_output_desc,
-            cudnnTensorFormat_t.CUDNN_TENSOR_NHWC,
+            cudnnTensorFormat_t.CUDNN_TENSOR_NCHW,
             cudnnDataType_t.CUDNN_DATA_FLOAT,
-            output_n,  # N
-            output_c,  # C (logical channels, last dim in NHWC memory)
-            output_h,  # H
-            output_w,  # W
+            Int16(output.dim[0]()),  # N
+            Int16(output.dim[1]()),  # C_out
+            Int16(output.dim[2]()),  # H_out
+            Int16(output.dim[3]()),  # W_out
         )
     )
 
@@ -1706,12 +1656,25 @@ fn _conv_transposed_cudnn[
     var alpha = Float32(1.0)
     var beta = Float32(0.0)
 
+    # handle: UnsafePointer[cudnnContext],
+    # alpha: OpaquePointer,
+    # w_desc: UnsafePointer[cudnnFilterStruct],
+    # w: OpaquePointer,
+    # dy_desc: UnsafePointer[cudnnTensorStruct],
+    # dy: OpaquePointer,
+    # conv_desc: UnsafePointer[cudnnConvolutionStruct],
+    # algo: cudnnConvolutionBwdDataAlgo_t,
+    # work_space: OpaquePointer,
+    # work_space_size_in_bytes: Int,
+    # beta: OpaquePointer,
+    # dx_desc: UnsafePointer[cudnnTensorStruct],
+    # dx: OpaquePointer,
     check_cudnn_error(
         cudnnConvolutionBackwardData(
             cudnn_handle[].ptr_handle,
             UnsafePointer(to=alpha).bitcast[NoneType](),
             cudnn_handle[].ptr_filter_desc,
-            filter_nchw_ptr.bitcast[NoneType](),  # Use permuted filter
+            filter.ptr.bitcast[NoneType](),
             cudnn_handle[].ptr_input_desc,
             input.ptr.bitcast[NoneType](),
             cudnn_handle[].ptr_conv_desc,
@@ -1724,8 +1687,7 @@ fn _conv_transposed_cudnn[
         )
     )
 
-    # Cleanup
-    _ = filter_nchw_buf^
+    # ---------------- Cleanup ---------------------------------------------
     if workspace_ptr:
         workspace_ptr.free()
 
