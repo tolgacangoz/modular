@@ -100,7 +100,7 @@ class LTX2TransformerModel(ComponentModel):
         return self.model(
             hidden_states,
             audio_hidden_states,
-            encoder_hidden_states
+            encoder_hidden_states,
             audio_encoder_hidden_states,
             timestep,
             audio_timestep,
