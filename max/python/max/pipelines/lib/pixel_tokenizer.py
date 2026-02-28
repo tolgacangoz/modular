@@ -1016,7 +1016,7 @@ class PixelGenerationTokenizer(
                 audio_num_frames = 1
 
             audio_shape = (
-                image_options.num_images,
+                num_images,
                 8,
                 audio_num_frames,
                 latent_mel_bins,
