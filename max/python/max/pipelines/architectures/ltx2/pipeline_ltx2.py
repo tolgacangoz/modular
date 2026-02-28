@@ -264,7 +264,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         batch=1, seq=6144 (16*16*24), channels=128
         """
-        dtype = DType.float32
+        dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 6144  # 16 * 16 * 24
@@ -273,7 +273,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 dtype, shape=[1, _video_seq_len, _channels], device=device
             ),
             TensorType(
-                dtype, shape=[1, _video_seq_len, _channels], device=device
+                DType.float32, shape=[1, _video_seq_len, _channels], device=device
             ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
@@ -296,7 +296,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 dtype, shape=[1, _audio_seq_len, _channels], device=device
             ),
             TensorType(
-                dtype, shape=[1, _audio_seq_len, _channels], device=device
+                DType.float32, shape=[1, _audio_seq_len, _channels], device=device
             ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
