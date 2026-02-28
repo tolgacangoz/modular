@@ -41,6 +41,7 @@ import numpy as np
 import PIL.Image
 import torch
 from max.driver import DeviceSpec
+from max.pipelines.lib.pipeline_runtime_config import PipelineRuntimeConfig
 from max.interfaces import (
     PipelineTask,
     PixelGenerationInputs,
@@ -361,13 +362,15 @@ async def generate_video(args: argparse.Namespace) -> None:
     config = PipelineConfig(
         model=MAXModelConfig(
             model_path=args.model,
-            quantization_encoding=args.encoding,
             device_specs=device_specs,
+        ),
+        runtime=PipelineRuntimeConfig(
+            prefer_module_v3=True,
         ),
     )
     arch = PIPELINE_REGISTRY.retrieve_architecture(
         config.model.huggingface_weight_repo,
-        prefer_module_v3=config.prefer_module_v3,
+        prefer_module_v3=config.runtime.prefer_module_v3,
         task=PipelineTask.PIXEL_GENERATION,
     )
 
