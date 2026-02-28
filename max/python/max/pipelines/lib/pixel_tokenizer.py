@@ -828,36 +828,61 @@ class PixelGenerationTokenizer(
 
         # Extract image provider options (always available via defaults)
         image_options = request.body.provider_options.image
-        if image_options is None:
-            raise ValueError(
-                "Image provider options are required for pixel generation. "
-                "This should not happen as defaults are applied at request creation."
-            )
+        video_options = request.body.provider_options.video
 
-        if (
-            image_options.guidance_scale < 1.0
-            or image_options.true_cfg_scale < 1.0
-        ):
+        # For LTX-2 and other video models, we should consolidate options from both image and video
+        # Prioritize video options if present, then image options.
+        neg_prompt = (
+            (video_options.negative_prompt if video_options else None)
+            or (image_options.negative_prompt if image_options else None)
+        )
+        sec_prompt = (
+            (image_options.secondary_prompt if image_options else None)
+        )
+        sec_neg_prompt = (
+            (image_options.secondary_negative_prompt if image_options else None)
+        )
+        guidance_scale = (
+            (video_options.guidance_scale if video_options and video_options.guidance_scale is not None else None)
+            or (image_options.guidance_scale if image_options else 3.5)
+        )
+        true_cfg_scale = (
+            (video_options.true_cfg_scale if video_options and video_options.true_cfg_scale is not None else None)
+            or (image_options.true_cfg_scale if image_options else 1.0)
+        )
+        height = (
+            (video_options.height if video_options and video_options.height is not None else None)
+            or (image_options.height if image_options else None)
+        )
+        width = (
+            (video_options.width if video_options and video_options.width is not None else None)
+            or (image_options.width if image_options else None)
+        )
+        steps = (
+            (video_options.steps if video_options and video_options.steps is not None else None)
+            or (image_options.steps if image_options else 50)
+        )
+        num_images = (
+            image_options.num_images if image_options else 1
+        )
+
+        if guidance_scale < 1.0 or true_cfg_scale < 1.0:
             logger.warning(
-                f"Guidance scales < 1.0 detected (guidance_scale={image_options.guidance_scale}, "
-                f"true_cfg_scale={image_options.true_cfg_scale}). This is mathematically possible"
+                f"Guidance scales < 1.0 detected (guidance_scale={guidance_scale}, "
+                f"true_cfg_scale={true_cfg_scale}). This is mathematically possible"
                 " but may produce lower quality or unexpected results."
             )
 
-        if (
-            image_options.true_cfg_scale > 1.0
-            and image_options.negative_prompt is None
-        ):
+        if true_cfg_scale > 1.0 and neg_prompt is None:
             logger.warning(
-                f"true_cfg_scale={image_options.true_cfg_scale} is set, but no negative_prompt "
+                f"true_cfg_scale={true_cfg_scale} is set, but no negative_prompt "
                 "is provided. True classifier-free guidance requires a negative prompt; "
                 "falling back to standard generation."
             )
 
-        do_true_cfg = (
-            image_options.true_cfg_scale > 1.0
-            and image_options.negative_prompt is not None
-        )
+        do_true_cfg = true_cfg_scale > 1.0 and neg_prompt is not None
+        do_cfg = guidance_scale > 1.0
+
         import PIL.Image
 
         # 1. Tokenize prompts
@@ -880,12 +905,13 @@ class PixelGenerationTokenizer(
             negative_token_ids_2,
         ) = await self._generate_tokens_ids(
             prompt,
-            image_options.secondary_prompt,
-            image_options.negative_prompt,
-            image_options.secondary_negative_prompt,
-            do_true_cfg,
+            sec_prompt,
+            neg_prompt,
+            sec_neg_prompt,
+            do_true_cfg or (self._is_ltx2 and do_cfg),
             images=images_for_tokenization,
         )
+
 
         token_buffer = TokenBuffer(
             array=token_ids.astype(np.int64, copy=False),
@@ -909,8 +935,9 @@ class PixelGenerationTokenizer(
         default_sample_size = self._default_sample_size
         vae_scale_factor = self._vae_scale_factor
 
-        height = image_options.height or default_sample_size * vae_scale_factor
-        width = image_options.width or default_sample_size * vae_scale_factor
+        height = height or default_sample_size * vae_scale_factor
+        width = width or default_sample_size * vae_scale_factor
+
 
         # 2. Preprocess input image if provided
         preprocessed_image_array = None
@@ -931,18 +958,20 @@ class PixelGenerationTokenizer(
         latent_width = 2 * (int(width) // (self._vae_scale_factor * 2))
         image_seq_len = (latent_height // 2) * (latent_width // 2)
 
-        num_inference_steps = image_options.steps
+        num_inference_steps = steps
         timesteps, sigmas = self._scheduler.retrieve_timesteps_and_sigmas(
             image_seq_len, num_inference_steps
         )
 
+
         num_warmup_steps: int = max(
-            len(timesteps) - num_inference_steps * self._scheduler.order, 0
+            len(timesteps) - steps * self._scheduler.order, 0
         )
+
         video_options = request.body.provider_options.video
         num_frames = video_options.num_frames if video_options is not None else None
         latents, latent_image_ids = self._prepare_latents(
-            image_options.num_images,
+            num_images,
             self._num_channels_latents,
             latent_height,
             latent_width,
@@ -950,11 +979,13 @@ class PixelGenerationTokenizer(
             request.body.seed,
         )
 
+
         guidance: npt.NDArray[np.float32] | None = None
         if self._use_guidance_embeds:
             guidance = np.array(
-                [image_options.guidance_scale], dtype=np.float32
+                [guidance_scale], dtype=np.float32
             )
+
 
         extra_params: dict[str, npt.NDArray[Any]] = {}
         if self._is_ltx2:
@@ -1022,18 +1053,19 @@ class PixelGenerationTokenizer(
             # pipeline doesn't need to run tensor ops at inference time.
             # These are deterministic functions of the resolution/duration
             # and can be computed once here, avoiding repeated compilation.
-            do_cfg = image_options.guidance_scale > 1
+
             video_coords = self._prepare_ltx2_video_coords(
-                batch_size=image_options.num_images,
+                batch_size=num_images,
                 latent_num_frames=latent_num_frames,
                 latent_height=latent_height,
                 latent_width=latent_width,
                 frame_rate=float(frame_rate),
             )
             audio_coords = self._prepare_ltx2_audio_coords(
-                batch_size=image_options.num_images,
+                batch_size=num_images,
                 audio_num_frames=audio_num_frames,
             )
+
             # Pre-double for CFG on CPU (guidance_scale is already known here),
             # avoiding an eager F.concat tensor compilation in the pipeline.
             if do_cfg:
@@ -1046,6 +1078,7 @@ class PixelGenerationTokenizer(
             extra_params["ltx2_video_coords"] = video_coords
             extra_params["ltx2_audio_coords"] = audio_coords
             extra_params["ltx2_coords_cfg_doubled"] = np.array(do_cfg)
+
 
             # Number of real (non-padding) text tokens per batch item (uint32).
             # Pre-doubled for CFG here on CPU, mirroring the coords treatment
@@ -1080,10 +1113,11 @@ class PixelGenerationTokenizer(
             height=height,
             width=width,
             num_inference_steps=num_inference_steps,
-            guidance_scale=image_options.guidance_scale,
+            guidance_scale=guidance_scale,
             guidance=guidance,
-            true_cfg_scale=image_options.true_cfg_scale,
-            num_visuals_per_prompt=image_options.num_images,
+            true_cfg_scale=true_cfg_scale,
+            num_visuals_per_prompt=num_images,
+
             num_frames=(
                 video_options.num_frames
                 if self._is_ltx2 and video_options is not None
