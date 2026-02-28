@@ -1077,7 +1077,7 @@ class LTX2Pipeline(DiffusionPipeline):
         sequence_lengths = extra_params.get("ltx2_valid_length")[-1]
         prompt_valid_length = (
             Tensor.from_dlpack(
-                sequence_lengths.astype(np.uint32),
+                sequence_lengths,
             )
             .to(device)
             .cast(DType.uint32)
@@ -1103,7 +1103,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 )[0]
                 negative_prompt_valid_length = (
                     Tensor.from_dlpack(
-                        negative_sequence_lengths.astype(np.uint32),
+                        negative_sequence_lengths,
                     )
                     .to(device)
                     .cast(DType.uint32)
