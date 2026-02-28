@@ -1040,19 +1040,9 @@ class LTX2Pipeline(DiffusionPipeline):
         self._guidance_scale = guidance_scale
         self._num_timesteps = num_inference_steps
 
-        # 1. Resolve latent dimensions.
-        # Prefer values precomputed by the tokenizer; fall back to deriving
-        # them from the request parameters when running without a tokenizer.
-        if "ltx2_latent_num_frames" in extra_params:
-            latent_num_frames = int(extra_params["ltx2_latent_num_frames"])
-            latent_height = int(extra_params["ltx2_latent_height"])
-            latent_width = int(extra_params["ltx2_latent_width"])
-        else:
-            latent_num_frames = (
-                num_frames - 1
-            ) // self.vae_temporal_compression_ratio + 1
-            latent_height = height // self.vae_spatial_compression_ratio
-            latent_width = width // self.vae_spatial_compression_ratio
+        latent_num_frames = int(extra_params["ltx2_latent_num_frames"])
+        latent_height = int(extra_params["ltx2_latent_height"])
+        latent_width = int(extra_params["ltx2_latent_width"])
 
         # 2. Get sigmas from PixelModelInputs, cache, and pre-compute scheduler tensors.
         sigmas_np: np.ndarray = model_inputs.sigmas
@@ -1144,54 +1134,33 @@ class LTX2Pipeline(DiffusionPipeline):
             _,
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
-        # 5. Prepare video latents
-        batch_size, _, latent_num_frames, latent_height, latent_width = (
-            video_latents_np.shape
-        )
-        # Fallback: expand 4D latents [B, C, H, W] along temporal dimension.
+        batch_size = video_latents_np.shape[0]
         batch_size = int(batch_size)
-        latents_5d = video_latents_np[:, :, None, :, :]
-        latents_5d = np.repeat(latents_5d, latent_num_frames, axis=2)
-        latents_5d = latents_5d.astype(np.float32)
 
-        latents = Tensor.from_dlpack(latents_5d).to(device)
+        latents = Tensor.from_dlpack(video_latents_np).to(device)
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
         latents = self._pack_video_latents(latents)
 
         # 6. Prepare audio latents
-        if audio_latents_np is not None:
-            if audio_latents_np.ndim != 4:
-                raise ValueError(
-                    "ltx2_audio_latents must have shape [B, C, L, M]"
-                )
-            (
-                batch_size_audio,
-                _audio_channels,
-                audio_num_frames,
-                latent_mel_bins,
-            ) = audio_latents_np.shape
-            if batch_size_audio != batch_size:
-                raise ValueError(
-                    "Mismatch between video and audio batch sizes in LTX2 latents"
-                )
-            # Prefer tokenizer-precomputed scalars to avoid shape extraction.
-            if "ltx2_audio_num_frames" in extra_params:
-                audio_num_frames = int(extra_params["ltx2_audio_num_frames"])
-                latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
-            audio_latents_arr = audio_latents_np.astype(np.float32)
-        else:
-            # Fallback: sample audio latents matching the original pipeline logic.
-            num_mel_bins = 64  # From audio VAE config
-            latent_mel_bins = (
-                num_mel_bins // self.audio_vae_mel_compression_ratio
+        if audio_latents_np.ndim != 4:
+            raise ValueError(
+                "ltx2_audio_latents must have shape [B, C, L, M]"
             )
-            duration_s = num_frames / frame_rate
-            audio_latents_per_second = 16_000 / 160 / 4.0
-            audio_num_frames = round(duration_s * audio_latents_per_second)
-            audio_shape = (batch_size, 8, audio_num_frames, latent_mel_bins)
-            audio_latents_arr = random.gaussian(
-                audio_shape, dtype=DType.float32
-            ).to(device)
+        (
+            batch_size_audio,
+            _audio_channels,
+            audio_num_frames,
+            latent_mel_bins,
+        ) = audio_latents_np.shape
+        if batch_size_audio != batch_size:
+            raise ValueError(
+                "Mismatch between video and audio batch sizes in LTX2 latents"
+            )
+        # Prefer tokenizer-precomputed scalars to avoid shape extraction.
+        if "ltx2_audio_num_frames" in extra_params:
+            audio_num_frames = int(extra_params["ltx2_audio_num_frames"])
+            latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
+        audio_latents_arr = audio_latents_np.astype(np.float32)
 
         audio_latents = (
             audio_latents_arr
