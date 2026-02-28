@@ -41,7 +41,6 @@ import numpy as np
 import PIL.Image
 import torch
 from max.driver import DeviceSpec
-from max.pipelines.lib.pipeline_runtime_config import PipelineRuntimeConfig
 from max.interfaces import (
     PipelineTask,
     PixelGenerationInputs,
@@ -62,6 +61,7 @@ from max.pipelines.core import PixelContext
 from max.pipelines.lib import PixelGenerationTokenizer
 from max.pipelines.lib.config.config_enums import SupportedEncoding
 from max.pipelines.lib.interfaces import DiffusionPipeline
+from max.pipelines.lib.pipeline_runtime_config import PipelineRuntimeConfig
 from max.pipelines.lib.pipeline_variants.pixel_generation import (
     PixelGenerationPipeline,
 )

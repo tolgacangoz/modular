@@ -13,7 +13,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import max.experimental.functional as F
 import numpy as np
@@ -192,7 +192,6 @@ class LTX2Pipeline(DiffusionPipeline):
         self.build_decode_audio_latents()
         self.build_prepare_cfg_latents()
         self.build_apply_cfg_guidance()
-
 
         self._joint_attention_kwargs: dict[str, Any] | None = None
         self._num_timesteps: int = 0
@@ -442,8 +441,12 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
         """
-        input_ids = torch.from_dlpack(token_ids).to("cuda" if torch.cuda.is_available() else "cpu")
-        attention_mask = torch.from_dlpack(mask).to("cuda" if torch.cuda.is_available() else "cpu")
+        input_ids = torch.from_dlpack(token_ids).to(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        attention_mask = torch.from_dlpack(mask).to(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
 
         with torch.no_grad():
             outputs = self.text_encoder(
