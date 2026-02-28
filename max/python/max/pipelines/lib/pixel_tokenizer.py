@@ -150,9 +150,9 @@ class PixelGenerationTokenizer(
             )
 
             # Gemma expects left padding for chat-style prompts
-            self.tokenizer.padding_side = "left"
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.delegate.padding_side = "left"
+            if self.delegate.pad_token is None:
+                self.delegate.pad_token = self.delegate.eos_token
 
             if subfolder_2 is not None:
                 self.delegate_2 = AutoTokenizer.from_pretrained(
