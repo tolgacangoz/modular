@@ -30,10 +30,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import os
+from collections.abc import Iterator
+from fractions import Fraction
+from itertools import chain
 from typing import cast
 
+import av
+import numpy as np
+import PIL.Image
+import torch
 from max.driver import DeviceSpec
 from max.interfaces import (
     PipelineTask,
@@ -58,6 +64,7 @@ from max.pipelines.lib.interfaces import DiffusionPipeline
 from max.pipelines.lib.pipeline_variants.pixel_generation import (
     PixelGenerationPipeline,
 )
+from tqdm import tqdm
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -163,8 +170,87 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _prepare_audio_stream(
+    container: av.container.Container, audio_sample_rate: int
+) -> av.audio.AudioStream:
+    """
+    Prepare the audio stream for writing.
+    """
+    audio_stream = container.add_stream("aac", rate=audio_sample_rate)
+    audio_stream.codec_context.sample_rate = audio_sample_rate
+    audio_stream.codec_context.layout = "stereo"
+    audio_stream.codec_context.time_base = Fraction(1, audio_sample_rate)
+    return audio_stream
+
+
+def _resample_audio(
+    container: av.container.Container,
+    audio_stream: av.audio.AudioStream,
+    frame_in: av.AudioFrame,
+) -> None:
+    cc = audio_stream.codec_context
+
+    # Use the encoder's format/layout/rate as the *target*
+    target_format = cc.format or "fltp"  # AAC → usually fltp
+    target_layout = cc.layout or "stereo"
+    target_rate = cc.sample_rate or frame_in.sample_rate
+
+    audio_resampler = av.audio.resampler.AudioResampler(
+        format=target_format,
+        layout=target_layout,
+        rate=target_rate,
+    )
+
+    audio_next_pts = 0
+    for rframe in audio_resampler.resample(frame_in):
+        if rframe.pts is None:
+            rframe.pts = audio_next_pts
+        audio_next_pts += rframe.samples
+        rframe.sample_rate = frame_in.sample_rate
+        container.mux(audio_stream.encode(rframe))
+
+    # flush audio encoder
+    for packet in audio_stream.encode():
+        container.mux(packet)
+
+
+def _write_audio(
+    container: av.container.Container,
+    audio_stream: av.audio.AudioStream,
+    samples: torch.Tensor,
+    audio_sample_rate: int,
+) -> None:
+    if samples.ndim == 1:
+        samples = samples[:, None]
+
+    if samples.shape[1] != 2 and samples.shape[0] == 2:
+        samples = samples.T
+
+    if samples.shape[1] != 2:
+        raise ValueError(
+            f"Expected samples with 2 channels; got shape {samples.shape}."
+        )
+
+    # Convert to int16 packed for ingestion; resampler converts to encoder fmt.
+    if samples.dtype != torch.int16:
+        samples = torch.clip(samples, -1.0, 1.0)
+        samples = (samples * 32767.0).to(torch.int16)
+
+    frame_in = av.AudioFrame.from_ndarray(
+        samples.contiguous().reshape(1, -1).cpu().numpy(),
+        format="s16",
+        layout="stereo",
+    )
+    frame_in.sample_rate = audio_sample_rate
+
+    _resample_audio(container, audio_stream, frame_in)
+
+
 def encode_video(
-    video: list[PIL.Image.Image] | np.ndarray | torch.Tensor | Iterator[torch.Tensor],
+    video: list[PIL.Image.Image]
+    | np.ndarray
+    | torch.Tensor
+    | Iterator[torch.Tensor],
     fps: int,
     audio: torch.Tensor,
     audio_sample_rate: int,
@@ -199,11 +285,14 @@ def encode_video(
         video = torch.from_numpy(video)
     elif isinstance(video, np.ndarray):
         # Pipeline output_type="np"
-        is_denormalized = np.logical_and(np.zeros_like(video) <= video, video <= np.ones_like(video))
+        is_denormalized = np.logical_and(
+            np.zeros_like(video) <= video, video <= np.ones_like(video)
+        )
         if np.all(is_denormalized):
             video = (video * 255).round().astype("uint8")
         else:
-            logger.warning(
+            print(
+                "WARNING:"
                 "Supplied `numpy.ndarray` does not have values in [0, 1]. The values will be assumed to be pixel "
                 "values in [0, ..., 255] and will be used as is."
             )
@@ -226,11 +315,17 @@ def encode_video(
 
     if audio is not None:
         if audio_sample_rate is None:
-            raise ValueError("audio_sample_rate is required when audio is provided")
+            raise ValueError(
+                "audio_sample_rate is required when audio is provided"
+            )
 
         audio_stream = _prepare_audio_stream(container, audio_sample_rate)
 
-    for video_chunk in tqdm(chain([first_chunk], video), total=video_chunks_number, desc="Encoding video chunks"):
+    for video_chunk in tqdm(
+        chain([first_chunk], video),
+        total=video_chunks_number,
+        desc="Encoding video chunks",
+    ):
         video_chunk_cpu = video_chunk.to("cpu").numpy()
         for frame_array in video_chunk_cpu:
             frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")

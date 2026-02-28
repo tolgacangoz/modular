@@ -18,9 +18,9 @@ from typing import Any, Literal, cast
 import max.experimental.functional as F
 import numpy as np
 import numpy.typing as npt
+import torch
 from max.driver import CPU, Device
 from max.dtype import DType
-from max.experimental import random
 from max.experimental.tensor import Tensor
 from max.graph import TensorType
 from max.pipelines import PixelContext
@@ -31,7 +31,6 @@ from max.pipelines.lib.interfaces import (
 from max.pipelines.lib.interfaces.diffusion_pipeline import max_compile
 from tqdm import tqdm
 from transformers import Gemma3ForConditionalGeneration
-import torch
 
 from ..autoencoders import (
     AutoencoderKLLTX2AudioModel,
@@ -1096,11 +1095,15 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get("ltx2_attn_mask_neg")
+                mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get(
+                    "ltx2_attn_mask_neg"
+                )
                 negative_hidden_states = self._encode_tokens(
                     negative_ids_np, mask_neg_np
                 )
-                negative_sequence_lengths = extra_params.get("ltx2_valid_length")[0]
+                negative_sequence_lengths = extra_params.get(
+                    "ltx2_valid_length"
+                )[0]
                 negative_prompt_valid_length = (
                     Tensor.from_dlpack(
                         negative_sequence_lengths.astype(np.uint32),
@@ -1143,9 +1146,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # 6. Prepare audio latents
         if audio_latents_np.ndim != 4:
-            raise ValueError(
-                "ltx2_audio_latents must have shape [B, C, L, M]"
-            )
+            raise ValueError("ltx2_audio_latents must have shape [B, C, L, M]")
         (
             batch_size_audio,
             _audio_channels,

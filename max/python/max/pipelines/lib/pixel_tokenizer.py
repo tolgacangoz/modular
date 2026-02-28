@@ -210,7 +210,9 @@ class PixelGenerationTokenizer(
         self._vae_scale_factor = (
             2 ** (len(block_out_channels) - 1) if block_out_channels else 8
         )
-        self._vae_temporal_compression_ratio = vae_config.get("temporal_compression_ratio")
+        self._vae_temporal_compression_ratio = vae_config.get(
+            "temporal_compression_ratio"
+        )
 
         # Store static model dimensions
         self._default_sample_size = 128
@@ -504,8 +506,16 @@ class PixelGenerationTokenizer(
     ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         shape = (batch_size, num_channels_latents, latent_height, latent_width)
         if num_frames is not None:
-            num_latent_frames = (num_frames - 1) // self._vae_temporal_compression_ratio + 1
-            shape = (batch_size, num_channels_latents, num_latent_frames, latent_height, latent_width)
+            num_latent_frames = (
+                num_frames - 1
+            ) // self._vae_temporal_compression_ratio + 1
+            shape = (
+                batch_size,
+                num_channels_latents,
+                num_latent_frames,
+                latent_height,
+                latent_width,
+            )
         latents = self._randn_tensor(shape, seed)
         latent_image_ids = self._prepare_latent_image_ids(
             latent_height // 2, latent_width // 2, batch_size
@@ -992,7 +1002,9 @@ class PixelGenerationTokenizer(
             # and can be computed once here, avoiding repeated compilation.
             # Store scalar latent dimensions so the pipeline can skip
             # recomputing them from scratch.
-            latent_num_frames = (num_frames - 1) // self._vae_temporal_compression_ratio + 1
+            latent_num_frames = (
+                num_frames - 1
+            ) // self._vae_temporal_compression_ratio + 1
             extra_params["ltx2_latent_num_frames"] = np.array(
                 latent_num_frames, dtype=np.int64
             )

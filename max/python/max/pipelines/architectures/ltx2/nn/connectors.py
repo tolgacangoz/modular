@@ -294,8 +294,13 @@ class LTX2ConnectorTransformer1d(
             #     flipped_mask * padded_hidden_states
             #     + (1.0 - flipped_mask) * registers
             # )
-            binary_attn_mask = binary_attn_mask.unsqueeze(-1).cast(padded_hidden_states.dtype)  # [B, L, 1]
-            hidden_states = binary_attn_mask * padded_hidden_states + (1.0 - binary_attn_mask) * registers
+            binary_attn_mask = binary_attn_mask.unsqueeze(-1).cast(
+                padded_hidden_states.dtype
+            )  # [B, L, 1]
+            hidden_states = (
+                binary_attn_mask * padded_hidden_states
+                + (1.0 - binary_attn_mask) * registers
+            )
 
             # After registers fill every slot, all seq_len positions are valid
             # → self-attention uses NULL_MASK.
