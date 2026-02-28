@@ -328,7 +328,7 @@ def _mux_video_with_audio(
         cc_out.width = cc_in.width
         cc_out.height = cc_in.height
         cc_out.pix_fmt = cc_in.pix_fmt
-        cc_out.time_base = cc_in.time_base
+        cc_out.time_base = in_video.time_base
         # Copy SPS/PPS extradata so the h264 stream is self-contained.
         if cc_in.extradata:
             cc_out.extradata = cc_in.extradata
