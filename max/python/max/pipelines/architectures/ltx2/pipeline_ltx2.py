@@ -1000,30 +1000,21 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             ModelOutputs containing the generated images.
         """
-        # Extract parameters from model_inputs
-        height = model_inputs.height or 512
-        width = model_inputs.width or 768
-        num_frames = model_inputs.num_frames or 121
-        frame_rate = model_inputs.frame_rate or 24
         num_inference_steps = model_inputs.num_inference_steps
         guidance_scale = model_inputs.guidance_scale
         device = self.devices[0]
 
-        # Optional LTX2-specific precomputed latents from PixelGenerationTokenizer
         extra_params = model_inputs.extra_params or {}
         video_latents_np: np.ndarray = model_inputs.latents
         audio_latents_np: np.ndarray | None = extra_params.get(
             "ltx2_audio_latents"
         )
-        # Positional embedding coordinates precomputed on CPU by
-        # PixelGenerationTokenizer (avoids tensor compilation in the pipeline).
         video_coords_np: np.ndarray | None = extra_params.get(
             "ltx2_video_coords"
         )
         audio_coords_np: np.ndarray | None = extra_params.get(
             "ltx2_audio_coords"
         )
-        # When the tokenizer pre-doubled the coords for CFG, skip F.concat below.
         coords_cfg_doubled: bool = bool(
             extra_params.get("ltx2_coords_cfg_doubled", False)
         )
@@ -1035,7 +1026,6 @@ class LTX2Pipeline(DiffusionPipeline):
         latent_height = int(extra_params["ltx2_latent_height"])
         latent_width = int(extra_params["ltx2_latent_width"])
 
-        # 2. Get sigmas from PixelModelInputs, cache, and pre-compute scheduler tensors.
         sigmas_np: np.ndarray = model_inputs.sigmas
         sigmas_key = str(num_inference_steps)
         if sigmas_key in self._cached_sigmas:
@@ -1081,7 +1071,6 @@ class LTX2Pipeline(DiffusionPipeline):
             text_encoder_hidden_states, prompt_valid_length, device
         )
 
-        # Encode negative prompt if doing CFG
         if self.do_classifier_free_guidance:
             if model_inputs.negative_tokens is not None:
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
@@ -1118,7 +1107,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 # Use zeros for negative prompt if not provided
                 negative_prompt_embeds = Tensor.zeros_like(prompt_embeds)
 
-            # Concatenate for CFG: [negative, positive]
             prompt_embeds = F.concat(
                 [negative_prompt_embeds, prompt_embeds], axis=0
             )
@@ -1126,9 +1114,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 [negative_prompt_valid_length, prompt_valid_length], axis=0
             )
 
-        # 4. Process text embeddings through connectors.
-        # valid_length was pre-computed by the tokenizer (pure numpy, outside
-        # any compiled graph) so the MHA padded kernel gets si64 stride metadata.
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,
@@ -1142,7 +1127,6 @@ class LTX2Pipeline(DiffusionPipeline):
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
         latents = self._pack_video_latents(latents)
 
-        # 6. Prepare audio latents
         if audio_latents_np.ndim != 4:
             raise ValueError("ltx2_audio_latents must have shape [B, C, L, M]")
         (
@@ -1155,7 +1139,6 @@ class LTX2Pipeline(DiffusionPipeline):
             raise ValueError(
                 "Mismatch between video and audio batch sizes in LTX2 latents"
             )
-        # Prefer tokenizer-precomputed scalars to avoid shape extraction.
         if "ltx2_audio_num_frames" in extra_params:
             audio_num_frames = int(extra_params["ltx2_audio_num_frames"])
             latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
@@ -1164,22 +1147,15 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_latents = Tensor.from_dlpack(audio_latents_arr).to(device)
         audio_latents = self._pack_audio_latents_packed(audio_latents)
 
-        # 7. Pre-compute positional embeddings.
-        # Prefer numpy arrays precomputed by PixelGenerationTokenizer (zero
-        # compilation cost).
         video_coords = Tensor.from_dlpack(video_coords_np).to(device)
 
         audio_coords_np_f32 = audio_coords_np.astype(np.float32)
         audio_coords = Tensor.from_dlpack(audio_coords_np_f32).to(device)
 
-        # Duplicate positional coords for CFG (batch dim doubles).
-        # Skip when the tokenizer already pre-doubled them on the CPU fast path.
         if self.do_classifier_free_guidance and not coords_cfg_doubled:
             video_coords = F.concat([video_coords, video_coords], axis=0)
             audio_coords = F.concat([audio_coords, audio_coords], axis=0)
 
-        # Pre-create the guidance scale tensor once so it can be passed to
-        # the compiled _apply_cfg_guidance graph without recreation per step.
         guidance_scale_tensor = Tensor.from_dlpack(
             np.array([guidance_scale], dtype=np.float32),
         ).to(device)
@@ -1189,7 +1165,6 @@ class LTX2Pipeline(DiffusionPipeline):
             timestep = timesteps_seq[i : i + 1]
             dt = dts_seq[i : i + 1]
 
-            # Prepare CFG inputs (compiled: concat+cast for both modalities).
             if self.do_classifier_free_guidance:
                 latent_model_input, audio_latent_model_input, timestep = (
                     self._prepare_cfg_latents_timesteps(
@@ -1218,27 +1193,21 @@ class LTX2Pipeline(DiffusionPipeline):
             noise_pred_video = noise_pred_video.cast(DType.float32)
             noise_pred_audio = noise_pred_audio.cast(DType.float32)
             if self.do_classifier_free_guidance:
-                # Compiled: cast + split + guidance formula for both modalities.
                 noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
 
-            # Euler scheduler step (separate compiled functions for video and audio).
             latents = self._scheduler_step_video(latents, noise_pred_video, dt)
             audio_latents = self._scheduler_step_audio(
                 audio_latents, noise_pred_audio, dt
             )
 
         print("End of the denoising loop.")
-        # 9. Decode video latents -> float32 [B,F,H,W,C] NumPy array.
-        # decode_video_latents: unpack (shape-dependent) + compiled _postprocess_video_latents
-        # + VAE decode + scale to [0,1] + permute to channel-last.
         frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
         )
 
         print("End of the video decoding.")
-        # 10. Decode audio latents (unpack then compiled postprocess then audio VAE + vocoder).
         audio = self.decode_audio_latents(
             audio_latents,
             audio_num_frames,
