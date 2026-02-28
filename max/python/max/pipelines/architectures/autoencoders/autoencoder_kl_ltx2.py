@@ -31,25 +31,14 @@ from .model_config import AutoencoderKLLTX2VideoConfig
 
 
 def pixel_shuffle_3d_merge(x: Tensor, stride: tuple[int, int, int]) -> Tensor:
-    """Robust 3D pixel shuffle merge using F.concat instead of reshape.
+    """Robust 3D pixel shuffle merge.
 
-    This bypasses MAX compiler symbolic validation issues with symbolic products.
     Input x is rank 8: [B, C, D, d, H, h, W, w]
     Output is rank 5: [B, C, D*d, H*h, W*w]
     """
-    d, h_s, w_s = stride
-
-    # Merge (2, 3) -> D, d
-    slices = [x[:, :, :, i, :, :, :, :] for i in range(d)]
-    x = F.concat(slices, axis=2)  # [B, C, D*d, H, h, W, w]
-
-    # Merge (4, 5) -> H, h
-    slices = [x[:, :, :, :, i, :, :] for i in range(h_s)]
-    x = F.concat(slices, axis=3)  # [B, C, D*d, H*h, W, w]
-
-    # Merge (6, 7) -> W, w
-    slices = [x[:, :, :, :, :, i] for i in range(w_s)]
-    x = F.concat(slices, axis=4)  # [B, C, D*d, H*h, W*w]
+    x = F.flatten(x, 6, 7)  # [B, C, D, d, H, h, W*w]
+    x = F.flatten(x, 4, 5)  # [B, C, D, d, H*h, W*w]
+    x = F.flatten(x, 2, 3)  # [B, C, D*d, H*h, W*w]
 
     return x
 
