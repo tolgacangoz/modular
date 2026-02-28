@@ -974,8 +974,8 @@ class PixelGenerationTokenizer(
             self._num_channels_latents,
             latent_height,
             latent_width,
-            num_frames,
             request.body.seed,
+            num_frames,
         )
 
         guidance: npt.NDArray[np.float32] | None = None

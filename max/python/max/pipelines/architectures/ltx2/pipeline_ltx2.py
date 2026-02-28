@@ -1065,7 +1065,7 @@ class LTX2Pipeline(DiffusionPipeline):
         if token_ids_np.ndim == 1:
             token_ids_np = np.expand_dims(token_ids_np, axis=0)
 
-        mask_np: npt.NDArray[np.bool_] | None = model_inputs.mask
+        mask_np: npt.NDArray | None = model_inputs.mask
         if mask_np is None:
             mask_np = np.ones_like(token_ids_np, dtype=np.bool_)
         if mask_np.ndim == 1:
@@ -1094,7 +1094,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get(
+                mask_neg_np: npt.NDArray | None = extra_params.get(
                     "ltx2_attn_mask_neg"
                 )
                 if mask_neg_np is None:

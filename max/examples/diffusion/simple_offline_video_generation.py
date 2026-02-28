@@ -112,8 +112,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--num-frames",
         type=int,
-        default=24,
-        help="Number of video frames to generate (default: 24).",
+        default=121,
+        help="Number of video frames to generate (default: 121).",
     )
     parser.add_argument(
         "--frame-rate",
