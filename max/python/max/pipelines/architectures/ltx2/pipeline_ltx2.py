@@ -981,19 +981,19 @@ class LTX2Pipeline(DiffusionPipeline):
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
-        print(
-            f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}",
-            flush=True,
-        )
-        print("[DEBUG] calling vocoder...", flush=True)
+        # print(
+        #     f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}",
+        #     flush=True,
+        # )
+        # print("[DEBUG] calling vocoder...", flush=True)
         # Vocoder compiled as float32 (cuDNN conv_transpose hardcodes CUDNN_DATA_FLOAT).
         result = self.vocoder(mel_spectrograms.cast(DType.float32))
-        print("[DEBUG] vocoder done", flush=True)
-        return result
+        # print("[DEBUG] vocoder done", flush=True)
+        return self._to_numpy(result)
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
-        cpu_image: Tensor = image.cast(DType.float32).to(CPU())
-        return np.from_dlpack(cpu_image)
+        cpu_video: Tensor = image.cast(DType.float32).to(CPU())
+        return np.from_dlpack(cpu_video)
 
     def execute(  # type: ignore[override]
         self,
