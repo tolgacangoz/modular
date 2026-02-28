@@ -319,9 +319,19 @@ def _mux_video_with_audio(
     out_container = av.open(output_path, mode="w")
     try:
         in_video = in_container.streams.video[0]
-        # Stream-copy: add output stream using the input codec parameters so
-        # packets can be muxed without re-encoding.
-        out_video = out_container.add_stream(template=in_video)
+        # Stream-copy: add output stream matching the input codec so packets
+        # can be muxed without re-encoding.  Older PyAV builds do not support
+        # the `template` keyword, so we set the codec parameters explicitly.
+        out_video = out_container.add_stream(in_video.codec_context.name)
+        cc_out = out_video.codec_context
+        cc_in = in_video.codec_context
+        cc_out.width = cc_in.width
+        cc_out.height = cc_in.height
+        cc_out.pix_fmt = cc_in.pix_fmt
+        cc_out.time_base = cc_in.time_base
+        # Copy SPS/PPS extradata so the h264 stream is self-contained.
+        if cc_in.extradata:
+            cc_out.extradata = cc_in.extradata
 
         audio_stream = _prepare_audio_stream(out_container, audio_sample_rate)
 
