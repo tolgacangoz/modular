@@ -364,7 +364,6 @@ async def generate_video(args: argparse.Namespace) -> None:
             quantization_encoding=args.encoding,
             device_specs=device_specs,
         ),
-        prefer_module_v3=True,
     )
     arch = PIPELINE_REGISTRY.retrieve_architecture(
         config.model.huggingface_weight_repo,
