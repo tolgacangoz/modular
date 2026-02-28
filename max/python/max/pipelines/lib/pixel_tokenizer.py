@@ -1084,18 +1084,18 @@ class PixelGenerationTokenizer(
             # Pre-doubled for CFG here on CPU, mirroring the coords treatment
             # above, so the pipeline can wrap it in a Tensor without any
             # further mask arithmetic.
-            valid_length_np = np.array(
-                [attn_mask.sum(axis=-1)], dtype=np.uint32
-            )  # [1] — one batch item
+            valid_length_np = np.atleast_2d(
+                np.array(attn_mask.sum(axis=-1), dtype=np.uint32)
+            )
 
             if do_cfg:
                 extra_params["ltx2_attn_mask_neg"] = attn_mask_neg
-                valid_length_neg_np = np.array(
-                    [attn_mask_neg.sum(axis=-1)], dtype=np.uint32
-                )  # [1] — one batch item
+                valid_length_neg_np = np.atleast_2d(
+                    np.array(attn_mask_neg.sum(axis=-1), dtype=np.uint32)
+                )
                 valid_length_np = np.concatenate(
                     [valid_length_neg_np, valid_length_np], axis=0
-                )  # [2]
+                )
             extra_params["ltx2_valid_length"] = valid_length_np
 
         # 5. Build the context

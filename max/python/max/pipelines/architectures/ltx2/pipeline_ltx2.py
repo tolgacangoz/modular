@@ -1083,7 +1083,7 @@ class LTX2Pipeline(DiffusionPipeline):
             .cast(DType.uint32)
         )
         prompt_embeds = self._pack_text_embeds(
-            text_encoder_hidden_states, sequence_lengths, device
+            text_encoder_hidden_states, prompt_valid_length, device
         )
 
         # Encode negative prompt if doing CFG
@@ -1110,7 +1110,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 )
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
-                    negative_sequence_lengths,
+                    negative_prompt_valid_length,
                     device,
                 )
             else:
