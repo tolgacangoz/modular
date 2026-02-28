@@ -108,6 +108,7 @@ class LTX2TransformerModel(ComponentModel):
             audio_coords,
         )
 
+
 class LTX2VocoderModel(ComponentModel):
     def __init__(
         self,

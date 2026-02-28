@@ -267,7 +267,7 @@ def _decode_video_data(video_data: str, format: str | None) -> np.ndarray:
         ]
         container.close()
         return np.stack(frames, axis=0)  # [F, H, W, 3] uint8
-    # Fallback: treat as raw float32 dump – shape is unknown, so just return bytes
+    # Fallback: treat as raw float32 dump - shape is unknown, so just return bytes
     raise ValueError(
         f"Cannot decode video_data with format={format!r}. "
         "Only 'mp4' is supported."
@@ -282,7 +282,10 @@ def _decode_audio_data(audio_data: str, format: str | None) -> torch.Tensor:
         with wave.open(buf, "rb") as wav_file:
             channels = wav_file.getnchannels()
             raw_frames = wav_file.readframes(wav_file.getnframes())
-        samples = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32767.0
+        samples = (
+            np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32)
+            / 32767.0
+        )
         # Interleaved [total_samples] → [channels, time]
         samples = samples.reshape(-1, channels).T
         return torch.from_numpy(samples.copy())

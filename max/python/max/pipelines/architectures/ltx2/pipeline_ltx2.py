@@ -136,9 +136,7 @@ class LTX2Pipeline(DiffusionPipeline):
             torch_dtype=torch.bfloat16,
         )
 
-        # Prefer CUDA device if available, otherwise leave on CPU.
-        if torch.cuda.is_available():
-            self.text_encoder.to("cuda")
+        self.text_encoder.to("cuda")
 
         # Cache VAE latent statistics as Tensors for use in compiled postprocess functions.
         # Must be set up BEFORE build_decode_video_latents / build_decode_audio_latents.
@@ -442,12 +440,8 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
         """
-        input_ids = torch.from_dlpack(token_ids).to(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-        attention_mask = torch.from_dlpack(mask).to(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        input_ids = torch.from_dlpack(token_ids).to("cuda")
+        attention_mask = torch.from_dlpack(mask).to("cuda")
 
         with torch.no_grad():
             outputs = self.text_encoder(
@@ -463,8 +457,7 @@ class LTX2Pipeline(DiffusionPipeline):
             self.text_encoder.to("cpu")
             del self.text_encoder
             self.text_encoder = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
 
         return hidden_states.to(torch.bfloat16)
 
@@ -1201,7 +1194,9 @@ class LTX2Pipeline(DiffusionPipeline):
             # Prepare CFG inputs (compiled: concat+cast for both modalities).
             if self.do_classifier_free_guidance:
                 latent_model_input, audio_latent_model_input, timestep = (
-                    self._prepare_cfg_latents_timesteps(latents, audio_latents, timestep)
+                    self._prepare_cfg_latents_timesteps(
+                        latents, audio_latents, timestep
+                    )
                 )
             else:
                 latent_model_input = latents
