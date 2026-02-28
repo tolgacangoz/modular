@@ -163,104 +163,88 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def mux_and_save(
-    video_data: str,
-    audio_data: str | None,
+def encode_video(
+    video: list[PIL.Image.Image] | np.ndarray | torch.Tensor | Iterator[torch.Tensor],
+    fps: int,
+    audio: torch.Tensor,
+    audio_sample_rate: int,
     output_path: str,
-    frame_rate: int,
+    video_chunks_number: int = 1,
 ) -> None:
-    """Mux base64-encoded video and audio into a single MP4 file.
-
-    When audio is provided the video (H.264 MP4) and audio (WAV) streams are
-    combined into one container with PyAV, mirroring the behaviour of the
-    diffusers ``encode_video`` helper.  When no audio is available the video
-    is saved as-is.
+    """
+    Encodes a video with audio using the PyAV library. Based on code from the original LTX-2 repo:
+    https://github.com/Lightricks/LTX-2/blob/4f410820b198e05074a1e92de793e3b59e9ab5a0/packages/ltx-pipelines/src/ltx_pipelines/utils/media_io.py#L182
 
     Args:
-        video_data: Base64-encoded MP4 video data string.
-        audio_data: Base64-encoded WAV audio data string, or None.
-        output_path: Path where the merged video should be saved.
-        frame_rate: Frames per second - used for the video stream time-base.
+        video (`List[PIL.Image.Image]` or `np.ndarray` or `torch.Tensor`):
+            A video tensor of shape [frames, height, width, channels] with integer pixel values in [0, 255]. If the
+            input is a `np.ndarray`, it is expected to be a float array with values in [0, 1] (which is what pipelines
+            usually return with `output_type="np"`).
+        fps (`int`)
+            The frames per second (FPS) of the encoded video.
+        audio (`torch.Tensor`, *optional*):
+            An audio waveform of shape [audio_channels, samples].
+        audio_sample_rate: (`int`, *optional*):
+            The sampling rate of the audio waveform. For LTX 2, this is typically 24000 (24 kHz).
+        output_path (`str`):
+            The path to save the encoded video to.
+        video_chunks_number (`int`, *optional*, defaults to `1`):
+            The number of chunks to split the video into for encoding. Each chunk will be encoded separately. The
+            number of chunks to use often depends on the tiling config for the video VAE.
     """
-    import io
+    if isinstance(video, list) and isinstance(video[0], PIL.Image.Image):
+        # Pipeline output_type="pil"; assumes each image is in "RGB" mode
+        video_frames = [np.array(frame) for frame in video]
+        video = np.stack(video_frames, axis=0)
+        video = torch.from_numpy(video)
+    elif isinstance(video, np.ndarray):
+        # Pipeline output_type="np"
+        is_denormalized = np.logical_and(np.zeros_like(video) <= video, video <= np.ones_like(video))
+        if np.all(is_denormalized):
+            video = (video * 255).round().astype("uint8")
+        else:
+            logger.warning(
+                "Supplied `numpy.ndarray` does not have values in [0, 1]. The values will be assumed to be pixel "
+                "values in [0, ..., 255] and will be used as is."
+            )
+        video = torch.from_numpy(video)
 
-    try:
-        import av
-    except ImportError:
-        # PyAV not installed - fall back to saving the video stream only.
-        av = None  # type: ignore[assignment]
+    if isinstance(video, torch.Tensor):
+        # Split into video_chunks_number along the frame dimension
+        video = torch.tensor_split(video, video_chunks_number, dim=0)
+        video = iter(video)
 
-    video_bytes = base64.b64decode(video_data)
+    first_chunk = next(video)
 
-    if av is None or audio_data is None:
-        # No PyAV or no audio: just write the raw video bytes.
-        with open(output_path, "wb") as f:
-            f.write(video_bytes)
-        print(f"Video saved to: {output_path}")
-        return
+    _, height, width, _ = first_chunk.shape
 
-    audio_bytes = base64.b64decode(audio_data)
+    container = av.open(output_path, mode="w")
+    stream = container.add_stream("libx264", rate=int(fps))
+    stream.width = width
+    stream.height = height
+    stream.pix_fmt = "yuv420p"
 
-    try:
-        in_video = av.open(io.BytesIO(video_bytes), mode="r")
-        in_audio = av.open(io.BytesIO(audio_bytes), mode="r")
-        out = av.open(output_path, mode="w", format="mp4")
+    if audio is not None:
+        if audio_sample_rate is None:
+            raise ValueError("audio_sample_rate is required when audio is provided")
 
-        # Remap video stream with copy codec.
-        in_v_stream = in_video.streams.video[0]
-        out_v_stream = out.add_stream(in_v_stream.codec_context.name, rate=in_v_stream.base_rate)
-        out_v_stream.width = in_v_stream.codec_context.width
-        out_v_stream.height = in_v_stream.codec_context.height
-        out_v_stream.pix_fmt = in_v_stream.codec_context.pix_fmt
-        if getattr(in_v_stream.codec_context, 'extradata', None) is not None:
-            out_v_stream.codec_context.extradata = in_v_stream.codec_context.extradata
+        audio_stream = _prepare_audio_stream(container, audio_sample_rate)
 
-        # Add AAC audio stream.
-        in_a_stream = in_audio.streams.audio[0]
-        sample_rate = in_a_stream.codec_context.sample_rate or 24000
-        out_a_stream = out.add_stream("aac", rate=sample_rate)
-        out_a_stream.codec_context.sample_rate = sample_rate
-        out_a_stream.codec_context.layout = "stereo"
+    for video_chunk in tqdm(chain([first_chunk], video), total=video_chunks_number, desc="Encoding video chunks"):
+        video_chunk_cpu = video_chunk.to("cpu").numpy()
+        for frame_array in video_chunk_cpu:
+            frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
 
-        # Remux video packets directly (no re-encode).
-        for packet in in_video.demux(in_v_stream):
-            if packet.dts is None:
-                continue
-            packet.stream = out_v_stream
-            out.mux(packet)
+    # Flush encoder
+    for packet in stream.encode():
+        container.mux(packet)
 
-        # Re-encode audio through the AAC encoder.
-        audio_next_pts = 0
-        resampler = av.audio.resampler.AudioResampler(
-            format="fltp",
-            layout="stereo",
-            rate=sample_rate,
-        )
-        for packet in in_audio.demux(in_a_stream):
-            for frame in packet.decode():
-                for rframe in resampler.resample(frame):
-                    if rframe.pts is None:
-                        rframe.pts = audio_next_pts
-                    audio_next_pts += rframe.samples
-                    for out_packet in out_a_stream.encode(rframe):
-                        out.mux(out_packet)
+    if audio is not None:
+        _write_audio(container, audio_stream, audio, audio_sample_rate)
 
-        # Flush audio encoder.
-        for out_packet in out_a_stream.encode():
-            out.mux(out_packet)
-
-        in_video.close()
-        in_audio.close()
-        out.close()
-        print(f"Video (with audio) saved to: {output_path}")
-    except Exception as e:
-        # Muxing failed - fall back to writing video-only.
-        print(
-            f"WARNING: Audio muxing failed ({e}); saving video without audio."
-        )
-        with open(output_path, "wb") as f:
-            f.write(video_bytes)
-        print(f"Video (no audio) saved to: {output_path}")
+    container.close()
 
 
 async def generate_video(args: argparse.Namespace) -> None:
@@ -392,30 +376,15 @@ async def generate_video(args: argparse.Namespace) -> None:
         audio_data = audio_item.audio_data if audio_item is not None else None
 
         if video_item.video_data:
-            mux_and_save(
+            encode_video(
                 video_item.video_data,
-                audio_data,
-                output_path,
                 args.frame_rate,
+                audio_data,
+                24_000,
+                output_path,
             )
         elif video_item.video_url:
             print(f"Video available at URL: {video_item.video_url}")
-
-    # Save any audio tracks that had no matching video.
-    for idx in range(len(video_items), len(audio_items)):
-        audio_item = audio_items[idx]
-        base_name, _ = os.path.splitext(args.output)
-        audio_path = f"{base_name}_{idx}.wav" if idx > 0 else f"{base_name}.wav"
-        if audio_item.audio_data:
-            audio_bytes = base64.b64decode(audio_item.audio_data)
-            with open(audio_path, "wb") as f:
-                f.write(audio_bytes)
-            print(f"Audio saved to: {audio_path}")
-        elif audio_item.audio_url:
-            print(f"Audio available at URL: {audio_item.audio_url}")
-
-    for item in unknown_items:
-        print(f"Unknown content type: {item.type}")
 
 
 def main(argv: list[str] | None = None) -> int:
