@@ -65,6 +65,8 @@ class LTX2ModelInputs(PixelModelInputs):
     num_inference_steps: int = 40
     num_frames: int = 121
     frame_rate: float = 24.0
+    audio_sampling_rate: int = 24000
+    """Audio sampling rate of the generated waveform (from vocoder)."""
     num_visuals_per_prompt: int = 1
     mask: npt.NDArray[np.bool_] | None = None
     """Attention mask for the text encoder (True = attend, False = ignore)."""
@@ -122,8 +124,6 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Audio VAE configuration (matching AutoencoderKLLTX2AudioConfig defaults).
         self.audio_vae_mel_compression_ratio = 4
-        self.audio_hop_length = 160
-        self.audio_sampling_rate = 16000
 
         # Instantiate Gemma3 text encoder (PyTorch) from the same model path.
         # NOTE: text encoder init is intentionally left as-is (uses PyTorch, not MAX).
@@ -427,7 +427,7 @@ class LTX2Pipeline(DiffusionPipeline):
         token_ids: np.ndarray,
         mask: np.ndarray,
         delete_encoder: bool = True,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         """Encode token_ids using transformers Gemma3ForConditionalGeneration.
 
         The token_ids come from PixelGenerationTokenizer which already handles
@@ -437,6 +437,7 @@ class LTX2Pipeline(DiffusionPipeline):
         Args:
             token_ids: Token IDs from PixelGenerationTokenizer (via model_inputs.token_ids).
             mask: Attention mask from PixelGenerationTokenizer (via model_inputs.mask).
+            delete_encoder: Whether to delete the text encoder after encoding.
 
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
@@ -465,7 +466,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
     @staticmethod
     def _pack_text_embeds(
-        text_hidden_states: torch.tensor,
+        text_hidden_states: torch.Tensor,
         sequence_lengths: Tensor,
         device: Device,
         padding_side: str = "left",
@@ -1160,12 +1161,7 @@ class LTX2Pipeline(DiffusionPipeline):
             latent_mel_bins = int(extra_params["ltx2_latent_mel_bins"])
         audio_latents_arr = audio_latents_np.astype(np.float32)
 
-        audio_latents = (
-            audio_latents_arr
-            if isinstance(audio_latents_arr, Tensor)
-            else Tensor.from_dlpack(audio_latents_arr)
-        )
-        audio_latents = audio_latents.to(device)
+        audio_latents = Tensor.from_dlpack(audio_latents_arr).to(device)
         audio_latents = self._pack_audio_latents_packed(audio_latents)
 
         # 7. Pre-compute positional embeddings.
@@ -1198,8 +1194,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 latent_model_input, audio_latent_model_input = (
                     self._prepare_cfg_latents(latents, audio_latents)
                 )
-                timestep_t = Tensor.from_dlpack(timestep)
-                timestep = F.concat([timestep_t, timestep_t], axis=0)
+                timestep = F.concat([timestep, timestep], axis=0)
             else:
                 latent_model_input = latents
                 audio_latent_model_input = audio_latents

@@ -485,7 +485,7 @@ async def generate_video(args: argparse.Namespace) -> None:
                 video_item.video_data,
                 args.frame_rate,
                 audio_data,
-                24_000,
+                24_000,  # Vocoder output rate (upsampled from 16kHz VAE)
                 output_path,
             )
         elif video_item.video_url:
