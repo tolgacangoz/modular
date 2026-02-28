@@ -88,55 +88,25 @@ class LTX2TransformerModel(ComponentModel):
 
     def __call__(
         self,
-        hidden_states: Tensor | None = None,
-        audio_hidden_states: Tensor | None = None,
-        encoder_hidden_states: Tensor | None = None,
-        audio_encoder_hidden_states: Tensor | None = None,
-        timestep: Tensor | None = None,
-        audio_timestep: Tensor | None = None,
-        video_coords: Tensor | None = None,
-        audio_coords: Tensor | None = None,
-        **kwargs: Any,
+        hidden_states: Tensor,
+        audio_hidden_states: Tensor,
+        encoder_hidden_states: Tensor,
+        audio_encoder_hidden_states: Tensor,
+        timestep: Tensor,
+        audio_timestep: Tensor,
+        video_coords: Tensor,
+        audio_coords: Tensor,
     ) -> Any:
-        # 1. Map positional arguments to kwargs for uniform processing.
-        # This ensures they are included in the 'tensor_keys' filtering below.
-        if hidden_states is not None:
-            kwargs["hidden_states"] = hidden_states
-        if audio_hidden_states is not None:
-            kwargs["audio_hidden_states"] = audio_hidden_states
-        if encoder_hidden_states is not None:
-            kwargs["encoder_hidden_states"] = encoder_hidden_states
-        if audio_encoder_hidden_states is not None:
-            kwargs["audio_encoder_hidden_states"] = audio_encoder_hidden_states
-        if timestep is not None:
-            kwargs["timestep"] = timestep
-        if audio_timestep is not None:
-            kwargs["audio_timestep"] = audio_timestep
-        if video_coords is not None:
-            kwargs["video_coords"] = video_coords
-        if audio_coords is not None:
-            kwargs["audio_coords"] = audio_coords
-
-        # 2. Provide fallbacks for optional tensors matching ltx2.py forward() logic.
-        # This ensures the compiled engine always receives all required inputs.
-        if "audio_timestep" not in kwargs or kwargs["audio_timestep"] is None:
-            kwargs["audio_timestep"] = kwargs.get("timestep")
-
-        # 3. Filter to only pass tensors that are part of input_types
-        # and match the forward signature of the compiled graph.
-        tensor_keys = {
-            "hidden_states",
-            "audio_hidden_states",
-            "encoder_hidden_states",
-            "audio_encoder_hidden_states",
-            "timestep",
-            "audio_timestep",
-            "video_coords",
-            "audio_coords",
-        }
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in tensor_keys}
-        return self.model(**filtered_kwargs)
-
+        return self.model(
+            hidden_states,
+            audio_hidden_states,
+            encoder_hidden_states
+            audio_encoder_hidden_states,
+            timestep,
+            audio_timestep,
+            video_coords,
+            audio_coords,
+        )
 
 class LTX2VocoderModel(ComponentModel):
     def __init__(
