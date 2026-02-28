@@ -1097,8 +1097,14 @@ class LTX2Pipeline(DiffusionPipeline):
                 mask_neg_np: npt.NDArray[np.bool_] | None = extra_params.get(
                     "ltx2_attn_mask_neg"
                 )
+                if mask_neg_np is None:
+                    mask_neg_np = np.ones_like(negative_ids_np, dtype=np.bool_)
+                if mask_neg_np.ndim == 1:
+                    mask_neg_np = np.expand_dims(mask_neg_np, axis=0)
+                mask_neg = Tensor.from_dlpack(mask_neg_np).to(device)
+
                 negative_hidden_states = self._encode_tokens(
-                    negative_ids_np, mask_neg_np
+                    negative_ids_np, mask_neg
                 )
                 negative_sequence_lengths = extra_params.get(
                     "ltx2_valid_length"
