@@ -218,9 +218,6 @@ class PixelGenerationTokenizer(
         self._default_sample_size = 128
         self._num_channels_latents = transformer_config["in_channels"] // 4
 
-        scheduler_config = components.get("scheduler", {}).get(
-            "config_dict", {}
-        )
         # Store guidance embeds flag
         self._use_guidance_embeds = transformer_config.get(
             "guidance_embeds", False
@@ -290,7 +287,7 @@ class PixelGenerationTokenizer(
         patch_size_t: int = 1
         patch_size: int = 1
         # scale_factors converts latent → pixel space: (temporal, height, width).
-        scale_f: int = self._ltx2_vae_temporal_scale  # 8
+        scale_f: int = self._vae_temporal_compression_ratio  # 8
         scale_h: int = self._vae_scale_factor  # 32
         scale_w: int = self._vae_scale_factor  # 32
         causal_offset: int = 1
