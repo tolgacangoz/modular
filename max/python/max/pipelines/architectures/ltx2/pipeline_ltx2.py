@@ -190,7 +190,7 @@ class LTX2Pipeline(DiffusionPipeline):
         self.build_scheduler_step_audio()
         self.build_decode_video_latents()
         self.build_decode_audio_latents()
-        self.build_prepare_cfg_latents()
+        self.build_prepare_cfg_latents_timesteps()
         self.build_apply_cfg_guidance()
 
         self._joint_attention_kwargs: dict[str, Any] | None = None
@@ -366,8 +366,8 @@ class LTX2Pipeline(DiffusionPipeline):
             input_types=input_types,
         )
 
-    def build_prepare_cfg_latents(self) -> None:
-        """Compile _prepare_cfg_latents: concat+cast for CFG latent doubling.
+    def build_prepare_cfg_latents_timesteps(self) -> None:
+        """Compile _prepare_cfg_latents_timesteps: concat+cast for CFG latent doubling.
 
         Fuses two F.concat calls and two casts into a single compiled graph,
         eliminating per-step Python dispatch overhead.
@@ -387,9 +387,10 @@ class LTX2Pipeline(DiffusionPipeline):
             TensorType(
                 dtype, shape=[1, _audio_seq_len, _audio_channels], device=device
             ),
+            TensorType(dtype, shape=[1], device=device),
         ]
-        self.__dict__["_prepare_cfg_latents"] = max_compile(
-            self._prepare_cfg_latents,
+        self.__dict__["_prepare_cfg_latents_timesteps"] = max_compile(
+            self._prepare_cfg_latents_timesteps,
             input_types=input_types,
         )
 
@@ -754,18 +755,19 @@ class LTX2Pipeline(DiffusionPipeline):
     # Compiled instance methods (overridden in __dict__ by build_* at startup)
     # -----------------------------------------------------------------------
 
-    def _prepare_cfg_latents(
-        self, video_latents: Tensor, audio_latents: Tensor
-    ) -> tuple[Tensor, Tensor]:
+    def _prepare_cfg_latents_timesteps(
+        self, video_latents: Tensor, audio_latents: Tensor, timesteps: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """Concat+cast video and audio latents for CFG [1,S,D]->[2,S,D].
 
-        Compiled via build_prepare_cfg_latents. Called once per denoising step
+        Compiled via build_prepare_cfg_latents_timesteps. Called once per denoising step
         when do_classifier_free_guidance is True.
         """
         dtype = self.transformer.config.dtype
         video = F.concat([video_latents, video_latents], axis=0).cast(dtype)
         audio = F.concat([audio_latents, audio_latents], axis=0).cast(dtype)
-        return video, audio
+        timesteps = F.concat([timesteps, timesteps], axis=0)
+        return video, audio, timesteps
 
     def _apply_cfg_guidance(
         self,
@@ -1198,10 +1200,9 @@ class LTX2Pipeline(DiffusionPipeline):
 
             # Prepare CFG inputs (compiled: concat+cast for both modalities).
             if self.do_classifier_free_guidance:
-                latent_model_input, audio_latent_model_input = (
-                    self._prepare_cfg_latents(latents, audio_latents)
+                latent_model_input, audio_latent_model_input, timestep = (
+                    self._prepare_cfg_latents_timesteps(latents, audio_latents, timestep)
                 )
-                timestep = F.concat([timestep, timestep], axis=0)
             else:
                 latent_model_input = latents
                 audio_latent_model_input = audio_latents
