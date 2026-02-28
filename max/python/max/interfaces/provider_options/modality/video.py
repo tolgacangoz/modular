@@ -75,3 +75,14 @@ class VideoProviderOptions(BaseModel):
         ),
         gt=0,
     )
+
+    true_cfg_scale: float | None = Field(
+        None,
+        description=(
+            "The true classifier-free guidance scale. Higher values encourage the model to "
+            "follow the prompt more closely at the cost of lower image diversity. "
+            "This is used in conjunction with guidance_scale to balance the influence of "
+            "the prompt and the generated image."
+        ),
+        gt=0,
+    )
