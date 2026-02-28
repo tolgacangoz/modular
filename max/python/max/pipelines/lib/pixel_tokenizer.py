@@ -942,7 +942,7 @@ class PixelGenerationTokenizer(
         num_warmup_steps: int = max(
             len(timesteps) - num_inference_steps * self._scheduler.order, 0
         )
-
+        video_options = request.body.provider_options.video
         latents, latent_image_ids = self._prepare_latents(
             image_options.num_images,
             self._num_channels_latents,
@@ -959,7 +959,6 @@ class PixelGenerationTokenizer(
             )
 
         extra_params: dict[str, npt.NDArray[Any]] = {}
-        video_options = request.body.provider_options.video
         if self._is_ltx2:
             frame_rate = (
                 video_options.frames_per_second
