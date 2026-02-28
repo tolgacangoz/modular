@@ -788,9 +788,7 @@ class LTX2Pipeline(DiffusionPipeline):
         a_cond = F.slice_tensor(audio, [slice(1, 2)])
         guided_audio = a_uncond + scale * (a_cond - a_uncond)
 
-        return guided_video.cast(
-            self.transformer.config.dtype
-        ), guided_audio.cast(self.transformer.config.dtype)
+        return guided_video, guided_audio
 
     def _pack_video_latents(self, latents: Tensor) -> Tensor:
         """Cast and pack video latents [B,C,F,H,W] -> [B,S,C] (patch_size=1).
@@ -1217,15 +1215,13 @@ class LTX2Pipeline(DiffusionPipeline):
                 video_coords,
                 audio_coords,
             )
-
+            noise_pred_video = noise_pred_video.cast(DType.float32)
+            noise_pred_audio = noise_pred_audio.cast(DType.float32)
             if self.do_classifier_free_guidance:
                 # Compiled: cast + split + guidance formula for both modalities.
                 noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
-            else:
-                noise_pred_video = noise_pred_video.cast(DType.float32)
-                noise_pred_audio = noise_pred_audio.cast(DType.float32)
 
             # Euler scheduler step (separate compiled functions for video and audio).
             latents = self._scheduler_step_video(latents, noise_pred_video, dt)

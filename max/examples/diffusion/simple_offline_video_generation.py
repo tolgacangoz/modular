@@ -288,11 +288,53 @@ def _decode_audio_data(audio_data: str, format: str | None) -> torch.Tensor:
         )
         # Interleaved [total_samples] → [channels, time]
         samples = samples.reshape(-1, channels).T
-        return torch.from_numpy(samples.copy())
+        tensor = torch.from_numpy(samples.copy())  # [channels, time]
+        # _write_audio requires stereo; duplicate mono channel if needed.
+        if tensor.shape[0] == 1:
+            tensor = tensor.repeat(2, 1)
+        return tensor
     raise ValueError(
         f"Cannot decode audio_data with format={format!r}. "
         "Only 'wav' is supported."
     )
+
+
+def _mux_video_with_audio(
+    video_bytes: bytes,
+    audio_tensor: torch.Tensor | None,
+    audio_sample_rate: int,
+    output_path: str,
+) -> None:
+    """Write a pre-encoded mp4 to *output_path*, optionally muxing in audio.
+
+    Video packets are stream-copied (no re-encode) to avoid quality loss.
+    Audio is encoded as AAC and muxed into the output container.
+    """
+    if audio_tensor is None:
+        with open(output_path, "wb") as f:
+            f.write(video_bytes)
+        return
+
+    in_container = av.open(io.BytesIO(video_bytes))
+    out_container = av.open(output_path, mode="w")
+    try:
+        in_video = in_container.streams.video[0]
+        # Stream-copy: add output stream using the input codec parameters so
+        # packets can be muxed without re-encoding.
+        out_video = out_container.add_stream(template=in_video)
+
+        audio_stream = _prepare_audio_stream(out_container, audio_sample_rate)
+
+        # Copy encoded video packets directly (no decode/re-encode).
+        for packet in in_container.demux(in_video):
+            if packet.dts is not None:
+                packet.stream = out_video
+                out_container.mux(packet)
+
+        _write_audio(out_container, audio_stream, audio_tensor, audio_sample_rate)
+    finally:
+        out_container.close()
+        in_container.close()
 
 
 def encode_video(
@@ -523,19 +565,17 @@ async def generate_video(args: argparse.Namespace) -> None:
         audio_data = audio_item.audio_data if audio_item is not None else None
 
         if video_item.video_data:
-            # video_data and audio_data arrive as base64-encoded strings;
-            # decode them back to array/tensor before encoding the output file.
-            video_array = _decode_video_data(
-                video_item.video_data, video_item.format
-            )
+            # video_data arrives as a base64-encoded mp4; decode to raw bytes
+            # and stream-copy the already-encoded h264 to avoid double compression.
+            # Audio (if present) is decoded from WAV and muxed as AAC.
+            video_bytes = base64.b64decode(video_item.video_data)
             audio_tensor: torch.Tensor | None = None
-            if audio_data is not None and audio_item is not None:
+            if audio_item is not None and audio_item.audio_data:
                 audio_tensor = _decode_audio_data(
                     audio_item.audio_data, audio_item.format
                 )
-            encode_video(
-                video_array,
-                args.frame_rate,
+            _mux_video_with_audio(
+                video_bytes,
                 audio_tensor,
                 24_000,  # Vocoder output rate (upsampled from 16kHz VAE)
                 output_path,
