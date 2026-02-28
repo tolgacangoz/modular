@@ -134,6 +134,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Guidance scale for classifier-free guidance. Set to 1.0 to disable CFG.",
     )
     parser.add_argument(
+        "--true-cfg-scale",
+        type=float,
+        default=3.5,
+        help="True guidance scale for classifier-free guidance. Set to 1.0 to disable CFG.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -408,6 +414,7 @@ async def generate_video(args: argparse.Namespace) -> None:
                 frames_per_second=args.frame_rate,
                 steps=args.num_inference_steps,
                 guidance_scale=args.guidance_scale,
+                true_cfg_scale=args.true_cfg_scale,
             )
         ),
     )
