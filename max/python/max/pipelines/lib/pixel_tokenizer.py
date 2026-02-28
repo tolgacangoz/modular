@@ -943,12 +943,13 @@ class PixelGenerationTokenizer(
             len(timesteps) - num_inference_steps * self._scheduler.order, 0
         )
         video_options = request.body.provider_options.video
+        num_frames = video_options.num_frames if video_options is not None else None
         latents, latent_image_ids = self._prepare_latents(
             image_options.num_images,
             self._num_channels_latents,
             latent_height,
             latent_width,
-            video_options.num_frames or None,
+            num_frames,
             request.body.seed,
         )
 
