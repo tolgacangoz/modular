@@ -240,7 +240,7 @@ class LTX2ConnectorTransformer1d(
         attn_mask_binarize_threshold: float = -9000.0,
     ) -> tuple[Tensor, Tensor | None]:
         # hidden_states shape: [batch_size, seq_len, hidden_dim]
-        # valid_length shape:  [batch_size] uint32 — number of real (non-padding) tokens
+        # valid_length shape:  [batch_size] int32 — number of real (non-padding) tokens
         batch_size, seq_len, _ = hidden_states.shape
 
         # valid_length for the self-attention blocks after register replacement.
@@ -259,7 +259,7 @@ class LTX2ConnectorTransformer1d(
             # This is computed inside the graph but only used for F.where (not the
             # MHA padded kernel), so there is no si32/si64 metadata issue.
             positions = Tensor.arange(
-                seq_len, dtype=DType.uint32, device=hidden_states.device
+                seq_len, dtype=DType.int32, device=hidden_states.device
             )  # [seq_len]
             if valid_length is not None:
                 binary_attn_mask = (
@@ -382,7 +382,7 @@ class LTX2TextConnectors(
         # Must be a graph input (not computed inside the graph) so the MHA
         # padded kernel receives si64 stride metadata as required.
         valid_length_type = TensorType(
-            DType.uint32,
+            DType.int32,
             shape=[2],
             device=self.config.device,
         )
@@ -420,7 +420,7 @@ class LTX2TextConnectors(
             # No registers: zero out positions beyond valid_length.
             positions = Tensor.arange(
                 video_text_embedding.shape[1],
-                dtype=DType.uint32,
+                dtype=DType.int32,
                 device=video_text_embedding.device,
             )  # [seq_len]
             output_mask = (
