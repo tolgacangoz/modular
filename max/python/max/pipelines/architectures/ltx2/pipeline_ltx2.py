@@ -193,9 +193,6 @@ class LTX2Pipeline(DiffusionPipeline):
         self.build_prepare_cfg_latents()
         self.build_apply_cfg_guidance()
 
-        # A workaround to remove overhead from `functional.wrapped`.
-        if unwrapped_transformer := self.transformer.unwrap_model():
-            self.transformer = cast(Any, unwrapped_transformer)
 
         self._joint_attention_kwargs: dict[str, Any] | None = None
         self._num_timesteps: int = 0
