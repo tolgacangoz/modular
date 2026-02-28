@@ -264,7 +264,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         batch=1, seq=6144 (16*16*24), channels=128
         """
-        dtype = self.transformer.config.dtype
+        dtype = DType.float32
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 6144  # 16 * 16 * 24
@@ -400,7 +400,7 @@ class LTX2Pipeline(DiffusionPipeline):
           audio in:  [2, 126, 128]   bfloat16 -> [1, 126, 128]   bfloat16
           guidance:  [1]             float32
         """
-        dtype = self.transformer.config.dtype
+        dtype = DType.float32
         device = self.transformer.devices[0]
         _channels = self.transformer.config.in_channels  # 128
         _video_seq_len = 6144  # 16 * 16 * 24
