@@ -1082,7 +1082,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 sequence_lengths,
             )
             .to(device)
-            .cast(DType.uint32)
+            .cast(DType.int32)
         )
         prompt_embeds = self._pack_text_embeds(
             text_encoder_hidden_states, prompt_valid_length, device
@@ -1108,7 +1108,7 @@ class LTX2Pipeline(DiffusionPipeline):
                         negative_sequence_lengths,
                     )
                     .to(device)
-                    .cast(DType.uint32)
+                    .cast(DType.int32)
                 )
                 negative_prompt_embeds = self._pack_text_embeds(
                     negative_hidden_states,
