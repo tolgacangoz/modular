@@ -503,9 +503,7 @@ class LTX2Pipeline(DiffusionPipeline):
         # Convert MAX Tensors to PyTorch: MAX Tensor lacks masked_fill, amin,
         # amax, and multi-axis sum with keepdim.
         ths = text_hidden_states
-        sl = torch.from_dlpack(sequence_lengths).view(
-            -1
-        )  # ensure 1D [batch_size]
+        sl = torch.from_dlpack(sequence_lengths)
         torch_device = ths.device
 
         batch_size, seq_len, hidden_dim, num_layers = ths.shape
