@@ -441,8 +441,8 @@ class LTX2Pipeline(DiffusionPipeline):
         Returns:
             Hidden states tensor from the text encoder, stacked across all layers.
         """
-        input_ids = torch.from_dlpack(token_ids).to(self.devices[0])
-        attention_mask = torch.from_dlpack(mask).to(self.devices[0])
+        input_ids = torch.from_dlpack(token_ids).to("cuda" if torch.cuda.is_available() else "cpu")
+        attention_mask = torch.from_dlpack(mask).to("cuda" if torch.cuda.is_available() else "cpu")
 
         with torch.no_grad():
             outputs = self.text_encoder(
