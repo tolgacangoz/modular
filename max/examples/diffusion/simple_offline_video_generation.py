@@ -341,7 +341,9 @@ def _mux_video_with_audio(
                 packet.stream = out_video
                 out_container.mux(packet)
 
-        _write_audio(out_container, audio_stream, audio_tensor, audio_sample_rate)
+        _write_audio(
+            out_container, audio_stream, audio_tensor, audio_sample_rate
+        )
     finally:
         out_container.close()
         in_container.close()

@@ -273,7 +273,9 @@ class LTX2Pipeline(DiffusionPipeline):
                 dtype, shape=[1, _video_seq_len, _channels], device=device
             ),
             TensorType(
-                DType.float32, shape=[1, _video_seq_len, _channels], device=device
+                DType.float32,
+                shape=[1, _video_seq_len, _channels],
+                device=device,
             ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
@@ -296,7 +298,9 @@ class LTX2Pipeline(DiffusionPipeline):
                 dtype, shape=[1, _audio_seq_len, _channels], device=device
             ),
             TensorType(
-                DType.float32, shape=[1, _audio_seq_len, _channels], device=device
+                DType.float32,
+                shape=[1, _audio_seq_len, _channels],
+                device=device,
             ),
             TensorType(DType.float32, shape=[1], device=device),
         ]
