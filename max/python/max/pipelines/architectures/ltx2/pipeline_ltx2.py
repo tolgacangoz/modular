@@ -65,7 +65,7 @@ class LTX2ModelInputs(PixelModelInputs):
     num_inference_steps: int = 40
     num_frames: int = 121
     frame_rate: float = 24.0
-    audio_sampling_rate: int = 24000
+    audio_sampling_rate: int = 16000
     """Audio sampling rate of the generated waveform (from vocoder)."""
     num_visuals_per_prompt: int = 1
     mask: npt.NDArray[np.bool_] | None = None
