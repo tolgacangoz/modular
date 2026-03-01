@@ -14,7 +14,6 @@
 from collections.abc import Callable
 from typing import Any
 
-import numpy as np
 from max.driver import Device
 from max.experimental import functional as F
 from max.experimental.tensor import Tensor
@@ -78,6 +77,10 @@ class BaseAutoencoderModel(ComponentModel):
         self.latents_mean: Any = None
         self.latents_std: Any = None
 
+        # WeightData is a DLPackArray; route through PyTorch so BF16 buffers
+        # (e.g. latents_mean / latents_std) are handled correctly.
+        import torch
+
         for key, value in self.weights.items():
             raw_data = value.data()
 
@@ -85,14 +88,10 @@ class BaseAutoencoderModel(ComponentModel):
             # dtype cast.  These are registered buffers (not decoder weights)
             # and must be preserved in their original precision.
             if key == "latents_mean":
-                self.latents_mean = np.array(
-                    raw_data.to_numpy(), dtype=np.float32
-                )
+                self.latents_mean = torch.from_dlpack(raw_data).float().numpy()
                 continue
             if key == "latents_std":
-                self.latents_std = np.array(
-                    raw_data.to_numpy(), dtype=np.float32
-                )
+                self.latents_std = torch.from_dlpack(raw_data).float().numpy()
                 continue
 
             weight_data = raw_data
