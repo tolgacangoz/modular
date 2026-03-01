@@ -151,10 +151,14 @@ class LTX2Pipeline(DiffusionPipeline):
         vae_std = getattr(self.vae, "latents_std", None)
         if vae_mean is not None and vae_std is not None:
             self._vae_latents_mean: Tensor | None = Tensor.constant(
-                np.array(vae_mean, dtype=np.float32), dtype=stats_dtype, device=device
+                np.array(vae_mean, dtype=np.float32),
+                dtype=stats_dtype,
+                device=device,
             )
             self._vae_latents_std: Tensor | None = Tensor.constant(
-                np.array(vae_std, dtype=np.float32), dtype=stats_dtype, device=device
+                np.array(vae_std, dtype=np.float32),
+                dtype=stats_dtype,
+                device=device,
             )
         else:
             self._vae_latents_mean = None
