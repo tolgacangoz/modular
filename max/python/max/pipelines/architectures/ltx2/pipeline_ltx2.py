@@ -354,13 +354,15 @@ class LTX2Pipeline(DiffusionPipeline):
             return
         dtype = self.transformer.config.dtype
         device = self.transformer.devices[0]
-        num_channels = int(self._audio_latents_mean.shape[0])  # C_audio (8)
-        _latent_mel_bins = 64 // self.audio_vae_mel_compression_ratio  # 16
+        # latents_mean has shape [C*M = base_channels = 128], matching the packed
+        # audio tensor last dim [B, L, C*M].  Denormalization happens on the packed
+        # tensor before unpack — same order as diffusers.
+        num_channels = int(self._audio_latents_mean.shape[0])  # 128 = C*M
         _audio_num_frames = 126  # round((121/24)*25.0)=126
         input_types = [
             TensorType(
                 dtype,
-                shape=[1, num_channels, _audio_num_frames, _latent_mel_bins],
+                shape=[1, _audio_num_frames, num_channels],
                 device=device,
             ),
             TensorType(DType.float32, shape=[num_channels], device=device),
@@ -926,14 +928,13 @@ class LTX2Pipeline(DiffusionPipeline):
         latents_mean: Tensor,
         latents_std: Tensor,
     ) -> Tensor:
-        """Denormalize audio latents [B,C,L,M] using per-channel stats.
+        """Denormalize packed audio latents [B,L,C*M] using per-channel stats.
 
-        Mirrors Flux2's _postprocess_latents for the audio stream.
+        Operates on the packed tensor (before unpack), matching diffusers order:
+          _denormalize_audio_latents -> _unpack_audio_latents
+        stats shape [C*M] broadcasts against last dim of [B, L, C*M] directly.
         """
-        c = latents_mean.shape[0]
-        mean_r = F.reshape(latents_mean.cast(latents.dtype), (1, c, 1, 1))
-        std_r = F.reshape(latents_std.cast(latents.dtype), (1, c, 1, 1))
-        return latents * std_r + mean_r
+        return latents * latents_std.cast(latents.dtype) + latents_mean.cast(latents.dtype)
 
     @property
     def guidance_scale(self) -> float:
@@ -1018,11 +1019,9 @@ class LTX2Pipeline(DiffusionPipeline):
         """
         if output_type == "latent":
             return latents
-        # Shape-dependent unpack: [B,L,C*M] -> [B,C,L,M]  (not compiled).
-        latents = self._unpack_audio_latents(
-            latents, audio_num_frames, latent_mel_bins
-        )
-        # Compiled postprocess: denormalize.
+        # Denormalize on the PACKED latent [B,L,C*M] before unpack — matches diffusers:
+        #   _denormalize_audio_latents(packed) -> _unpack_audio_latents
+        # stats [C*M=128] broadcast against last dim of [B,L,128] directly.
         if (
             self._audio_latents_mean is not None
             and self._audio_latents_std is not None
@@ -1030,6 +1029,10 @@ class LTX2Pipeline(DiffusionPipeline):
             latents = self._postprocess_audio_latents(
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
+        # Shape-dependent unpack: [B,L,C*M] -> [B,C,L,M]  (not compiled).
+        latents = self._unpack_audio_latents(
+            latents, audio_num_frames, latent_mel_bins
+        )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
         # print(
         #     f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}",
