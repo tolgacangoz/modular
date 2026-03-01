@@ -26,12 +26,12 @@ class FlowMatchEulerDiscreteScheduler:
 
     def __init__(
         self,
-        base_image_seq_len: int = 256,
+        base_image_seq_len: int = 1024,
         max_image_seq_len: int = 4096,
-        base_shift: float = 0.5,
-        max_shift: float = 1.15,
+        base_shift: float = 0.95,
+        max_shift: float = 2.05,
         use_flow_sigmas: bool = False,
-        use_dynamic_shifting: bool = False,
+        use_dynamic_shifting: bool = True,
         use_empirical_mu: bool = False,
         order: int = 1,
         **unused_kwargs,

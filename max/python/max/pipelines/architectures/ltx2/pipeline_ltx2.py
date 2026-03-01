@@ -1044,9 +1044,19 @@ class LTX2Pipeline(DiffusionPipeline):
         latent_height = int(extra_params["ltx2_latent_height"])
         latent_width = int(extra_params["ltx2_latent_width"])
 
-        video_seq_len = int(latents.shape[1])
+        video_seq_len = latent_num_frames * latent_height * latent_width
         num_inference_steps = model_inputs.num_inference_steps
         sigmas_key = f"{num_inference_steps}_{video_seq_len}"
+        if sigmas_key in self._cached_sigmas:
+            sigmas = self._cached_sigmas[sigmas_key]
+        else:
+            sigmas = Tensor.from_dlpack(model_inputs.sigmas).to(device)
+            self._cached_sigmas[sigmas_key] = sigmas
+        all_timesteps, all_dts = self.prepare_scheduler(sigmas)
+
+        audio_seq_len = int(audio_latents_np.shape[1])
+        num_inference_steps = model_inputs.num_inference_steps
+        sigmas_key = f"{num_inference_steps}_{audio_seq_len}"
         if sigmas_key in self._cached_sigmas:
             sigmas = self._cached_sigmas[sigmas_key]
         else:
@@ -1067,7 +1077,7 @@ class LTX2Pipeline(DiffusionPipeline):
         if token_ids_np.ndim == 1:
             token_ids_np = np.expand_dims(token_ids_np, axis=0)
 
-        mask_np: npt.NDArray | None = model_inputs.mask
+        mask_np: np.ndarray | None = model_inputs.mask
         if mask_np is None:
             mask_np = np.ones_like(token_ids_np, dtype=np.bool_)
         if mask_np.ndim == 1:
@@ -1095,7 +1105,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 negative_ids_np: np.ndarray = model_inputs.negative_tokens.array
                 if negative_ids_np.ndim == 1:
                     negative_ids_np = np.expand_dims(negative_ids_np, axis=0)
-                mask_neg_np: npt.NDArray | None = extra_params.get(
+                mask_neg_np: np.ndarray | None = extra_params.get(
                     "ltx2_attn_mask_neg"
                 )
                 if mask_neg_np is None:
@@ -1125,6 +1135,7 @@ class LTX2Pipeline(DiffusionPipeline):
             else:
                 # Use zeros for negative prompt if not provided
                 negative_prompt_embeds = Tensor.zeros_like(prompt_embeds)
+                negative_prompt_valid_length = Tensor.zeros_like(prompt_valid_length)
 
             prompt_embeds = F.concat(
                 [negative_prompt_embeds, prompt_embeds], axis=0
@@ -1146,6 +1157,11 @@ class LTX2Pipeline(DiffusionPipeline):
         # Pack latents: [B, C, F, H, W] -> [B, S, D]
         latents = self._pack_video_latents(latents)
 
+        if audio_latents_np is None:
+            raise ValueError(
+                "ltx2_audio_latents is missing from extra_params; "
+                "ensure the tokenizer sets 'ltx2_audio_latents' for LTX-2."
+            )
         if audio_latents_np.ndim != 4:
             raise ValueError("ltx2_audio_latents must have shape [B, C, L, M]")
         (
@@ -1179,7 +1195,8 @@ class LTX2Pipeline(DiffusionPipeline):
             np.array([guidance_scale], dtype=np.float32),
         ).to(device)
 
-        num_noise_tokens = int(latents.shape[1])
+        num_video_noise_tokens = int(latents.shape[1])
+        num_audio_noise_tokens = int(audio_latents.shape[1])
         for i in tqdm(range(num_inference_steps), desc="Denoising"):
             timestep = timesteps_seq[i : i + 1]
             dt = dts_seq[i : i + 1]
@@ -1215,9 +1232,9 @@ class LTX2Pipeline(DiffusionPipeline):
                 )
 
             latents = self._scheduler_step_video(
-                latents, noise_pred_video, dt, num_noise_tokens)
+                latents, noise_pred_video, dt, num_video_noise_tokens)
             audio_latents = self._scheduler_step_audio(
-                audio_latents, noise_pred_audio, dt, num_noise_tokens
+                audio_latents, noise_pred_audio, dt, num_audio_noise_tokens
             )
 
         print("End of the denoising loop.")
