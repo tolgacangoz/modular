@@ -140,14 +140,12 @@ class LTX2Pipeline(DiffusionPipeline):
 
         # Cache VAE latent statistics as Tensors for use in compiled postprocess functions.
         # Must be set up BEFORE build_decode_video_latents / build_decode_audio_latents.
+        # Stats are registered buffers in the safetensors weights; BaseAutoencoderModel.
+        # load_model() extracts them and exposes them as self.latents_mean / self.latents_std.
         device = self.transformer.devices[0]
         dtype = self.transformer.config.dtype
-        vae_mean = getattr(self.vae, "latents_mean", None) or getattr(
-            self.vae.config, "latents_mean", None
-        )
-        vae_std = getattr(self.vae, "latents_std", None) or getattr(
-            self.vae.config, "latents_std", None
-        )
+        vae_mean = getattr(self.vae, "latents_mean", None)
+        vae_std = getattr(self.vae, "latents_std", None)
         if vae_mean is not None and vae_std is not None:
             self._vae_latents_mean: Tensor | None = Tensor.constant(
                 np.array(vae_mean, dtype=np.float32), dtype=dtype, device=device
@@ -159,12 +157,8 @@ class LTX2Pipeline(DiffusionPipeline):
             self._vae_latents_mean = None
             self._vae_latents_std = None
 
-        audio_mean = getattr(self.audio_vae, "latents_mean", None) or getattr(
-            self.audio_vae.config, "latents_mean", None
-        )
-        audio_std = getattr(self.audio_vae, "latents_std", None) or getattr(
-            self.audio_vae.config, "latents_std", None
-        )
+        audio_mean = getattr(self.audio_vae, "latents_mean", None)
+        audio_std = getattr(self.audio_vae, "latents_std", None)
         if audio_mean is not None and audio_std is not None:
             self._audio_latents_mean: Tensor | None = Tensor.constant(
                 np.array(audio_mean, dtype=np.float32),

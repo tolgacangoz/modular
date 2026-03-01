@@ -14,6 +14,7 @@
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 from max.driver import Device
 from max.experimental import functional as F
 from max.experimental.tensor import Tensor
@@ -73,8 +74,28 @@ class BaseAutoencoderModel(ComponentModel):
         encoder_state_dict = {}
         target_dtype = self.config.dtype
 
+        # Reset latent stats — populated below if found in weights.
+        self.latents_mean: Any = None
+        self.latents_std: Any = None
+
         for key, value in self.weights.items():
-            weight_data = value.data()
+            raw_data = value.data()
+
+            # Extract latent stats as float32 from the raw buffer before any
+            # dtype cast.  These are registered buffers (not decoder weights)
+            # and must be preserved in their original precision.
+            if key == "latents_mean":
+                self.latents_mean = np.array(
+                    raw_data.to_numpy(), dtype=np.float32
+                )
+                continue
+            if key == "latents_std":
+                self.latents_std = np.array(
+                    raw_data.to_numpy(), dtype=np.float32
+                )
+                continue
+
+            weight_data = raw_data
             if weight_data.dtype != target_dtype:
                 if weight_data.dtype.is_float() and target_dtype.is_float():
                     weight_data = weight_data.astype(target_dtype)
