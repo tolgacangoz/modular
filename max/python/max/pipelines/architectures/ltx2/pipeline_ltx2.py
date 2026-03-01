@@ -864,7 +864,11 @@ class LTX2Pipeline(DiffusionPipeline):
         sigmas_curr = F.slice_tensor(sigmas, [slice(0, -1)])
         sigmas_next = F.slice_tensor(sigmas, [slice(1, None)])
         all_dt = F.sub(sigmas_next, sigmas_curr)
-        all_timesteps = sigmas_curr.cast(self.transformer.config.dtype)
+        # Transformer timestep embedding is trained on [0, 1000] range
+        # (num_train_timesteps=1000), matching diffusers which passes
+        # sigmas * 1000 as the timestep. dt stays in [0,1] sigma scale
+        # for the Euler update: latents += dt * noise_pred.
+        all_timesteps = (sigmas_curr * 1000.0).cast(self.transformer.config.dtype)
         return all_timesteps, all_dt
 
     def scheduler_step(
