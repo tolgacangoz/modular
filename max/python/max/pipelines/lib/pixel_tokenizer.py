@@ -951,21 +951,22 @@ class PixelGenerationTokenizer(
                 preprocessed_image, dtype=np.uint8
             ).copy()
 
+        video_options = request.body.provider_options.video
         # 3. Resolve image dimensions using cached static values
-        latent_height = 2 * (int(height) // (self._vae_scale_factor * 2))
-        latent_width = 2 * (int(width) // (self._vae_scale_factor * 2))
-        image_seq_len = (latent_height // 2) * (latent_width // 2)
+        latent_height = int(height) // self._vae_spatial_compression_ratio
+        latent_width = int(width) // self._vae_spatial_compression_ratio
+        latent_frames = (video_options.num_frames - 1) // self._vae_temporal_compression_ratio + 1
+        visual_seq_len = latent_height * latent_width * (latent_frames if video_options.num_frames is not None else 1)
 
         num_inference_steps = steps
         timesteps, sigmas = self._scheduler.retrieve_timesteps_and_sigmas(
-            image_seq_len, num_inference_steps
+            visual_seq_len, num_inference_steps
         )
 
         num_warmup_steps: int = max(
             len(timesteps) - steps * self._scheduler.order, 0
         )
 
-        video_options = request.body.provider_options.video
         num_frames = (
             video_options.num_frames if video_options is not None else None
         )

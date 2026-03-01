@@ -838,15 +838,29 @@ class LTX2Pipeline(DiffusionPipeline):
         latents: Tensor,
         noise_pred: Tensor,
         dt: Tensor,
+        num_noise_tokens: int,
     ) -> Tensor:
-        """Apply a single Euler update step in sigma space.
-
-        Shared for both video and audio latents.
-        """
-        latents_dtype = latents.dtype
-        latents = latents.cast(DType.float32)
-        latents = latents + dt * noise_pred
-        return latents.cast(latents_dtype)
+        """Apply a single Euler update step in sigma space."""
+        latents_sliced = F.slice_tensor(
+            latents,
+            [
+                slice(None),
+                (slice(0, num_noise_tokens), "num_tokens"),
+                slice(None),
+            ],
+        )
+        noise_pred_sliced = F.slice_tensor(
+            noise_pred,
+            [
+                slice(None),
+                (slice(0, num_noise_tokens), "num_tokens"),
+                slice(None),
+            ],
+        )
+        latents_dtype = latents_sliced.dtype
+        latents_sliced = latents_sliced.cast(DType.float32)
+        latents_sliced = latents_sliced + dt * noise_pred_sliced
+        return latents_sliced.cast(latents_dtype)
 
     def _postprocess_video_latents(
         self,
@@ -1030,12 +1044,13 @@ class LTX2Pipeline(DiffusionPipeline):
         latent_height = int(extra_params["ltx2_latent_height"])
         latent_width = int(extra_params["ltx2_latent_width"])
 
-        sigmas_np: np.ndarray = model_inputs.sigmas
-        sigmas_key = str(num_inference_steps)
+        video_seq_len = int(latents.shape[1])
+        num_inference_steps = model_inputs.num_inference_steps
+        sigmas_key = f"{num_inference_steps}_{video_seq_len}"
         if sigmas_key in self._cached_sigmas:
             sigmas = self._cached_sigmas[sigmas_key]
         else:
-            sigmas = Tensor.from_dlpack(sigmas_np).to(device)
+            sigmas = Tensor.from_dlpack(model_inputs.sigmas).to(device)
             self._cached_sigmas[sigmas_key] = sigmas
         all_timesteps, all_dts = self.prepare_scheduler(sigmas)
 
@@ -1164,7 +1179,7 @@ class LTX2Pipeline(DiffusionPipeline):
             np.array([guidance_scale], dtype=np.float32),
         ).to(device)
 
-        # 8. Denoising loop
+        num_noise_tokens = int(latents.shape[1])
         for i in tqdm(range(num_inference_steps), desc="Denoising"):
             timestep = timesteps_seq[i : i + 1]
             dt = dts_seq[i : i + 1]
@@ -1190,20 +1205,19 @@ class LTX2Pipeline(DiffusionPipeline):
                 connector_prompt_embeds,
                 connector_audio_prompt_embeds,
                 timestep,
-                timestep,  # audio_timestep = timestep
+                timestep,
                 video_coords,
                 audio_coords,
             )
-            noise_pred_video = noise_pred_video.cast(DType.float32)
-            noise_pred_audio = noise_pred_audio.cast(DType.float32)
             if self.do_classifier_free_guidance:
                 noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
 
-            latents = self._scheduler_step_video(latents, noise_pred_video, dt)
+            latents = self._scheduler_step_video(
+                latents, noise_pred_video, dt, num_noise_tokens)
             audio_latents = self._scheduler_step_audio(
-                audio_latents, noise_pred_audio, dt
+                audio_latents, noise_pred_audio, dt, num_noise_tokens
             )
 
         print("End of the denoising loop.")
