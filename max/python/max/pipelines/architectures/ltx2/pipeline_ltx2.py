@@ -1201,16 +1201,16 @@ class LTX2Pipeline(DiffusionPipeline):
         num_audio_noise_tokens = int(audio_latents.shape[1])
 
         # --- DEBUG: initial latent stats ---
-        _lat_np = np.from_dlpack(latents.cast(DType.float32).to("cpu"))
+        _lat_np = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Initial video latents: shape={_lat_np.shape}, mean={_lat_np.mean():.4f}, std={_lat_np.std():.4f}, min={_lat_np.min():.4f}, max={_lat_np.max():.4f}")
-        _aud_np = np.from_dlpack(audio_latents.cast(DType.float32).to("cpu"))
+        _aud_np = np.from_dlpack(audio_latents.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Initial audio latents: shape={_aud_np.shape}, mean={_aud_np.mean():.4f}, std={_aud_np.std():.4f}")
         # --- DEBUG: prompt_embeds stats ---
-        _pe = np.from_dlpack(prompt_embeds.cast(DType.float32).to("cpu"))
+        _pe = np.from_dlpack(prompt_embeds.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] prompt_embeds: shape={_pe.shape}, mean={_pe.mean():.4f}, std={_pe.std():.4f}")
         # --- DEBUG: timesteps / dts ---
-        _ts = np.from_dlpack(all_timesteps.cast(DType.float32).to("cpu")).flatten()
-        _ds = np.from_dlpack(all_dts.cast(DType.float32).to("cpu")).flatten()
+        _ts = np.from_dlpack(all_timesteps.cast(DType.float32).to(CPU())).flatten()
+        _ds = np.from_dlpack(all_dts.cast(DType.float32).to(CPU())).flatten()
         print(f"[DEBUG] timesteps[:5]={_ts[:5]}, dts[:5]={_ds[:5]}")
 
         for i in tqdm(range(num_inference_steps), desc="Denoising"):
@@ -1249,10 +1249,10 @@ class LTX2Pipeline(DiffusionPipeline):
 
             # --- DEBUG: first step detailed stats ---
             if i == 0:
-                _npv = np.from_dlpack(noise_pred_video.cast(DType.float32).to("cpu"))
-                _npa = np.from_dlpack(noise_pred_audio.cast(DType.float32).to("cpu"))
-                _dt_val = float(np.from_dlpack(all_dts.cast(DType.float32).to("cpu")).flatten()[0])
-                _t_val = float(np.from_dlpack(all_timesteps.cast(DType.float32).to("cpu")).flatten()[0])
+                _npv = np.from_dlpack(noise_pred_video.cast(DType.float32).to(CPU()))
+                _npa = np.from_dlpack(noise_pred_audio.cast(DType.float32).to(CPU()))
+                _dt_val = float(np.from_dlpack(all_dts.cast(DType.float32).to(CPU())).flatten()[0])
+                _t_val = float(np.from_dlpack(all_timesteps.cast(DType.float32).to(CPU())).flatten()[0])
                 print(f"[DEBUG i=0] timestep={_t_val:.4f}, dt={_dt_val:.6f}")
                 print(f"[DEBUG i=0] noise_pred_video: mean={_npv.mean():.4f}, std={_npv.std():.4f}, min={_npv.min():.4f}, max={_npv.max():.4f}")
                 print(f"[DEBUG i=0] noise_pred_audio: mean={_npa.mean():.4f}, std={_npa.std():.4f}")
@@ -1265,12 +1265,12 @@ class LTX2Pipeline(DiffusionPipeline):
 
         print("End of the denoising loop.")
         # --- DEBUG: final latent stats ---
-        _lat_final = np.from_dlpack(latents.cast(DType.float32).to("cpu"))
+        _lat_final = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final video latents: mean={_lat_final.mean():.4f}, std={_lat_final.std():.4f}, min={_lat_final.min():.4f}, max={_lat_final.max():.4f}")
         frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
         )
-        frames = np.from_dlpack(frames.cast(DType.float32).to("cpu"))
+        frames = np.from_dlpack(frames.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final video frames: mean={frames.mean():.4f}, std={frames.std():.4f}, min={frames.min():.4f}, max={frames.max():.4f}")
         print("End of the video decoding.")
         audio = self.decode_audio_latents(
@@ -1278,7 +1278,7 @@ class LTX2Pipeline(DiffusionPipeline):
             audio_num_frames,
             latent_mel_bins,
         )
-        audio = np.from_dlpack(audio.cast(DType.float32).to("cpu"))
+        audio = np.from_dlpack(audio.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final audio: mean={audio.mean():.4f}, std={audio.std():.4f}, min={audio.min():.4f}, max={audio.max():.4f}")
         print("End of the audio decoding.")
         return LTX2PipelineOutput(
