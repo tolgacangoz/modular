@@ -340,8 +340,6 @@ class OutputVideoContent(BaseModel):
 
         if format == "mp4":
             try:
-                import io
-
                 import av
                 import numpy as _np
 

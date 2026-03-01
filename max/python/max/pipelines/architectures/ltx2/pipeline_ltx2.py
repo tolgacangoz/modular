@@ -576,7 +576,7 @@ class LTX2Pipeline(DiffusionPipeline):
 
         pe = torch.from_dlpack(prompt_embeds)
         vl = torch.from_dlpack(prompt_valid_length)  # [B] int32
-        B, L, D = pe.shape
+        B, L, _D = pe.shape
         out = torch.zeros_like(pe)
         for b in range(B):
             n = int(vl[b].item())
