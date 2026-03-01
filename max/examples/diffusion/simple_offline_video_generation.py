@@ -305,56 +305,6 @@ def _decode_audio_data(audio_data: str, format: str | None) -> torch.Tensor:
     )
 
 
-def _mux_video_with_audio(
-    video_bytes: bytes,
-    audio_tensor: torch.Tensor | None,
-    audio_sample_rate: int,
-    output_path: str,
-) -> None:
-    """Write a pre-encoded mp4 to *output_path*, optionally muxing in audio.
-
-    Video packets are stream-copied (no re-encode) to avoid quality loss.
-    Audio is encoded as AAC and muxed into the output container.
-    """
-    if audio_tensor is None:
-        with open(output_path, "wb") as f:
-            f.write(video_bytes)
-        return
-
-    in_container = av.open(io.BytesIO(video_bytes))
-    out_container = av.open(output_path, mode="w")
-    try:
-        in_video = in_container.streams.video[0]
-        # Stream-copy: add output stream matching the input codec so packets
-        # can be muxed without re-encoding.  Older PyAV builds do not support
-        # the `template` keyword, so we set the codec parameters explicitly.
-        out_video = out_container.add_stream(in_video.codec_context.name)
-        cc_out = out_video.codec_context
-        cc_in = in_video.codec_context
-        cc_out.width = cc_in.width
-        cc_out.height = cc_in.height
-        cc_out.pix_fmt = cc_in.pix_fmt
-        cc_out.time_base = in_video.time_base
-        # Copy SPS/PPS extradata so the h264 stream is self-contained.
-        if cc_in.extradata:
-            cc_out.extradata = cc_in.extradata
-
-        audio_stream = _prepare_audio_stream(out_container, audio_sample_rate)
-
-        # Copy encoded video packets directly (no decode/re-encode).
-        for packet in in_container.demux(in_video):
-            if packet.dts is not None:
-                packet.stream = out_video
-                out_container.mux(packet)
-
-        _write_audio(
-            out_container, audio_stream, audio_tensor, audio_sample_rate
-        )
-    finally:
-        out_container.close()
-        in_container.close()
-
-
 def encode_video(
     video: list[PIL.Image.Image]
     | np.ndarray
