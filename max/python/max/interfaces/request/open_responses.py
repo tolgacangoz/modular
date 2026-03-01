@@ -417,6 +417,10 @@ class OutputAudioContent(BaseModel):
         None,
         description="The format of the audio (e.g., 'wav', 'mp3').",
     )
+    sample_rate: int = Field(
+        24000,
+        description="The sampling rate of the audio in Hz.",
+    )
 
     @classmethod
     def from_numpy(
@@ -486,6 +490,7 @@ class OutputAudioContent(BaseModel):
             type="output_audio",
             audio_data=base64_data,
             format=format,
+            sample_rate=sample_rate,
         )
 
 
