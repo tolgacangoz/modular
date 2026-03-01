@@ -144,14 +144,17 @@ class LTX2Pipeline(DiffusionPipeline):
         # load_model() extracts them and exposes them as self.latents_mean / self.latents_std.
         device = self.transformer.devices[0]
         dtype = self.transformer.config.dtype
+        # Latent stats are scaling constants — keep them in float32 regardless of
+        # the model's compute dtype (which is typically bfloat16).
+        stats_dtype = DType.float32
         vae_mean = getattr(self.vae, "latents_mean", None)
         vae_std = getattr(self.vae, "latents_std", None)
         if vae_mean is not None and vae_std is not None:
             self._vae_latents_mean: Tensor | None = Tensor.constant(
-                np.array(vae_mean, dtype=np.float32), dtype=dtype, device=device
+                np.array(vae_mean, dtype=np.float32), dtype=stats_dtype, device=device
             )
             self._vae_latents_std: Tensor | None = Tensor.constant(
-                np.array(vae_std, dtype=np.float32), dtype=dtype, device=device
+                np.array(vae_std, dtype=np.float32), dtype=stats_dtype, device=device
             )
         else:
             self._vae_latents_mean = None
@@ -162,12 +165,12 @@ class LTX2Pipeline(DiffusionPipeline):
         if audio_mean is not None and audio_std is not None:
             self._audio_latents_mean: Tensor | None = Tensor.constant(
                 np.array(audio_mean, dtype=np.float32),
-                dtype=dtype,
+                dtype=stats_dtype,
                 device=device,
             )
             self._audio_latents_std: Tensor | None = Tensor.constant(
                 np.array(audio_std, dtype=np.float32),
-                dtype=dtype,
+                dtype=stats_dtype,
                 device=device,
             )
         else:
@@ -330,8 +333,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 ],
                 device=device,
             ),
-            TensorType(dtype, shape=[num_channels], device=device),
-            TensorType(dtype, shape=[num_channels], device=device),
+            TensorType(DType.float32, shape=[num_channels], device=device),
+            TensorType(DType.float32, shape=[num_channels], device=device),
         ]
         self.__dict__["_postprocess_video_latents"] = max_compile(
             self._postprocess_video_latents,
@@ -356,8 +359,8 @@ class LTX2Pipeline(DiffusionPipeline):
                 shape=[1, num_channels, _audio_num_frames, _latent_mel_bins],
                 device=device,
             ),
-            TensorType(dtype, shape=[num_channels], device=device),
-            TensorType(dtype, shape=[num_channels], device=device),
+            TensorType(DType.float32, shape=[num_channels], device=device),
+            TensorType(DType.float32, shape=[num_channels], device=device),
         ]
         self.__dict__["_postprocess_audio_latents"] = max_compile(
             self._postprocess_audio_latents,
@@ -909,8 +912,8 @@ class LTX2Pipeline(DiffusionPipeline):
         """
         scaling_factor = getattr(self.vae.config, "scaling_factor", 1.0)
         c = latents_mean.shape[0]
-        mean_r = F.reshape(latents_mean, (1, c, 1, 1, 1))
-        std_r = F.reshape(latents_std, (1, c, 1, 1, 1))
+        mean_r = F.reshape(latents_mean.cast(latents.dtype), (1, c, 1, 1, 1))
+        std_r = F.reshape(latents_std.cast(latents.dtype), (1, c, 1, 1, 1))
         return latents * std_r / scaling_factor + mean_r
 
     def _postprocess_audio_latents(
@@ -924,8 +927,8 @@ class LTX2Pipeline(DiffusionPipeline):
         Mirrors Flux2's _postprocess_latents for the audio stream.
         """
         c = latents_mean.shape[0]
-        mean_r = F.reshape(latents_mean, (1, c, 1, 1))
-        std_r = F.reshape(latents_std, (1, c, 1, 1))
+        mean_r = F.reshape(latents_mean.cast(latents.dtype), (1, c, 1, 1))
+        std_r = F.reshape(latents_std.cast(latents.dtype), (1, c, 1, 1))
         return latents * std_r + mean_r
 
     @property
