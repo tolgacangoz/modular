@@ -961,8 +961,14 @@ class PixelGenerationTokenizer(
         # 3. Resolve image dimensions using cached static values
         latent_height = int(height) // self._vae_spatial_compression_ratio
         latent_width = int(width) // self._vae_spatial_compression_ratio
-        latent_frames = (video_options.num_frames - 1) // self._vae_temporal_compression_ratio + 1
-        visual_seq_len = latent_height * latent_width * (latent_frames if video_options.num_frames is not None else 1)
+        latent_frames = (
+            video_options.num_frames - 1
+        ) // self._vae_temporal_compression_ratio + 1
+        visual_seq_len = (
+            latent_height
+            * latent_width
+            * (latent_frames if video_options.num_frames is not None else 1)
+        )
 
         num_inference_steps = steps
         timesteps, sigmas = self._scheduler.retrieve_timesteps_and_sigmas(

@@ -149,6 +149,7 @@ class PixelGenerationPipeline(
                 )
 
         video_output = getattr(model_outputs, "frames", None)
+
         # Convert MAX Tensor → numpy if the pipeline returned a Tensor.
         def _tensor_to_numpy(t: object) -> np.ndarray | None:
             if t is None or isinstance(t, np.ndarray):
@@ -203,7 +204,9 @@ class PixelGenerationPipeline(
                     if idx < len(video_output):
                         output_content.append(
                             OutputVideoContent.from_numpy(
-                                video_output[idx], fps=frame_rate, format="numpy"
+                                video_output[idx],
+                                fps=frame_rate,
+                                format="numpy",
                             )
                         )
 

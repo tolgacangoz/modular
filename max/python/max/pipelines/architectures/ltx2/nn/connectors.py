@@ -260,7 +260,9 @@ class LTX2ConnectorTransformer1d(
             if valid_length is not None:
                 binary_attn_mask = (
                     positions.unsqueeze(0) < valid_length.unsqueeze(1)
-                ).cast(DType.int32)  # [B, seq_len]: 1 = valid token, 0 = padding
+                ).cast(
+                    DType.int32
+                )  # [B, seq_len]: 1 = valid token, 0 = padding
             else:
                 binary_attn_mask = Tensor.ones(
                     (batch_size, seq_len),

@@ -265,7 +265,9 @@ def _decode_video_data(video_data: str, format: str | None) -> np.ndarray:
     """
     video_bytes = base64.b64decode(video_data)
     if format == "numpy":
-        return np.load(io.BytesIO(video_bytes))  # [F, H, W, C] float32 in [0, 1]
+        return np.load(
+            io.BytesIO(video_bytes)
+        )  # [F, H, W, C] float32 in [0, 1]
     if format == "mp4":
         container = av.open(io.BytesIO(video_bytes))
         frames = [
@@ -535,7 +537,9 @@ async def generate_video(args: argparse.Namespace) -> None:
             # Decode the lossless numpy video ([F, H, W, C] float32 in [0, 1])
             # and the WAV audio tensor ([C, T] float32), then call encode_video
             # directly — matching the diffusers encode_video pattern exactly.
-            video_array = _decode_video_data(video_item.video_data, video_item.format)
+            video_array = _decode_video_data(
+                video_item.video_data, video_item.format
+            )
             audio_tensor: torch.Tensor | None = None
             if audio_item is not None and audio_item.audio_data:
                 audio_tensor = _decode_audio_data(
