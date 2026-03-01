@@ -1337,7 +1337,6 @@ class LTX2Pipeline(DiffusionPipeline):
                 audio_latents, noise_pred_audio, dt, num_audio_noise_tokens
             )
 
-        print("End of the denoising loop.")
         # --- DEBUG: final latent stats ---
         _lat_final = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
         print(
@@ -1355,7 +1354,6 @@ class LTX2Pipeline(DiffusionPipeline):
         print(
             f"[DEBUG] Final video frames: mean={frames.mean():.4f}, std={frames.std():.4f}, min={frames.min():.4f}, max={frames.max():.4f}"
         )
-        print("End of the video decoding.")
         audio = self.decode_audio_latents(
             audio_latents,
             audio_num_frames,
@@ -1364,7 +1362,6 @@ class LTX2Pipeline(DiffusionPipeline):
         print(
             f"[DEBUG] Final audio: mean={audio.mean():.4f}, std={audio.std():.4f}, min={audio.min():.4f}, max={audio.max():.4f}"
         )
-        print("End of the audio decoding.")
         return LTX2PipelineOutput(
             frames=frames,
             audio=audio,
