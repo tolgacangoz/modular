@@ -148,12 +148,7 @@ class PixelGenerationPipeline(
                     f"expected {expected_images}, got {len(image_list)}."
                 )
 
-        # Resolve video output: support both 'video' (generic) and 'frames'
-        # (LTX2PipelineOutput attribute name).
-        video_output = getattr(model_outputs, "video", None)
-        if video_output is None:
-            video_output = getattr(model_outputs, "frames", None)
-
+        video_output = getattr(model_outputs, "frames", None)
         # Convert MAX Tensor → numpy if the pipeline returned a Tensor.
         def _tensor_to_numpy(t: object) -> np.ndarray | None:
             if t is None or isinstance(t, np.ndarray):
@@ -200,13 +195,15 @@ class PixelGenerationPipeline(
                 )
 
             # Video output - [batch, frames, height, width, channels] in [0,1].
+            # Store as lossless numpy so the consumer can call encode_video
+            # directly (mirrors the diffusers encode_video pattern).
             if video_output is not None:
                 for i in range(num_visuals_per_prompt):
                     idx = offset + i
                     if idx < len(video_output):
                         output_content.append(
                             OutputVideoContent.from_numpy(
-                                video_output[idx], fps=frame_rate, format="mp4"
+                                video_output[idx], fps=frame_rate, format="numpy"
                             )
                         )
 

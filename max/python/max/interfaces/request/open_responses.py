@@ -325,6 +325,19 @@ class OutputVideoContent(BaseModel):
         Returns:
             An OutputVideoContent instance with base64-encoded data.
         """
+        if format == "numpy":
+            # Lossless: serialise as .npy (preserves dtype, shape, and float
+            # values in [0, 1]) so the consumer can call encode_video directly
+            # without a decode→re-encode round-trip.
+            buf = BytesIO()
+            np.save(buf, array)
+            base64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return cls(
+                type="output_video",
+                video_data=base64_data,
+                format="numpy",
+            )
+
         if format == "mp4":
             try:
                 import io
@@ -348,9 +361,9 @@ class OutputVideoContent(BaseModel):
                 if h_enc != h or w_enc != w:
                     frames_uint8 = frames_uint8[:, :h_enc, :w_enc, :]
 
-                buf = io.BytesIO()
+                buf = BytesIO()
                 container = av.open(buf, mode="w", format="mp4")
-                stream = container.add_stream("h264", rate=fps)
+                stream = container.add_stream("libx264", rate=fps)
                 stream.width = w_enc
                 stream.height = h_enc
                 stream.pix_fmt = "yuv420p"

@@ -257,8 +257,15 @@ def _write_audio(
 
 
 def _decode_video_data(video_data: str, format: str | None) -> np.ndarray:
-    """Decode base64-encoded video data to a numpy array of shape [F, H, W, C] uint8."""
+    """Decode base64-encoded video data to a numpy array.
+
+    Returns:
+        - format='numpy': float32 array [F, H, W, C] in [0, 1] (from np.save)
+        - format='mp4':   uint8 array [F, H, W, C] decoded via PyAV
+    """
     video_bytes = base64.b64decode(video_data)
+    if format == "numpy":
+        return np.load(io.BytesIO(video_bytes))  # [F, H, W, C] float32 in [0, 1]
     if format == "mp4":
         container = av.open(io.BytesIO(video_bytes))
         frames = [
@@ -267,10 +274,9 @@ def _decode_video_data(video_data: str, format: str | None) -> np.ndarray:
         ]
         container.close()
         return np.stack(frames, axis=0)  # [F, H, W, 3] uint8
-    # Fallback: treat as raw float32 dump - shape is unknown, so just return bytes
     raise ValueError(
         f"Cannot decode video_data with format={format!r}. "
-        "Only 'mp4' is supported."
+        "Only 'numpy' and 'mp4' are supported."
     )
 
 
@@ -574,24 +580,25 @@ async def generate_video(args: argparse.Namespace) -> None:
 
         # Pair each video with the corresponding audio track (if present).
         audio_item = audio_items[idx] if idx < len(audio_items) else None
-        audio_data = audio_item.audio_data if audio_item is not None else None
 
         if video_item.video_data:
-            # video_data arrives as a base64-encoded mp4; decode to raw bytes
-            # and stream-copy the already-encoded h264 to avoid double compression.
-            # Audio (if present) is decoded from WAV and muxed as AAC.
-            video_bytes = base64.b64decode(video_item.video_data)
+            # Decode the lossless numpy video ([F, H, W, C] float32 in [0, 1])
+            # and the WAV audio tensor ([C, T] float32), then call encode_video
+            # directly — matching the diffusers encode_video pattern exactly.
+            video_array = _decode_video_data(video_item.video_data, video_item.format)
             audio_tensor: torch.Tensor | None = None
             if audio_item is not None and audio_item.audio_data:
                 audio_tensor = _decode_audio_data(
                     audio_item.audio_data, audio_item.format
                 )
-            _mux_video_with_audio(
-                video_bytes,
-                audio_tensor,
-                24_000,  # Vocoder output rate (upsampled from 16kHz VAE)
-                output_path,
+            encode_video(
+                video_array,
+                fps=args.frame_rate,
+                audio=audio_tensor,
+                audio_sample_rate=24_000,  # Vocoder output rate
+                output_path=output_path,
             )
+            print(f"Saved: {output_path}")
         elif video_item.video_url:
             print(f"Video available at URL: {video_item.video_url}")
 
