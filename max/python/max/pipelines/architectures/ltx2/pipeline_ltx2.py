@@ -1312,6 +1312,8 @@ class LTX2Pipeline(DiffusionPipeline):
         # --- DEBUG: final latent stats ---
         _lat_final = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final video latents: mean={_lat_final.mean():.4f}, std={_lat_final.std():.4f}, min={_lat_final.min():.4f}, max={_lat_final.max():.4f}")
+        _lat_audio_final = np.from_dlpack(audio_latents.cast(DType.float32).to(CPU()))
+        print(f"[DEBUG] Final audio latents: mean={_lat_audio_final.mean():.4f}, std={_lat_audio_final.std():.4f}, min={_lat_audio_final.min():.4f}, max={_lat_audio_final.max():.4f}")
         frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
         )
