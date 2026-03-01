@@ -22,7 +22,7 @@ import torch
 from max.driver import CPU, Device
 from max.dtype import DType
 from max.experimental.tensor import Tensor
-from max.graph import TensorType
+from max.graph import TensorType, DeviceRef
 from max.pipelines import PixelContext
 from max.pipelines.lib.interfaces import (
     DiffusionPipeline,
@@ -303,6 +303,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 device=device,
             ),
             TensorType(DType.float32, shape=[1], device=device),
+            TensorType(DType.int64, shape=[], device=DeviceRef.CPU()),
         ]
         self.__dict__["_scheduler_step_audio"] = max_compile(
             self.scheduler_step,
