@@ -252,6 +252,12 @@ class PixelGenerationTokenizer(
             ch_mult = audio_vae_config.get("ch_mult", [1, 2, 4])
             self._ltx2_audio_mel_compression_ratio = 2 ** (len(ch_mult) - 1)
 
+        # _vae_spatial_compression_ratio mirrors _vae_scale_factor at all times.
+        # For standard models it is 2^(len(block_out_channels)-1); for LTX-2 it
+        # is overridden to vae.spatial_compression_ratio (32) in the block above.
+        # new_context() uses this attribute directly for latent dimension math.
+        self._vae_spatial_compression_ratio = self._vae_scale_factor
+
         # Create scheduler
         scheduler_class_name = components.get("scheduler", {}).get(
             "class_name", None

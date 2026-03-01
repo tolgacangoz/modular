@@ -306,6 +306,15 @@ class SupportedArchitecture:
     the max sequence length of the model.
     """
 
+    tokenizer_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Architecture-specific keyword arguments that override the defaults passed to
+    the tokenizer constructor in ``retrieve_factory``.
+
+    Use this to supply non-standard values (e.g. ``max_length``, ``subfolder``)
+    without modifying the shared factory logic.  Keys present here are merged
+    *after* the registry defaults, so they take precedence.
+    """
+
     @property
     def tokenizer_cls(self) -> type[PipelineTokenizer[Any, Any, Any]]:
         """Returns the tokenizer class for this architecture."""
@@ -777,6 +786,9 @@ class PipelineRegistry:
                 tokenizer_kwargs["secondary_max_length"] = (
                     512  # Standard for T5
                 )
+
+            # Apply architecture-specific overrides (e.g. max_length=1024 for LTX-2).
+            tokenizer_kwargs.update(arch.tokenizer_kwargs)
 
             tokenizer = arch.tokenizer(**tokenizer_kwargs)
 

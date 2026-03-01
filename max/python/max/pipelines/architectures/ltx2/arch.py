@@ -38,4 +38,9 @@ ltx2_arch = SupportedArchitecture(
     config=LTX2TransformerConfig,
     default_weights_format=WeightsFormat.safetensors,
     tokenizer=PixelGenerationTokenizer,
+    tokenizer_kwargs={
+        # Gemma tokenizer used by LTX-2 has a default max sequence length of
+        # 1024, not 77 (CLIP).  The registry default of 77 is wrong here.
+        "max_length": 1024,
+    },
 )
