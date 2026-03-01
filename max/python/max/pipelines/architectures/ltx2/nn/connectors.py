@@ -254,17 +254,13 @@ class LTX2ConnectorTransformer1d(
                 self.learnable_registers, (num_register_repeats, 1)
             )  # [seq_len, inner_dim]
 
-            # Reconstruct a per-position binary mask from valid_length.
-            # positions [seq_len] < valid_length [B] → binary_attn_mask [B, seq_len]
-            # This is computed inside the graph but only used for F.where (not the
-            # MHA padded kernel), so there is no si32/si64 metadata issue.
             positions = Tensor.arange(
                 seq_len, dtype=DType.int32, device=hidden_states.device
             )  # [seq_len]
             if valid_length is not None:
                 binary_attn_mask = (
                     positions.unsqueeze(0) < valid_length.unsqueeze(1)
-                ).cast(DType.int32)  # [B, seq_len]
+                ).cast(DType.int32)  # [B, seq_len]: 1 = valid token, 0 = padding
             else:
                 binary_attn_mask = Tensor.ones(
                     (batch_size, seq_len),
@@ -272,34 +268,13 @@ class LTX2ConnectorTransformer1d(
                     device=hidden_states.device,
                 )
 
-            padded_hidden_states = F.where(
-                binary_attn_mask.cast(DType.bool).unsqueeze(-1),
-                hidden_states,
-                0.0,
-            )
-
-            # reverse_indices = F.arange(
-            #     seq_len - 1,
-            #     -1,
-            #     -1,
-            #     dtype=DType.int32,
-            #     device=hidden_states.device,
-            # )
-            # flipped_mask = (
-            #     F.gather(binary_attn_mask, reverse_indices, axis=1)
-            #     .unsqueeze(-1)
-            #     .cast(padded_hidden_states.dtype)
-            # )
-            # hidden_states = (
-            #     flipped_mask * padded_hidden_states
-            #     + (1.0 - flipped_mask) * registers
-            # )
-            binary_attn_mask = binary_attn_mask.unsqueeze(-1).cast(
-                padded_hidden_states.dtype
+            # Replace padding positions with registers; keep valid token content.
+            binary_attn_mask_f = binary_attn_mask.unsqueeze(-1).cast(
+                hidden_states.dtype
             )  # [B, L, 1]
             hidden_states = (
-                binary_attn_mask * padded_hidden_states
-                + (1.0 - binary_attn_mask) * registers
+                binary_attn_mask_f * hidden_states
+                + (1.0 - binary_attn_mask_f) * registers
             )
 
             # After registers fill every slot, all seq_len positions are valid

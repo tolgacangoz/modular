@@ -553,6 +553,38 @@ class LTX2Pipeline(DiffusionPipeline):
         return Tensor.from_dlpack(normalized.contiguous())
 
     @staticmethod
+    def _left_align_text_embeds(
+        prompt_embeds: Tensor,
+        prompt_valid_length: Tensor,
+    ) -> Tensor:
+        """Shift valid tokens from the right end to the left end of the sequence.
+
+        The tokenizer uses left-padding, so valid tokens sit at positions
+        ``[L - valid_length, L)``.  The connector expects them at ``[0, valid_length)``
+        (matching diffusers' ``flipped_mask`` logic). This method performs that shift
+        entirely in PyTorch without a CPU round-trip.
+
+        Args:
+            prompt_embeds: ``[B, L, D]`` text embeddings with content at right end.
+            prompt_valid_length: ``[B]`` int32 count of valid tokens per batch item.
+
+        Returns:
+            ``[B, L, D]`` tensor with content at ``[0, valid_length)`` and zeros
+            at ``[valid_length, L)``.
+        """
+        import torch
+
+        pe = torch.from_dlpack(prompt_embeds)
+        vl = torch.from_dlpack(prompt_valid_length)  # [B] int32
+        B, L, D = pe.shape
+        out = torch.zeros_like(pe)
+        for b in range(B):
+            n = int(vl[b].item())
+            if n > 0:
+                out[b, :n] = pe[b, L - n :]
+        return Tensor.from_dlpack(out.contiguous())
+
+    @staticmethod
     def _pack_latents(
         latents: Tensor, patch_size: int = 1, patch_size_t: int = 1
     ) -> Tensor:
@@ -1146,6 +1178,15 @@ class LTX2Pipeline(DiffusionPipeline):
                 [negative_prompt_valid_length, prompt_valid_length], axis=0
             )
 
+        # Left-align prompt_embeds to match diffusers' connector expectation.
+        # _pack_text_embeds uses left-padding, so valid tokens are at the RIGHT end
+        # of the seq-len dimension (positions [L-vl, L)).  The connector's 1D RoPE
+        # is trained with content at the LEFT end (positions [0, vl)), so we shift
+        # each batch item's valid tokens to the start of the sequence.
+        prompt_embeds = self._left_align_text_embeds(
+            prompt_embeds, prompt_valid_length
+        )
+
         (
             connector_prompt_embeds,
             connector_audio_prompt_embeds,
@@ -1270,7 +1311,6 @@ class LTX2Pipeline(DiffusionPipeline):
         frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
         )
-        frames = np.from_dlpack(frames.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final video frames: mean={frames.mean():.4f}, std={frames.std():.4f}, min={frames.min():.4f}, max={frames.max():.4f}")
         print("End of the video decoding.")
         audio = self.decode_audio_latents(
@@ -1278,7 +1318,6 @@ class LTX2Pipeline(DiffusionPipeline):
             audio_num_frames,
             latent_mel_bins,
         )
-        audio = np.from_dlpack(audio.cast(DType.float32).to(CPU()))
         print(f"[DEBUG] Final audio: mean={audio.mean():.4f}, std={audio.std():.4f}, min={audio.min():.4f}, max={audio.max():.4f}")
         print("End of the audio decoding.")
         return LTX2PipelineOutput(
