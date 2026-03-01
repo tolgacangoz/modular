@@ -934,7 +934,9 @@ class LTX2Pipeline(DiffusionPipeline):
           _denormalize_audio_latents -> _unpack_audio_latents
         stats shape [C*M] broadcasts against last dim of [B, L, C*M] directly.
         """
-        return latents * latents_std.cast(latents.dtype) + latents_mean.cast(latents.dtype)
+        return latents * latents_std.cast(latents.dtype) + latents_mean.cast(
+            latents.dtype
+        )
 
     @property
     def guidance_scale(self) -> float:
