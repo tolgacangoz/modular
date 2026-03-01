@@ -167,17 +167,31 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_mean = getattr(self.audio_vae, "latents_mean", None)
         audio_std = getattr(self.audio_vae, "latents_std", None)
         if audio_mean is not None and audio_std is not None:
+            _am = np.array(audio_mean, dtype=np.float32)
+            _as = np.array(audio_std, dtype=np.float32)
+            print(
+                f"[DEBUG] audio latents_mean: shape={_am.shape}, mean={_am.mean():.4f}, std={_am.std():.4f}, min={_am.min():.4f}, max={_am.max():.4f}",
+                flush=True,
+            )
+            print(
+                f"[DEBUG] audio latents_std:  shape={_as.shape}, mean={_as.mean():.4f}, std={_as.std():.4f}, min={_as.min():.4f}, max={_as.max():.4f}",
+                flush=True,
+            )
             self._audio_latents_mean: Tensor | None = Tensor.constant(
-                np.array(audio_mean, dtype=np.float32),
+                _am,
                 dtype=stats_dtype,
                 device=device,
             )
             self._audio_latents_std: Tensor | None = Tensor.constant(
-                np.array(audio_std, dtype=np.float32),
+                _as,
                 dtype=stats_dtype,
                 device=device,
             )
         else:
+            print(
+                "[DEBUG] audio latents_mean/std: NOT found in weights!",
+                flush=True,
+            )
             self._audio_latents_mean = None
             self._audio_latents_std = None
 
@@ -1024,6 +1038,11 @@ class LTX2Pipeline(DiffusionPipeline):
         # Denormalize on the PACKED latent [B,L,C*M] before unpack — matches diffusers:
         #   _denormalize_audio_latents(packed) -> _unpack_audio_latents
         # stats [C*M=128] broadcast against last dim of [B,L,128] directly.
+        _lat_pre = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
+        print(
+            f"[DEBUG] audio latents before denorm: shape={_lat_pre.shape}, mean={_lat_pre.mean():.4f}, std={_lat_pre.std():.4f}, min={_lat_pre.min():.4f}, max={_lat_pre.max():.4f}",
+            flush=True,
+        )
         if (
             self._audio_latents_mean is not None
             and self._audio_latents_std is not None
@@ -1031,19 +1050,35 @@ class LTX2Pipeline(DiffusionPipeline):
             latents = self._postprocess_audio_latents(
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
+            _lat_post = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
+            print(
+                f"[DEBUG] audio latents after denorm:  shape={_lat_post.shape}, mean={_lat_post.mean():.4f}, std={_lat_post.std():.4f}, min={_lat_post.min():.4f}, max={_lat_post.max():.4f}",
+                flush=True,
+            )
+        else:
+            print("[DEBUG] audio denorm: SKIPPED (no stats)", flush=True)
         # Shape-dependent unpack: [B,L,C*M] -> [B,C,L,M]  (not compiled).
         latents = self._unpack_audio_latents(
             latents, audio_num_frames, latent_mel_bins
         )
+        _lat_unp = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
+        print(
+            f"[DEBUG] audio latents after unpack:  shape={_lat_unp.shape}, mean={_lat_unp.mean():.4f}, std={_lat_unp.std():.4f}, min={_lat_unp.min():.4f}, max={_lat_unp.max():.4f}",
+            flush=True,
+        )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
-        # print(
-        #     f"[DEBUG] audio_vae.decode done, mel shape={mel_spectrograms.shape}, dtype={mel_spectrograms.dtype}",
-        #     flush=True,
-        # )
-        # print("[DEBUG] calling vocoder...", flush=True)
+        _mel = np.from_dlpack(mel_spectrograms.cast(DType.float32).to(CPU()))
+        print(
+            f"[DEBUG] mel spectrograms after VAE:  shape={_mel.shape}, mean={_mel.mean():.4f}, std={_mel.std():.4f}, min={_mel.min():.4f}, max={_mel.max():.4f}",
+            flush=True,
+        )
         # Vocoder compiled as float32 (cuDNN conv_transpose hardcodes CUDNN_DATA_FLOAT).
         result = self.vocoder(mel_spectrograms.cast(DType.float32))
-        # print("[DEBUG] vocoder done", flush=True)
+        _wav = np.from_dlpack(result.cast(DType.float32).to(CPU()))
+        print(
+            f"[DEBUG] vocoder output:              shape={_wav.shape}, mean={_wav.mean():.4f}, std={_wav.std():.4f}, min={_wav.min():.4f}, max={_wav.max():.4f}",
+            flush=True,
+        )
         return self._to_numpy(result)
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
