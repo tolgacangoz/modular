@@ -549,7 +549,9 @@ async def generate_video(args: argparse.Namespace) -> None:
                 video_array,
                 fps=args.frame_rate,
                 audio=audio_tensor,
-                audio_sample_rate=audio_item.sample_rate if audio_item is not None else 16000,
+                audio_sample_rate=audio_item.sample_rate
+                if audio_item is not None
+                else 16000,
                 output_path=output_path,
             )
             print(f"Saved: {output_path}")
