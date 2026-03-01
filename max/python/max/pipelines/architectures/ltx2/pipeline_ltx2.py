@@ -278,6 +278,7 @@ class LTX2Pipeline(DiffusionPipeline):
                 device=device,
             ),
             TensorType(DType.float32, shape=[1], device=device),
+            TensorType(DType.int64, shape=[], device=DeviceRef.CPU()),
         ]
         self.__dict__["_scheduler_step_video"] = max_compile(
             self.scheduler_step,
