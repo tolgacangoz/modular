@@ -107,9 +107,7 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
             permute=True,
         )
 
-    def _reflect_pad_axis(
-        self, x: Tensor, pad: int, axis: int
-    ) -> Tensor:
+    def _reflect_pad_axis(self, x: Tensor, pad: int, axis: int) -> Tensor:
         """Apply reflect padding along a single axis of x.
 
         For a 5D tensor [B, C, D, H, W]:

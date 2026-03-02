@@ -1416,8 +1416,13 @@ class LTX2Pipeline(DiffusionPipeline):
                     f"[DEBUG i=0] noise_pred_audio: mean={_npa.mean():.4f}, std={_npa.std():.4f}, min={_npa.min():.4f}, max={_npa.max():.4f}"
                 )
             # Lightweight per-step audio latent tracking
-            _al_step = np.from_dlpack(audio_latents.cast(DType.float32).to(CPU()))
-            print(f"[DEBUG step {i}] audio_latents: mean={_al_step.mean():.4f}, std={_al_step.std():.4f}", flush=True)
+            _al_step = np.from_dlpack(
+                audio_latents.cast(DType.float32).to(CPU())
+            )
+            print(
+                f"[DEBUG step {i}] audio_latents: mean={_al_step.mean():.4f}, std={_al_step.std():.4f}",
+                flush=True,
+            )
 
             latents = self._scheduler_step_video(
                 latents, noise_pred_video, dt, num_video_noise_tokens
