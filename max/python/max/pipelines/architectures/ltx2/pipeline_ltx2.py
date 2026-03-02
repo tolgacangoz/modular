@@ -1242,6 +1242,31 @@ class LTX2Pipeline(DiffusionPipeline):
             _,
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
+        # --- DEBUG: connector output stats ---
+        _cpe = np.from_dlpack(
+            connector_prompt_embeds.cast(DType.float32).to(CPU())
+        )
+        _cape = np.from_dlpack(
+            connector_audio_prompt_embeds.cast(DType.float32).to(CPU())
+        )
+        print(
+            f"[DEBUG] connector_prompt_embeds (video): shape={_cpe.shape}, mean={_cpe.mean():.4f}, std={_cpe.std():.4f}",
+            flush=True,
+        )
+        print(
+            f"[DEBUG] connector_audio_prompt_embeds:   shape={_cape.shape}, mean={_cape.mean():.4f}, std={_cape.std():.4f}",
+            flush=True,
+        )
+        # Check whether uncond (item 0) and cond (item 1) embeddings actually differ.
+        # If the diff is near-zero, CFG is a no-op and audio will be prompt-independent.
+        if _cpe.shape[0] >= 2:
+            _video_diff = float(np.abs(_cpe[1] - _cpe[0]).max())
+            _audio_diff = float(np.abs(_cape[1] - _cape[0]).max())
+            print(
+                f"[DEBUG] connector uncond vs cond max-diff: video={_video_diff:.4e}  audio={_audio_diff:.4e}",
+                flush=True,
+            )
+
         batch_size = video_latents_np.shape[0]
         batch_size = int(batch_size)
 
@@ -1340,6 +1365,26 @@ class LTX2Pipeline(DiffusionPipeline):
                 video_coords,
                 audio_coords,
             )
+            # --- DEBUG step 0: check if audio noise pred differs between uncond/cond ---
+            if i == 0 and self.do_classifier_free_guidance:
+                _raw_audio = np.from_dlpack(
+                    noise_pred_audio.cast(DType.float32).to(CPU())
+                )
+                _raw_video = np.from_dlpack(
+                    noise_pred_video.cast(DType.float32).to(CPU())
+                )
+                _audio_uncond_cond_diff = float(
+                    np.abs(_raw_audio[1] - _raw_audio[0]).max()
+                )
+                _video_uncond_cond_diff = float(
+                    np.abs(_raw_video[1] - _raw_video[0]).max()
+                )
+                print(
+                    f"[DEBUG i=0 pre-CFG] noise_pred uncond-cond max_diff: "
+                    f"video={_video_uncond_cond_diff:.4e}  audio={_audio_uncond_cond_diff:.4e}",
+                    flush=True,
+                )
+                # If audio_uncond_cond_diff ≈ 0 → transformer audio path is blind to text.
             if self.do_classifier_free_guidance:
                 noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
@@ -1368,8 +1413,11 @@ class LTX2Pipeline(DiffusionPipeline):
                     f"[DEBUG i=0] noise_pred_video: mean={_npv.mean():.4f}, std={_npv.std():.4f}, min={_npv.min():.4f}, max={_npv.max():.4f}"
                 )
                 print(
-                    f"[DEBUG i=0] noise_pred_audio: mean={_npa.mean():.4f}, std={_npa.std():.4f}"
+                    f"[DEBUG i=0] noise_pred_audio: mean={_npa.mean():.4f}, std={_npa.std():.4f}, min={_npa.min():.4f}, max={_npa.max():.4f}"
                 )
+            # Lightweight per-step audio latent tracking
+            _al_step = np.from_dlpack(audio_latents.cast(DType.float32).to(CPU()))
+            print(f"[DEBUG step {i}] audio_latents: mean={_al_step.mean():.4f}, std={_al_step.std():.4f}", flush=True)
 
             latents = self._scheduler_step_video(
                 latents, noise_pred_video, dt, num_video_noise_tokens

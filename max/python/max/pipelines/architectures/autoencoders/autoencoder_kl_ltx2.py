@@ -68,7 +68,7 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
         stride: int | tuple[int, int, int] = 1,
         dilation: int | tuple[int, int, int] = 1,
         groups: int = 1,
-        spatial_padding_mode: str = "zeros",  # Placeholder for padding logic
+        spatial_padding_mode: str = "zeros",
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -85,10 +85,16 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
         )
 
         # Spatial padding (height and width)
-        height_pad = self.kernel_size[1] // 2
-        width_pad = self.kernel_size[2] // 2
-        # Padding for [depth, height, width]
-        padding = (0, height_pad, width_pad)
+        self.height_pad = self.kernel_size[1] // 2
+        self.width_pad = self.kernel_size[2] // 2
+        self.spatial_padding_mode = spatial_padding_mode
+
+        if spatial_padding_mode == "zeros":
+            # Let Conv3d handle zero-padding directly
+            padding = (0, self.height_pad, self.width_pad)
+        else:
+            # We'll apply reflect (or other) padding manually before conv
+            padding = (0, 0, 0)
 
         self.conv = nn.Conv3d(
             kernel_size=self.kernel_size,
@@ -98,8 +104,41 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
             dilation=dilation,
             num_groups=groups,
             padding=padding,
-            permute=True,  # LTX2 uses PyTorch format internally but we refactoring to MAX
+            permute=True,
         )
+
+    def _reflect_pad_axis(
+        self, x: Tensor, pad: int, axis: int
+    ) -> Tensor:
+        """Apply reflect padding along a single axis of x.
+
+        For a 5D tensor [B, C, D, H, W]:
+          pad=1 on axis=3 (H):
+            left  = x[:, :, :, 1:2, :]       (index 1)
+            right = x[:, :, :, -2:-1, :]     (index n-2)
+          pad=2 on axis=3 (H):
+            left  = x[:, :, :, 2:3, :], x[:, :, :, 1:2, :]   (indices 2, 1)
+            right = x[:, :, :, -2:-1, :], x[:, :, :, -3:-2, :] (indices n-2, n-3)
+        """
+        if pad == 0:
+            return x
+
+        # Build reflected slices for the left side (indices pad, pad-1, ..., 1)
+        left_slices = []
+        for i in range(pad, 0, -1):
+            # Slice a single element at index i along `axis`
+            slc = [slice(None)] * 5
+            slc[axis] = slice(i, i + 1)
+            left_slices.append(x[tuple(slc)])
+
+        # Build reflected slices for the right side (indices n-2, n-3, ..., n-1-pad)
+        right_slices = []
+        for i in range(2, pad + 2):
+            slc = [slice(None)] * 5
+            slc[axis] = slice(-i, -i + 1 if -i + 1 != 0 else None)
+            right_slices.append(x[tuple(slc)])
+
+        return F.concat([*left_slices, x, *right_slices], axis=axis)
 
     def forward(self, hidden_states: Tensor, causal: bool = True) -> Tensor:
         tk = self.kernel_size[0]
@@ -107,14 +146,12 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
         if causal:
             # Pad left (past) for causality
             # x shape: [B, C, D, H, W]
-            # Use concat instead of tile for 5D
             pad_left = F.concat(
                 [hidden_states[:, :, :1, :, :]] * (tk - 1), axis=2
             )
             hidden_states = F.concat([pad_left, hidden_states], axis=2)
         else:
             # Pad left (past) and right (future) for non-causal
-            # Use concat instead of tile for 5D
             pad_left = F.concat(
                 [hidden_states[:, :, :1, :, :]] * (tk // 2), axis=2
             )
@@ -124,6 +161,18 @@ class LTX2VideoCausalConv3d(nn.Module[[Tensor, bool], Tensor]):
             hidden_states = F.concat(
                 [pad_left, hidden_states, pad_right], axis=2
             )
+
+        # Apply spatial padding manually when mode is not "zeros"
+        # (Conv3d only supports zero-padding; reflect must be done here)
+        if self.spatial_padding_mode != "zeros":
+            if self.height_pad > 0:
+                hidden_states = self._reflect_pad_axis(
+                    hidden_states, self.height_pad, axis=3
+                )
+            if self.width_pad > 0:
+                hidden_states = self._reflect_pad_axis(
+                    hidden_states, self.width_pad, axis=4
+                )
 
         return self.conv(hidden_states)
 
