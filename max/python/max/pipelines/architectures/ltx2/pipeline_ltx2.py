@@ -167,31 +167,17 @@ class LTX2Pipeline(DiffusionPipeline):
         audio_mean = getattr(self.audio_vae, "latents_mean", None)
         audio_std = getattr(self.audio_vae, "latents_std", None)
         if audio_mean is not None and audio_std is not None:
-            _am = np.array(audio_mean, dtype=np.float32)
-            _as = np.array(audio_std, dtype=np.float32)
-            print(
-                f"[DEBUG] audio latents_mean: shape={_am.shape}, mean={_am.mean():.4f}, std={_am.std():.4f}, min={_am.min():.4f}, max={_am.max():.4f}",
-                flush=True,
-            )
-            print(
-                f"[DEBUG] audio latents_std:  shape={_as.shape}, mean={_as.mean():.4f}, std={_as.std():.4f}, min={_as.min():.4f}, max={_as.max():.4f}",
-                flush=True,
-            )
             self._audio_latents_mean: Tensor | None = Tensor.constant(
-                _am,
+                np.array(audio_mean, dtype=np.float32),
                 dtype=stats_dtype,
                 device=device,
             )
             self._audio_latents_std: Tensor | None = Tensor.constant(
-                _as,
+                np.array(audio_std, dtype=np.float32),
                 dtype=stats_dtype,
                 device=device,
             )
         else:
-            print(
-                "[DEBUG] audio latents_mean/std: NOT found in weights!",
-                flush=True,
-            )
             self._audio_latents_mean = None
             self._audio_latents_std = None
 
@@ -1038,11 +1024,6 @@ class LTX2Pipeline(DiffusionPipeline):
         # Denormalize on the PACKED latent [B,L,C*M] before unpack — matches diffusers:
         #   _denormalize_audio_latents(packed) -> _unpack_audio_latents
         # stats [C*M=128] broadcast against last dim of [B,L,128] directly.
-        _lat_pre = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] audio latents before denorm: shape={_lat_pre.shape}, mean={_lat_pre.mean():.4f}, std={_lat_pre.std():.4f}, min={_lat_pre.min():.4f}, max={_lat_pre.max():.4f}",
-            flush=True,
-        )
         if (
             self._audio_latents_mean is not None
             and self._audio_latents_std is not None
@@ -1050,35 +1031,17 @@ class LTX2Pipeline(DiffusionPipeline):
             latents = self._postprocess_audio_latents(
                 latents, self._audio_latents_mean, self._audio_latents_std
             )
-            _lat_post = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-            print(
-                f"[DEBUG] audio latents after denorm:  shape={_lat_post.shape}, mean={_lat_post.mean():.4f}, std={_lat_post.std():.4f}, min={_lat_post.min():.4f}, max={_lat_post.max():.4f}",
-                flush=True,
-            )
-        else:
-            print("[DEBUG] audio denorm: SKIPPED (no stats)", flush=True)
         # Shape-dependent unpack: [B,L,C*M] -> [B,C,L,M]  (not compiled).
         latents = self._unpack_audio_latents(
             latents, audio_num_frames, latent_mel_bins
         )
-        _lat_unp = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] audio latents after unpack:  shape={_lat_unp.shape}, mean={_lat_unp.mean():.4f}, std={_lat_unp.std():.4f}, min={_lat_unp.min():.4f}, max={_lat_unp.max():.4f}",
-            flush=True,
-        )
         mel_spectrograms = self.audio_vae.decode(latents.cast(DType.bfloat16))
         _mel = np.from_dlpack(mel_spectrograms.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] mel spectrograms after VAE:  shape={_mel.shape}, mean={_mel.mean():.4f}, std={_mel.std():.4f}, min={_mel.min():.4f}, max={_mel.max():.4f}",
-            flush=True,
-        )
+        print(f"[AUDIO] mel: mean={_mel.mean():.4f}, std={_mel.std():.4f}, min={_mel.min():.4f}, max={_mel.max():.4f}", flush=True)
         # Vocoder compiled as float32 (cuDNN conv_transpose hardcodes CUDNN_DATA_FLOAT).
         result = self.vocoder(mel_spectrograms.cast(DType.float32))
         _wav = np.from_dlpack(result.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] vocoder output:              shape={_wav.shape}, mean={_wav.mean():.4f}, std={_wav.std():.4f}, min={_wav.min():.4f}, max={_wav.max():.4f}",
-            flush=True,
-        )
+        print(f"[AUDIO] wav: mean={_wav.mean():.4f}, std={_wav.std():.4f}, min={_wav.min():.4f}, max={_wav.max():.4f}", flush=True)
         return self._to_numpy(result)
 
     def _to_numpy(self, image: Tensor) -> np.ndarray:
@@ -1242,31 +1205,6 @@ class LTX2Pipeline(DiffusionPipeline):
             _,
         ) = self.connectors(prompt_embeds, prompt_valid_length)
 
-        # --- DEBUG: connector output stats ---
-        _cpe = np.from_dlpack(
-            connector_prompt_embeds.cast(DType.float32).to(CPU())
-        )
-        _cape = np.from_dlpack(
-            connector_audio_prompt_embeds.cast(DType.float32).to(CPU())
-        )
-        print(
-            f"[DEBUG] connector_prompt_embeds (video): shape={_cpe.shape}, mean={_cpe.mean():.4f}, std={_cpe.std():.4f}",
-            flush=True,
-        )
-        print(
-            f"[DEBUG] connector_audio_prompt_embeds:   shape={_cape.shape}, mean={_cape.mean():.4f}, std={_cape.std():.4f}",
-            flush=True,
-        )
-        # Check whether uncond (item 0) and cond (item 1) embeddings actually differ.
-        # If the diff is near-zero, CFG is a no-op and audio will be prompt-independent.
-        if _cpe.shape[0] >= 2:
-            _video_diff = float(np.abs(_cpe[1] - _cpe[0]).max())
-            _audio_diff = float(np.abs(_cape[1] - _cape[0]).max())
-            print(
-                f"[DEBUG] connector uncond vs cond max-diff: video={_video_diff:.4e}  audio={_audio_diff:.4e}",
-                flush=True,
-            )
-
         batch_size = video_latents_np.shape[0]
         batch_size = int(batch_size)
 
@@ -1315,27 +1253,6 @@ class LTX2Pipeline(DiffusionPipeline):
         num_video_noise_tokens = int(latents.shape[1])
         num_audio_noise_tokens = int(audio_latents.shape[1])
 
-        # --- DEBUG: initial latent stats ---
-        _lat_np = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] Initial video latents: shape={_lat_np.shape}, mean={_lat_np.mean():.4f}, std={_lat_np.std():.4f}, min={_lat_np.min():.4f}, max={_lat_np.max():.4f}"
-        )
-        _aud_np = np.from_dlpack(audio_latents.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] Initial audio latents: shape={_aud_np.shape}, mean={_aud_np.mean():.4f}, std={_aud_np.std():.4f}"
-        )
-        # --- DEBUG: prompt_embeds stats ---
-        _pe = np.from_dlpack(prompt_embeds.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] prompt_embeds: shape={_pe.shape}, mean={_pe.mean():.4f}, std={_pe.std():.4f}"
-        )
-        # --- DEBUG: timesteps / dts ---
-        _ts = np.from_dlpack(
-            all_timesteps.cast(DType.float32).to(CPU())
-        ).flatten()
-        _ds = np.from_dlpack(all_dts.cast(DType.float32).to(CPU())).flatten()
-        print(f"[DEBUG] timesteps[:5]={_ts[:5]}, dts[:5]={_ds[:5]}")
-
         for i in tqdm(range(num_inference_steps), desc="Denoising"):
             timestep = timesteps_seq[i : i + 1]
             dt = dts_seq[i : i + 1]
@@ -1365,64 +1282,10 @@ class LTX2Pipeline(DiffusionPipeline):
                 video_coords,
                 audio_coords,
             )
-            # --- DEBUG step 0: check if audio noise pred differs between uncond/cond ---
-            if i == 0 and self.do_classifier_free_guidance:
-                _raw_audio = np.from_dlpack(
-                    noise_pred_audio.cast(DType.float32).to(CPU())
-                )
-                _raw_video = np.from_dlpack(
-                    noise_pred_video.cast(DType.float32).to(CPU())
-                )
-                _audio_uncond_cond_diff = float(
-                    np.abs(_raw_audio[1] - _raw_audio[0]).max()
-                )
-                _video_uncond_cond_diff = float(
-                    np.abs(_raw_video[1] - _raw_video[0]).max()
-                )
-                print(
-                    f"[DEBUG i=0 pre-CFG] noise_pred uncond-cond max_diff: "
-                    f"video={_video_uncond_cond_diff:.4e}  audio={_audio_uncond_cond_diff:.4e}",
-                    flush=True,
-                )
-                # If audio_uncond_cond_diff ≈ 0 → transformer audio path is blind to text.
             if self.do_classifier_free_guidance:
                 noise_pred_video, noise_pred_audio = self._apply_cfg_guidance(
                     noise_pred_video, noise_pred_audio, guidance_scale_tensor
                 )
-
-            # --- DEBUG: first step detailed stats ---
-            if i == 0:
-                _npv = np.from_dlpack(
-                    noise_pred_video.cast(DType.float32).to(CPU())
-                )
-                _npa = np.from_dlpack(
-                    noise_pred_audio.cast(DType.float32).to(CPU())
-                )
-                _dt_val = float(
-                    np.from_dlpack(
-                        all_dts.cast(DType.float32).to(CPU())
-                    ).flatten()[0]
-                )
-                _t_val = float(
-                    np.from_dlpack(
-                        all_timesteps.cast(DType.float32).to(CPU())
-                    ).flatten()[0]
-                )
-                print(f"[DEBUG i=0] timestep={_t_val:.4f}, dt={_dt_val:.6f}")
-                print(
-                    f"[DEBUG i=0] noise_pred_video: mean={_npv.mean():.4f}, std={_npv.std():.4f}, min={_npv.min():.4f}, max={_npv.max():.4f}"
-                )
-                print(
-                    f"[DEBUG i=0] noise_pred_audio: mean={_npa.mean():.4f}, std={_npa.std():.4f}, min={_npa.min():.4f}, max={_npa.max():.4f}"
-                )
-            # Lightweight per-step audio latent tracking
-            _al_step = np.from_dlpack(
-                audio_latents.cast(DType.float32).to(CPU())
-            )
-            print(
-                f"[DEBUG step {i}] audio_latents: mean={_al_step.mean():.4f}, std={_al_step.std():.4f}",
-                flush=True,
-            )
 
             latents = self._scheduler_step_video(
                 latents, noise_pred_video, dt, num_video_noise_tokens
@@ -1431,30 +1294,13 @@ class LTX2Pipeline(DiffusionPipeline):
                 audio_latents, noise_pred_audio, dt, num_audio_noise_tokens
             )
 
-        # --- DEBUG: final latent stats ---
-        _lat_final = np.from_dlpack(latents.cast(DType.float32).to(CPU()))
-        print(
-            f"[DEBUG] Final video latents: mean={_lat_final.mean():.4f}, std={_lat_final.std():.4f}, min={_lat_final.min():.4f}, max={_lat_final.max():.4f}"
-        )
-        _lat_audio_final = np.from_dlpack(
-            audio_latents.cast(DType.float32).to(CPU())
-        )
-        print(
-            f"[DEBUG] Final audio latents: mean={_lat_audio_final.mean():.4f}, std={_lat_audio_final.std():.4f}, min={_lat_audio_final.min():.4f}, max={_lat_audio_final.max():.4f}"
-        )
         frames = self.decode_video_latents(
             latents, latent_num_frames, latent_height, latent_width
-        )
-        print(
-            f"[DEBUG] Final video frames: mean={frames.mean():.4f}, std={frames.std():.4f}, min={frames.min():.4f}, max={frames.max():.4f}"
         )
         audio = self.decode_audio_latents(
             audio_latents,
             audio_num_frames,
             latent_mel_bins,
-        )
-        print(
-            f"[DEBUG] Final audio: mean={audio.mean():.4f}, std={audio.std():.4f}, min={audio.min():.4f}, max={audio.max():.4f}"
         )
         return LTX2PipelineOutput(
             frames=frames,
